@@ -64,11 +64,12 @@ const MARKER_COLORS: readonly { value: string | null; name: string }[] = [
  * - `labels`: every button shows its name.
  * - `key-labels`: the tools and modes show their names — the icons people cannot guess (the trim
  *   and blade tools, snapping against linked selection) — and the rest are icons.
+ * - `tool-labels`: only Select, Trim and Blade are named (the default 1440px window).
  * - `icons`: every group as icons, each still named by its tooltip and aria-label.
  * - `compact`: Edit, Clip and Mark fold into menus that carry their group's name as text.
  * - `tight`: the transition joins the Clip menu and the zoom slider goes (⌘+ and ⌘- remain).
  */
-type Density = 'labels' | 'key-labels' | 'icons' | 'compact' | 'tight'
+type Density = 'labels' | 'key-labels' | 'tool-labels' | 'icons' | 'compact' | 'tight'
 
 function densityFor(width: number): Density {
   // Not measured yet (the first render): icons, the middle of the range, rather than a flash of
@@ -76,6 +77,7 @@ function densityFor(width: number): Density {
   if (width === 0) return 'icons'
   if (width >= 1720) return 'labels'
   if (width >= 1240) return 'key-labels'
+  if (width >= 1110) return 'tool-labels'
   if (width >= 1040) return 'icons'
   if (width >= 640) return 'compact'
   return 'tight'
@@ -208,6 +210,7 @@ export function TimelineToolbar({ fps }: { fps: number }): ReactNode {
   const density = densityFor(useWidth(root))
   const labelsAll = density === 'labels'
   const labelsKey = density === 'labels' || density === 'key-labels'
+  const labelsTools = labelsKey || density === 'tool-labels'
   const folded = density === 'compact' || density === 'tight'
 
   const pixelsPerFrame = useEditor((state) => state.pixelsPerFrame)
@@ -372,7 +375,7 @@ export function TimelineToolbar({ fps }: { fps: number }): ReactNode {
         <ToolButton
           label="Select"
           icon={<MousePointer2 className="size-3.5" />}
-          showLabel={labelsKey}
+          showLabel={labelsTools}
           shortcut={shortcutOf('tool.select')}
           active={tool === 'select'}
           aria-description="Click selects, drag moves, edges trim"
@@ -381,7 +384,7 @@ export function TimelineToolbar({ fps }: { fps: number }): ReactNode {
         <ToolButton
           label="Trim"
           icon={<Brackets className="size-3.5" />}
-          showLabel={labelsKey}
+          showLabel={labelsTools}
           active={tool === 'trim'}
           aria-description={`Trim tool, ${trimLabel}: every drag on a clip trims`}
           onClick={() => useTimelineTool.getState().setTool('trim')}
@@ -402,7 +405,7 @@ export function TimelineToolbar({ fps }: { fps: number }): ReactNode {
         <ToolButton
           label="Blade"
           icon={<Scissors className="size-3.5" />}
-          showLabel={labelsKey}
+          showLabel={labelsTools}
           shortcut={shortcutOf('tool.blade')}
           active={tool === 'blade'}
           aria-description="Click a clip to cut it, ⇧-click cuts every track"
