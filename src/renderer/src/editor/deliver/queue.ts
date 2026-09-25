@@ -1,6 +1,6 @@
 /**
  * The render queue's records: every export this window has run since it opened, from the
- * Deliver page, the ⌘E dialog or the agent's `export_timeline`, with where each one stands.
+ * Deliver page, the ⌘E dialog or bay's `export_timeline` tool, with where each one stands.
  *
  * Pure, so what the queue *says* about a job — above all, that a file which finished with wrong
  * frames is not "Complete" — is tested without a window. `export-session.ts` feeds it.
@@ -11,11 +11,16 @@ import { hasBlocking } from '@shared/findings'
 
 export interface RenderRecord {
   jobId: string
-  /** Who started it: this window's export form (Deliver or ⌘E), or the agent. */
-  origin: 'you' | 'agent'
-  /** Where the file goes. An agent's job is known only by its progress, which names it on `done`. */
+  /**
+   * Who started it: this window's export form (Deliver or ⌘E), or `export_timeline` — a tool
+   * call, which may be the in-app agent's or a client's on bay's socket (a terminal agent); this
+   * window cannot tell which, so the queue does not claim either. Main sends a job's progress
+   * only to the window that started it, so another window's export never arrives here.
+   */
+  origin: 'you' | 'tool'
+  /** Where the file goes. A tool's job is known only by its progress, which names it on `done`. */
   outputPath: string | null
-  /** The settings in a few words — "YouTube 1080p", "MP4 · 1920 × 1080". Null for an agent's job. */
+  /** The settings in a few words — "YouTube 1080p", "MP4 · 1920 × 1080". Null for a tool's job. */
   summary: string | null
   /** When this window first heard of it (ms since the epoch). */
   startedAt: number
@@ -41,8 +46,8 @@ export function addRecord(history: readonly RenderRecord[], record: RenderRecord
 }
 
 /**
- * The queue after one progress report. A job it has not seen is the agent's (this window's own
- * jobs are added before their first report), and joins the queue. A report never reopens a
+ * The queue after one progress report. A job it has not seen was started by a tool call (this
+ * window's own jobs are added before their first report), and joins the queue. A report never reopens a
  * finished job: a late frame callback after `done` must not show it rendering again.
  */
 export function applyProgress(history: readonly RenderRecord[], update: ExportProgress, now: number): readonly RenderRecord[] {
@@ -50,7 +55,7 @@ export function applyProgress(history: readonly RenderRecord[], update: ExportPr
   if (index === -1) {
     return addRecord(history, {
       jobId: update.jobId,
-      origin: 'agent',
+      origin: 'tool',
       outputPath: update.outputPath ?? null,
       summary: null,
       startedAt: now,

@@ -41,11 +41,11 @@ test('a report for a job this window started updates it in place', () => {
   assert.equal(recordStatus(next[0]!).label, 'Rendering · 50%')
 })
 
-test('a report for a job nobody here started is the agent’s, and joins the queue at the top', () => {
+test('a report for a job this form did not start is a tool call’s, and joins the queue at the top', () => {
   const history = addRecord([], mine('a'))
   const next = applyProgress(history, progress('agent-1', { stage: 'encoding', outputPath: '/tmp/x.mp4' }), 9)
   assert.deepEqual(next.map((entry) => entry.jobId), ['agent-1', 'a'])
-  assert.equal(next[0]?.origin, 'agent')
+  assert.equal(next[0]?.origin, 'tool')
   assert.equal(next[0]?.outputPath, '/tmp/x.mp4')
   assert.equal(next[0]?.startedAt, 9)
 })
