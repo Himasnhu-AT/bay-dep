@@ -56,7 +56,8 @@ export function clipMenuEntries(
     ...extra
   })
   const page = (label: string, to: ClipMenuPage, disabled = false): MenuEntry => ({
-    label: `${label} ›`,
+    label,
+    submenu: true,
     disabled,
     onSelect: () => openPage(to)
   })

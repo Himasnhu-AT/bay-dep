@@ -19,21 +19,14 @@ export interface MenuAction {
   checked?: boolean
   /**
    * The row opens more rows (the clip menu's Trim, Audio, Ripple Delete pages) and is drawn with
-   * a right-aligned chevron. A label ending in " ›" means the same, so the callers written before
-   * this field keep working; the character is taken off the label and drawn as the icon.
+   * a right-aligned chevron.
    */
   submenu?: boolean
 }
 
-const SUBMENU_SUFFIX = ' ›'
-
-/** The row's label without a trailing " ›", and whether it opens more rows. */
+/** The row's label, and whether it opens more rows. */
 function rowOf(entry: MenuAction): { label: string; submenu: boolean } {
-  const suffixed = entry.label.endsWith(SUBMENU_SUFFIX)
-  return {
-    label: suffixed ? entry.label.slice(0, -SUBMENU_SUFFIX.length) : entry.label,
-    submenu: entry.submenu ?? suffixed
-  }
+  return { label: entry.label, submenu: entry.submenu ?? false }
 }
 
 export type MenuEntry = MenuAction | { kind: 'separator' } | { kind: 'label'; label: string }

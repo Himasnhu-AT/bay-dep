@@ -79,7 +79,8 @@ export function Tabs<T extends string>({
             type="button"
             role="tab"
             aria-selected={active}
-            aria-label={iconsOnly ? item.label : undefined}
+            // Always the label: shown text would otherwise take the badge into the name ("Transition1").
+            aria-label={item.label}
             title={item.disabled ? (item.hint ?? item.label) : iconsOnly ? item.label : undefined}
             disabled={item.disabled}
             tabIndex={active ? 0 : -1}
