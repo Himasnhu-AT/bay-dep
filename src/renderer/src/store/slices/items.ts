@@ -3,7 +3,7 @@
  */
 
 import { brfAssetFields, brfCodeAssetFields } from '@shared/brf'
-import { activeTimeline, placementLayout, normaliseCrop, isCropped, NO_CROP, defaultLayout, defaultTextStyle, findAsset, findItem, findTrack, framesToUs, itemEnd, itemsOverlap, usToFrames, type Item, type TrackKind } from '@shared/project'
+import { activeTimeline, assetTrackKind, placementLayout, normaliseCrop, isCropped, NO_CROP, defaultLayout, defaultTextStyle, findAsset, findItem, findTrack, framesToUs, itemEnd, itemsOverlap, usToFrames, type Item, type TrackKind } from '@shared/project'
 import { rippleDelete, type RippleDeleteResult } from '@shared/ripple'
 import { applyRelinks } from '@shared/relink'
 import { shiftKeyframes, sliceKeyframes, withKeyframe } from '@shared/keyframes'
@@ -126,9 +126,7 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
       }
 
       const from = Math.max(0, Math.round(atFrame ?? state.playhead))
-      const kind: TrackKind = asset.hasVideo || asset.kind === 'image' || asset.kind === 'text'
-        ? 'video'
-        : 'audio'
+      const kind: TrackKind = assetTrackKind(asset)
 
       // A still has no duration of its own, so it gets the default from Preferences › Editing.
       const naturalFrames =

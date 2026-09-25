@@ -109,21 +109,18 @@ test('Replace with footage takes the target’s length from the In mark, on the 
   assert.equal(timeline.tracks[0]!.items.find((i) => i.id === placed)!.sourceStartUs, 2_000_000)
 })
 
-test('a Replace that cannot land in the target’s place is refused whole: the target stays and no undo step', () => {
-  // A picture the store files as sound (no video stream on a gif): the Edit toolbar aims it at the
-  // video track, and the store places it on an audio track instead. Synthetic, but it is the one
-  // way `placeAsset` can land somewhere other than the room the target leaves.
+test('a gif with no video stream replaces in the target’s place: the store and the toolbar agree it is a picture', () => {
+  // Before `assetTrackKind`, the store filed a gif without `hasVideo` as sound and put it on an
+  // audio track while the toolbar aimed it at V1 — the one way a Replace landed out of place, which
+  // the landing check then had to refuse. One rule now: it is a picture and takes the target's slot.
   const ids = load()
   const soundless = asset('ast_gif', { kind: 'gif', name: 'odd.gif', hasVideo: false, durationUs: 1_000_000 })
   useEditor.setState((s) => ({ project: { ...s.project, assets: [...s.project.assets, soundless] } }))
-  const before = useEditor.getState()
-  const past = before.past.length
+  const past = useEditor.getState().past.length
   useSourceClip.getState().setSourceClip({ assetId: soundless.id })
   const placed = runSourceEdit('replace')
-  assert.equal(placed, null)
-  assert.match(useEditor.getState().toast?.text ?? '', /could not be placed in other\.mp4’s place on V1/, 'refused by the landing check, not earlier')
-  assert.deepEqual(where(ids.target), { track: ids.v1, from: 0, durationInFrames: 30 }, 'the target is still there')
-  assert.equal(useEditor.getState().project, before.project, 'the project is the one it started as')
-  assert.equal(useEditor.getState().past.length, past, 'no undo step')
-  assert.deepEqual(useEditor.getState().selection, [ids.target], 'the selection is put back too')
+  assert.ok(placed, 'it was placed')
+  assert.deepEqual(where(placed!), { track: ids.v1, from: 0, durationInFrames: 30 }, 'on V1, in the target’s place and length')
+  assert.equal(where(ids.target), undefined, 'the target is gone')
+  assert.equal(useEditor.getState().past.length, past + 1, 'one undo step')
 })

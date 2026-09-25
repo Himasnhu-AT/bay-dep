@@ -14,7 +14,7 @@
  */
 
 import { create } from 'zustand'
-import { findAsset, findItem, itemEnd, usToFrames, type Asset, type Item, type Timeline, type Track } from '@shared/project'
+import { assetTrackKind, findAsset, findItem, itemEnd, usToFrames, type Asset, type Item, type Timeline, type Track } from '@shared/project'
 import { editIntoTimeline, endOfTimeline, placeAssetRange } from '@/lib/mediaActions'
 import { insertIndexFor } from '@/lib/timelineLayout'
 import { revealItem } from '@/lib/revealItem'
@@ -59,11 +59,7 @@ export const SOURCE_EDIT_DETAIL: Record<SourceEdit, string> = {
   placeOnTop: 'Put the source clip at the playhead on a free track above everything there'
 }
 
-const PICTURE_KINDS = new Set<Asset['kind']>(['video', 'image', 'gif', 'text', 'html', 'brf'])
-
-function trackKindFor(asset: Asset): Track['kind'] {
-  return asset.hasVideo || PICTURE_KINDS.has(asset.kind) ? 'video' : 'audio'
-}
+const trackKindFor = assetTrackKind
 
 /** The frames the marked part of `asset` takes on the timeline. */
 function markedFrames(asset: Asset, source: SourceClip, fps: number): number {

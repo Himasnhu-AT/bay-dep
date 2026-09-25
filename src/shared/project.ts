@@ -996,6 +996,16 @@ export function trackAudible(tracks: readonly Pick<Track, 'muted' | 'solo'>[], t
  * back short of un-hiding. An element is idle only when *neither* the compositor nor the
  * audio engine wants it.
  */
+/**
+ * The kind of track a placed asset goes on. Anything with a picture is video — a gif, an HTML
+ * composition or a .brf module included, whether or not the probe set `hasVideo` — and only
+ * sound goes on an audio track. One rule for the store's `placeAsset` and the Edit toolbar's
+ * source edits: two copies disagreed about gif/html/brf, so a Replace landed on the wrong kind.
+ */
+export function assetTrackKind(asset: Pick<Asset, 'kind' | 'hasVideo'>): TrackKind {
+  return asset.hasVideo || asset.kind !== 'audio' ? 'video' : 'audio'
+}
+
 export function itemsAtFrame(timeline: Timeline, frame: Frames, kind?: TrackKind): Item[] {
   const out: Item[] = []
   for (const track of timeline.tracks) {
