@@ -9,6 +9,7 @@ import { revertImpact, selectFps, useEditor } from '@/store/editor'
 import { composeMessage, pinLabel, type Pin } from '@shared/pins'
 import { insertSkill, skillSegments } from '@shared/skills'
 import { estimateToolCallUsd } from '@shared/generation'
+import { estimateSpeechToolCallUsd } from '@shared/speech'
 import { toolPreview } from '@shared/tool-preview'
 import { Composer } from './Composer'
 
@@ -379,7 +380,7 @@ function ToolCard({ entry }: { entry: Extract<AgentEntry, { kind: 'tool' }> }): 
   // click is hiding the only part that helps.
   const expanded = open || entry.state === 'failed'
   // A paid call says what it costs where the user already looks: on the card, not in its result.
-  const costUsd = estimateToolCallUsd(entry.tool, entry.args)
+  const costUsd = estimateToolCallUsd(entry.tool, entry.args) ?? estimateSpeechToolCallUsd(entry.tool, entry.args)
 
   return (
     <div className="rounded border border-line bg-surface-2 text-[11px]">

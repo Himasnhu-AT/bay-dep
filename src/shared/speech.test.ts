@@ -6,7 +6,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { findingsFor, type GenerationRequest } from './generation'
-import { SPEECH_MODELS, SPEECH_STYLES, speechInstructions, validateSpeech } from './speech'
+import { SPEECH_MODELS, SPEECH_STYLES, estimateSpeechToolCallUsd, speechInstructions, validateSpeech } from './speech'
 
 function refused(input: Record<string, unknown>, pattern: RegExp): void {
   const result = validateSpeech(input)
@@ -160,4 +160,29 @@ test('the image and video findings are unchanged by the speech branch', () => {
   const video: GenerationRequest = { provider: 'gemini', model: 'veo-3.1-generate-preview', kind: 'video', prompt: 'x', durationSeconds: 8 }
   const noPicture = findingsFor(video, { durationUs: 8_000_000, width: null, height: null, hasVideo: false, hasAudio: true })
   assert.match(noPicture[0]!.message, /no video stream/)
+})
+
+test('the tool card prices generate_speech and a whole dub; other tools and refused calls are unpriced', () => {
+  const one = validateSpeech({ model: 'gpt-4o-mini-tts', text: 'Hello there, this is the first line.' })
+  const two = validateSpeech({ model: 'gpt-4o-mini-tts', text: 'And this is the second, a little longer line.' })
+  assert.ok(one.ok && two.ok)
+  const lineCost = (one.ok ? one.estimatedCostUsd : 0) + (two.ok ? two.estimatedCostUsd : 0)
+  assert.ok(lineCost > 0, 'specimen: the lines must cost something, or a sum of zero proves nothing')
+
+  assert.equal(estimateSpeechToolCallUsd('generate_speech', { model: 'gpt-4o-mini-tts', text: 'Hello there, this is the first line.' }), one.ok ? one.estimatedCostUsd : NaN)
+  const dub = estimateSpeechToolCallUsd('apply_dub', {
+    itemId: 'clip',
+    language: 'en',
+    model: 'gpt-4o-mini-tts',
+    original: 'duck',
+    translations: [
+      { cueId: 'c1', text: 'Hello there, this is the first line.' },
+      { cueId: 'c2', text: 'And this is the second, a little longer line.' }
+    ]
+  })
+  assert.equal(dub, Math.round(lineCost * 10000) / 10000)
+
+  assert.equal(estimateSpeechToolCallUsd('apply_dub', { model: 'gpt-4o-mini-tts', translations: [] }), null)
+  assert.equal(estimateSpeechToolCallUsd('apply_dub', { model: 'no-such-model', translations: [{ cueId: 'c1', text: 'x' }] }), null)
+  assert.equal(estimateSpeechToolCallUsd('place_asset', { model: 'gpt-4o-mini-tts', text: 'x' }), null)
 })

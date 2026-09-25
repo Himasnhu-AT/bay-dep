@@ -317,3 +317,30 @@ export function validateSpeech(input: Record<string, unknown>): SpeechValidation
   }
   return { ok: true, request, model, estimatedCostUsd: speechCost(model, text.length, estimate.seconds), defaultsApplied, estimate }
 }
+
+/**
+ * The estimate for a `generate_speech` or `apply_dub` call as the agent wrote it, for the agent
+ * panel's tool card; null for any other tool, or a call the catalog would refuse. A dub is the sum
+ * of its lines, each priced the way `apply_dub` prices it.
+ */
+export function estimateSpeechToolCallUsd(tool: string, args: Record<string, unknown>): number | null {
+  if (tool === 'generate_speech') {
+    const checked = validateSpeech(args)
+    return checked.ok ? checked.estimatedCostUsd : null
+  }
+  if (tool !== 'apply_dub' || !Array.isArray(args.translations)) return null
+  const options: Record<string, unknown> = {}
+  for (const key of ['model', 'voice', 'style', 'instructions', 'speed', 'language'] as const) {
+    if (args[key] !== undefined) options[key] = args[key]
+  }
+  const translations = args.translations
+  let total = 0
+  for (const line of translations as unknown[]) {
+    const text = (line as { text?: unknown } | null)?.text
+    if (typeof text !== 'string') return null
+    const checked = validateSpeech({ ...options, text })
+    if (!checked.ok) return null
+    total += checked.estimatedCostUsd
+  }
+  return translations.length > 0 ? round4(total) : null
+}
