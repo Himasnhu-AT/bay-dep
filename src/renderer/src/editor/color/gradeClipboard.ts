@@ -13,7 +13,7 @@
 import { create } from 'zustand'
 import { defaultAdjustments, type Item } from '@shared/project'
 import { useEditor } from '@/store/editor'
-import { gradePatch } from './clips'
+import { gradePatch, lookForProject } from './clips'
 
 interface GradeClipboard {
   /** A snapshot of the copied clip's look, or null before anything is copied. */
@@ -32,15 +32,19 @@ export const useGradeClipboard = create<GradeClipboard>((set) => ({
   }
 }))
 
-/** Pastes the copied look onto `targets` as one undo step. Returns how many clips took it. */
-export function pasteGrade(targets: readonly Item[]): number {
+/**
+ * Pastes the copied look onto `targets` as one undo step. Returns how many clips took it, and
+ * whether the copied LUT was left out because it is not in this project (`lookForProject`).
+ */
+export function pasteGrade(targets: readonly Item[]): { count: number; droppedLut: boolean } {
   const { source } = useGradeClipboard.getState()
-  if (!source || targets.length === 0) return 0
-  const { transact, patchItem } = useEditor.getState()
+  if (!source || targets.length === 0) return { count: 0, droppedLut: false }
+  const { transact, patchItem, project } = useEditor.getState()
+  const { look, droppedLut } = lookForProject(source, project)
   transact(() => {
-    for (const target of targets) patchItem(target.id, gradePatch(source, target))
+    for (const target of targets) patchItem(target.id, gradePatch(look, target))
   })
-  return targets.length
+  return { count: targets.length, droppedLut: droppedLut !== null }
 }
 
 /** Takes the grade and adjustments off `targets`, as one undo step. */

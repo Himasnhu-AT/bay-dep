@@ -58,3 +58,21 @@ export function gradePatch(source: Pick<Item, 'grade' | 'adjustments'>, target: 
   const { blendMode: _kept, ...patch } = attributePatch(from, target, GRADE_ATTRIBUTES)
   return patch
 }
+
+/**
+ * A copied look as it can be pasted into `project`. The grade clipboard outlives a project
+ * switch, and the LUT asset it names can be removed after the copy, so its LUT may name an asset
+ * this project does not have: pasted as is, the clip would carry a LUT the compositor cannot
+ * find, and every export of it would be flagged for an ungraded clip. The LUT is left out and
+ * the caller says so; the rest of the look (the grade's other controls, the adjustments) pastes.
+ */
+export function lookForProject(
+  source: Pick<Item, 'grade' | 'adjustments'>,
+  project: Pick<Project, 'assets'>
+): { look: Pick<Item, 'grade' | 'adjustments'>; droppedLut: string | null } {
+  const lutId = source.grade?.lut?.assetId
+  if (lutId === undefined || !source.grade) return { look: source, droppedLut: null }
+  if (project.assets.some((asset) => asset.id === lutId && asset.kind === 'lut')) return { look: source, droppedLut: null }
+  const { lut: _dropped, ...rest } = source.grade
+  return { look: { ...source, grade: Object.keys(rest).length > 0 ? rest : undefined }, droppedLut: lutId }
+}

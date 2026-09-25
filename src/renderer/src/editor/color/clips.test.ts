@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Asset, AssetKind, Item, Project, Timeline, Track } from '@shared/project'
-import { colorClips, gradePatch, hasLook } from './clips'
+import { colorClips, gradePatch, hasLook, lookForProject } from './clips'
 
 function asset(id: string, kind: AssetKind): Asset {
   return {
@@ -103,4 +103,20 @@ test('pasting a grade carries the grade and adjustments, keeps the blend mode, a
   const cleared = gradePatch({}, target)
   assert.ok('grade' in cleared && cleared.grade === undefined, 'grade removed, not left as it was')
   assert.ok('adjustments' in cleared && cleared.adjustments === undefined)
+})
+
+test('a copied LUT this project does not have is left out of the paste; one it has is kept', () => {
+  const look = { grade: { temperature: 400, lut: { assetId: 'cube', intensity: 0.5 } } }
+  // Copied in another project: nothing here is called "cube".
+  const elsewhere = lookForProject(look, { assets: [asset('shot', 'video')] })
+  assert.equal(elsewhere.droppedLut, 'cube')
+  assert.deepEqual(elsewhere.look.grade, { temperature: 400 }, 'the rest of the grade still pastes')
+  // An asset with that id that is not a LUT is not the LUT.
+  assert.equal(lookForProject(look, { assets: [asset('cube', 'video')] }).droppedLut, 'cube')
+  // A LUT-only grade leaves no grade behind, not an empty one.
+  assert.equal(lookForProject({ grade: { lut: { assetId: 'cube', intensity: 1 } } }, { assets: [] }).look.grade, undefined)
+  // The positive control: in the project that has the LUT, the look pastes whole.
+  const here = lookForProject(look, { assets: [asset('cube', 'lut')] })
+  assert.equal(here.droppedLut, null)
+  assert.deepEqual(here.look.grade, look.grade)
 })
