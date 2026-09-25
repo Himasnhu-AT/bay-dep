@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { Button, Kbd, NumberField, SegmentedControl } from '@/components'
 import { runCommand, shortcutOf } from '@/lib/commands'
 import { bayTheme, type ThemePreference } from '@/lib/theme'
@@ -12,6 +12,9 @@ import {
 } from '@/store/editing-prefs'
 import { AboutUpdates, useUpdate } from '@/update/UpdateBanner'
 import type { CanvasFit } from '@shared/project'
+import { AGENT_PROVIDERS, type AgentProviderStatus } from '@shared/agent'
+import { PROVIDER_LABELS, useAgentProvider } from '@/lib/agentProvider'
+import { bay } from '@/lib/bay'
 import { Row, Section, SwitchRow } from './parts'
 
 export function GeneralSection(): ReactNode {
@@ -152,11 +155,43 @@ export function PlaybackSection(): ReactNode {
   )
 }
 
+/** What the provider row says under its label: where the CLI is, or what is missing. */
+function providerHint(status: AgentProviderStatus | undefined): string {
+  if (!status) return 'Looking for it on this Mac…'
+  if (status.problem) return status.problem
+  return `Using ${status.path}. Switching starts a new conversation.`
+}
+
 export function AgentSection(): ReactNode {
   const agentApproval = useEditor((state) => state.agentApproval)
   const setAgentApproval = useEditor((state) => state.setAgentApproval)
+  const provider = useAgentProvider((state) => state.provider)
+  const setProvider = useAgentProvider((state) => state.setProvider)
+  const [statuses, setStatuses] = useState<AgentProviderStatus[] | null>(null)
+  useEffect(() => {
+    let live = true
+    void bay()
+      ?.agent.providers()
+      .then((found) => {
+        if (live) setStatuses(found)
+      })
+    return () => {
+      live = false
+    }
+  }, [])
+  const status = statuses?.find((entry) => entry.provider === provider)
   return (
     <Section title="Agent">
+      <Row label="Model" hint={providerHint(status)}>
+        <SegmentedControl
+          label="Agent model"
+          value={provider}
+          // Never disabled: the hint says what the chosen one still needs, and the choice is
+          // remembered for when it has it.
+          options={AGENT_PROVIDERS.map((value) => ({ value, label: PROVIDER_LABELS[value] }))}
+          onChange={setProvider}
+        />
+      </Row>
       <SwitchRow
         label="Ask before editing"
         description="Off: the agent edits directly, and every turn that changes the project shows what changed with a Revert button. On: it proposes each change and waits for you to approve it."

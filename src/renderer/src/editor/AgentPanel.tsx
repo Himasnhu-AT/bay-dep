@@ -4,6 +4,7 @@ import { approvalMessage, DECLINED_MESSAGE, formatElapsed, type AgentEntry } fro
 import { Button, Markdown, Panel, ScrollArea } from '@/components'
 import { AGENT_STARTERS, STARTERS_SHOWN, type AgentStarter } from './agentStarters'
 import { bay } from '@/lib/bay'
+import { useAgentProvider } from '@/lib/agentProvider'
 import { revertImpact, selectFps, useEditor } from '@/store/editor'
 import { composeMessage, pinLabel, type Pin } from '@shared/pins'
 import { insertSkill, skillSegments } from '@shared/skills'
@@ -59,6 +60,18 @@ export function AgentPanel(): ReactNode {
     bottom.current?.scrollIntoView({ block: 'end' })
   }, [log])
 
+  // Switching provider in Settings starts a new conversation: the other model has none of this
+  // one's context, so carrying the log over would show a history it never saw.
+  const provider = useAgentProvider((state) => state.provider)
+  const startedWith = useRef(provider)
+  useEffect(() => {
+    if (startedWith.current === provider) return
+    startedWith.current = provider
+    if (useEditor.getState().agentSessionActive || useEditor.getState().agentLog.length > 0) reset()
+    // `reset` is recreated each render and reads only store actions; the provider is the trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [provider])
+
   /**
    * One user turn, from the text box or from a decision on a proposal card.
    *
@@ -83,7 +96,7 @@ export function AgentPanel(): ReactNode {
     // Starting is separate from sending so a missing `claude` binary reads as "could not start"
     // rather than as a model that ignored the message.
     if (!sessionActive) {
-      const started = await api.agent.start()
+      const started = await api.agent.start({ provider: useAgentProvider.getState().provider })
       if (!started.ok) {
         setProblem(started.error)
         return
