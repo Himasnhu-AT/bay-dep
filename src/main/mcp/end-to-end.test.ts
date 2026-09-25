@@ -209,6 +209,44 @@ test('a tool call crosses stdio, the socket, and comes back', async () => {
   }
 })
 
+test('when the client closes stdin, the proxy exits at once and drops a call still in flight', { timeout: 15_000 }, async () => {
+  // A stopped agent whose kill did not reach the proxy (Codex starts MCP servers in their own
+  // process group) closes the proxy's stdin as it dies. The proxy used to wait for the reply —
+  // for as long as the tool ran — still connected to bay.
+  const socketPath = scratchSocket()
+  let connected = 0
+  let closed = 0
+  const server = createServer((socket) => {
+    connected++
+    socket.on('close', () => closed++)
+    socket.on('error', () => undefined)
+    // Read and never answer: a tool that takes minutes. (Unread, a socket never sees its end.)
+    socket.resume()
+  })
+  await new Promise<void>((resolve) => server.listen(socketPath, () => resolve()))
+  const child = spawn(process.execPath, [PROXY_BUNDLE], {
+    env: { ...process.env, BAY_MCP_SOCKET: socketPath },
+    stdio: ['pipe', 'pipe', 'pipe']
+  })
+  const exited = new Promise<number | null>((resolve) => child.on('exit', (code) => resolve(code)))
+  try {
+    child.stdin.write(encode({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'transcribe', arguments: {} } } as never))
+    const deadline = Date.now() + 5000
+    while (connected === 0 && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.equal(connected, 1, 'specimen: the call reached the stub app and is in flight')
+
+    child.stdin.end()
+    const code = await Promise.race([exited, new Promise<'still running'>((resolve) => setTimeout(() => resolve('still running'), 3000))])
+    assert.equal(code, 0, 'the proxy exits on its own, promptly')
+    const closing = Date.now() + 3000
+    while (closed === 0 && Date.now() < closing) await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.equal(closed, 1, 'and its connection to bay is gone')
+  } finally {
+    child.kill('SIGKILL')
+    server.close()
+  }
+})
+
 test('an image a tool returns reaches the client as an image block, whole', async () => {
   // The proxy used to keep content[0].text and re-wrap it. Every test above passed through
   // that, because every stub returned one text block — and preview_frame, the one tool that

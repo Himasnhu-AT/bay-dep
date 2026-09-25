@@ -11,9 +11,26 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { allowedToolNames, BUILT_IN_TOOLS, cliArgs, killTree, mcpConfig, TURN_TIMEOUT_MS } from './cli'
+import { spawn } from 'node:child_process'
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import type { AgentEvent } from '@shared/agent'
+import {
+  allowedToolNames,
+  BUILT_IN_TOOLS,
+  CliAgentRuntime,
+  cliArgs,
+  descendantsOf,
+  killTree,
+  mcpConfig,
+  processTable,
+  TURN_TIMEOUT_MS,
+  type ProcessTable
+} from './cli'
 import { TOOLS } from '@shared/mcp'
 import { BAY_SKILLS } from '@shared/skills'
+import { alive, fakeClaude, pidsIn, reap, waitFor, type FakePids } from './fixtures/fake-agent'
 
 const OPTIONS = {
   proxyPath: '/app/out/main/mcp/index.js',
@@ -130,19 +147,148 @@ test('a second process for the same session resumes it rather than re-creating i
 test('killing the agent signals its whole process group, not just the pid we hold', () => {
   // The CLI spawns bay's MCP proxy. Signalling only the CLI's pid orphans the proxy, still
   // connected to the app's socket — one per stopped turn.
+  const empty = (): ProcessTable => new Map()
   const sent: [number, string][] = []
-  killTree(4242, 'SIGTERM', (pid, signal) => sent.push([pid, signal]))
+  killTree(4242, 'SIGTERM', (pid, signal) => sent.push([pid, signal]), empty)
   assert.deepEqual(sent, [[process.platform === 'win32' ? 4242 : -4242, 'SIGTERM']])
   // A pid that is already gone is not an error.
   assert.doesNotThrow(() =>
-    killTree(4242, 'SIGTERM', () => {
-      throw Object.assign(new Error('ESRCH'), { code: 'ESRCH' })
-    })
+    killTree(
+      4242,
+      'SIGTERM',
+      () => {
+        throw Object.assign(new Error('ESRCH'), { code: 'ESRCH' })
+      },
+      empty
+    )
   )
   // No pid (spawn failed) signals nothing.
   const none: number[] = []
-  killTree(undefined, 'SIGTERM', (pid) => none.push(pid))
+  killTree(undefined, 'SIGTERM', (pid) => none.push(pid), empty)
   assert.deepEqual(none, [])
+})
+
+test('descendants outside the group are signalled by pid; those inside are left to the group signal', () => {
+  // 4242 leads its group. 5000 is its child in the same group; 5001 a child that made its own
+  // group (Codex's MCP server), 5002 that one's child; 6000 is unrelated.
+  const table: ProcessTable = new Map([
+    [4242, { ppid: 1, pgid: 4242 }],
+    [5000, { ppid: 4242, pgid: 4242 }],
+    [5001, { ppid: 4242, pgid: 5001 }],
+    [5002, { ppid: 5001, pgid: 5001 }],
+    [6000, { ppid: 1, pgid: 6000 }]
+  ])
+  assert.deepEqual(descendantsOf(4242, table).sort(), [5000, 5001, 5002])
+  if (process.platform === 'win32') return
+  const sent: number[] = []
+  killTree(4242, 'SIGTERM', (pid) => sent.push(pid), () => table)
+  assert.deepEqual(sent, [-4242, 5001, 5002])
+})
+
+test('a real grandchild in its own process group dies with the tree; the group signal alone misses it', { timeout: 15_000 }, async (t) => {
+  if (process.platform === 'win32') {
+    t.skip('SKIPPED — no process groups on Windows')
+    return
+  }
+  const dir = mkdtempSync(join(tmpdir(), 'bay-killtree-'))
+  const start = (): Promise<FakePids> => {
+    const parent = spawn(fakeClaude(), [], {
+      env: { ...process.env, FAKE_PIDS_DIR: dir },
+      stdio: ['pipe', 'ignore', 'ignore'],
+      detached: true
+    })
+    return waitFor('the fake to start its MCP child', () => pidsIn(dir).some((p) => p.agent === parent.pid)).then(
+      () => pidsIn(dir).find((p) => p.agent === parent.pid)!
+    )
+  }
+  const started: FakePids[] = []
+  try {
+    assert.ok(processTable().size > 0, 'ps answered, or nothing below is measured')
+
+    // Negative control: the group alone — what killTree did before — leaves the MCP child running.
+    const before = await start()
+    started.push(before)
+    killTree(before.agent, 'SIGTERM', process.kill, () => new Map())
+    await waitFor('the agent to die', () => !alive(before.agent))
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    assert.ok(alive(before.mcp), 'specimen: the MCP child is outside the group signal')
+
+    const after = await start()
+    started.push(after)
+    killTree(after.agent)
+    await waitFor('the agent to die', () => !alive(after.agent), 3000)
+    await waitFor('its MCP child to die', () => !alive(after.mcp), 3000)
+  } finally {
+    reap(started)
+  }
+})
+
+// ---------------------------------------------------------------------------
+// The runtime's process, against a fake `claude` (fixtures/fake-agent.ts). No model is called.
+// ---------------------------------------------------------------------------
+
+function fakeRuntime(dir: string, turnTimeoutMs?: number): { runtime: CliAgentRuntime; events: AgentEvent[] } {
+  process.env['FAKE_PIDS_DIR'] = dir
+  const runtime = new CliAgentRuntime({
+    ...OPTIONS,
+    cwd: dir,
+    binary: fakeClaude(),
+    ...(turnTimeoutMs === undefined ? {} : { turnTimeoutMs })
+  })
+  const events: AgentEvent[] = []
+  runtime.onEvent((event) => events.push(event))
+  return { runtime, events }
+}
+
+test('a turn that times out kills claude, rather than leaving it working on the timeline', { timeout: 15_000 }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bay-cli-rt-'))
+  const { runtime, events } = fakeRuntime(dir, 2000)
+  let pids: FakePids[] = []
+  try {
+    runtime.send('work forever')
+    await waitFor('the fake claude to start', () => pidsIn(dir).length === 1)
+    pids = pidsIn(dir)
+    const [{ agent, mcp }] = pids as [FakePids]
+    await waitFor('the turn to time out', () => events.some((event) => event.type === 'done'))
+    assert.match(JSON.stringify(events.find((event) => event.type === 'done')), /ran past/)
+    await waitFor('claude to be killed', () => !alive(agent), 3000)
+    await waitFor('its MCP child to be killed', () => !alive(mcp), 3000)
+  } finally {
+    runtime.dispose()
+    reap(pids)
+  }
+})
+
+test('a stopped claude exiting late does not take the next turn’s process with it', { timeout: 15_000 }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bay-cli-rt-'))
+  const { runtime, events } = fakeRuntime(dir)
+  let pids: FakePids[] = []
+  try {
+    const first = runtime.send('one')
+    await waitFor('the first claude to start', () => pidsIn(dir).length === 1)
+    const [old] = pidsIn(dir) as [FakePids]
+    runtime.stop()
+    // Sent before the stopped process has exited: its exit arrives while the second runs.
+    const second = runtime.send('two')
+    await waitFor('the second claude to start', () => pidsIn(dir).length === 2)
+    pids = pidsIn(dir)
+    await waitFor('the stopped claude to exit', () => !alive(old.agent), 3000)
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    const next = pids.find((entry) => entry.agent !== old.agent)!
+    // The old exit neither failed the new turn nor dropped the handle on the new process.
+    assert.deepEqual(
+      events.filter((event) => event.type === 'done').map((event) => event.runId),
+      [first],
+      'only the stopped turn is done'
+    )
+    assert.ok(second)
+    runtime.stop()
+    await waitFor('stop to reach the second claude', () => !alive(next.agent), 3000)
+    await waitFor('and its MCP child', () => !alive(next.mcp), 3000)
+  } finally {
+    runtime.dispose()
+    reap(pids)
+  }
 })
 
 test('a turn outlasts the slowest tool call, with room for the model around it', () => {

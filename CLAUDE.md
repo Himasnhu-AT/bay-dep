@@ -135,7 +135,7 @@ something saves, and nothing a probe does should.
 **The Codex provider has no allow-list, so its sandbox is Codex's own, and it is weaker in one
 named way** (`src/main/agent/codex.ts`, Settings › Agent › Model; `BAY_AGENT_RUNTIME=codex`
 overrides). One `codex exec --json` per turn, `exec resume <thread>` after the first, under
-bay's own `CODEX_HOME` (`<userData>/agent-codex`: a generated `config.toml` plus a *link* to
+bay's own `CODEX_HOME` (`<userData>/.agent-codex`: a generated `config.toml` plus a *link* to
 the user's `auth.json`, nothing else of `~/.codex`) and a `HOME` inside it. Measured on
 codex-cli 0.149.1:
 - `codex mcp list`: the user's own home lists `chatcut_desktop`, `computer-use`, `cua_repl`,
@@ -161,6 +161,38 @@ codex-cli 0.149.1:
   Codex here (it lists a `SKILL.md` but has nothing to open it with), so main inlines each named
   skill into the message (`withSkills`) and writes none for it. `--strict-config` turns an
   unrecognised key into a failed start rather than an isolation setting silently ignored.
+- **Stopped means killed, and killed means the whole tree.** A turn timeout used to fail the turn
+  and leave codex running; the next send then overwrote the only handle on it, so a detached
+  codex kept calling bay's tools and outlived quit. Timeout now aborts (fail + kill), `send`
+  kills any previous child whether or not a turn is still counted as running, and `dispose`
+  kills too. The CLI runtime had the same timeout, and a stopped `claude` exiting after the next
+  send had spawned its successor cleared `#child` and failed the new turn; its handlers now
+  answer only for the current process. And `kill(-pgid)` does not reach bay's proxy under
+  Codex, which starts MCP servers in a process group of their own — measured. `killTree` reads
+  the process tree from `ps` *before* signalling and sends the signal to every descendant
+  outside the group by pid, and the proxy exits the moment its stdin ends, dropping any call in
+  flight (the client is gone; nobody would read the answer). `codex.test.ts`/`cli.test.ts` run
+  fake agents (`fixtures/fake-agent.ts`) whose MCP child sits in its own group.
+- **Skill blocks are bay's alone.** Asset, clip and track names are quoted into the message, so
+  `pinText` strips `<`/`>` (to ‹ ›) and line breaks from them; `withSkills` expands only what
+  `typedText` says the user typed (a `/slug` in a pinned name loads nothing), turns any
+  `<bay-skill`/`</bay-skill` already in the message into `‹bay-skill`, and gives the real blocks a
+  random per-message `nonce` the system prompt says to require.
+- **The home is hidden, and the policy follows links.** `.agent-codex` is refused by the in-app
+  path rule like any hidden folder (the visible `agent-codex` was writable by `write_composition`
+  and `export_timeline`); the old folder is moved on first use, `sessions/` kept for transcript
+  export. `placeRule` also judges the real path (`realpathNearest`), so a visible link into a
+  hidden folder is the hidden folder. `CODEX_API_KEY`/`OPENAI_API_KEY` are removed from Codex's
+  environment — with either set it bills that key instead of the ChatGPT login — and
+  `AGENTS.override.md` is removed beside `AGENTS.md`.
+- **The one write bay makes to `~/.codex`: handing back a refreshed login.** Codex refreshes its
+  token by renaming a new file over `auth.json`, which through bay's link replaces the *link*
+  with a file holding a rotated refresh token while `~/.codex/auth.json` keeps the retired one —
+  and the user's terminal `codex` would then fail to refresh. After every turn, on stop, on
+  dispose and at the next start, `reconcileCodexAuth` checks: link intact → note the login's
+  mtime+size; a file instead, and the user's login unchanged since that note → write the new one
+  back atomically (0600) and relink; the user's login changed meanwhile (they signed in again),
+  or no note exists → theirs wins, bay's copy is dropped. Tested in temp dirs only.
 
 **bay's skills are real Claude Code skills.** `src/shared/skills.ts` defines them; main writes
 each as `.claude/skills/<slug>/SKILL.md` in the agent's working directory on every start, and the

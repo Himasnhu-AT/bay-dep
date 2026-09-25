@@ -154,8 +154,19 @@ function forward(socket: Socket, line: string, id: string | number | null): Prom
   })
 }
 
+/**
+ * Serve until the client closes stdin, then drop every open connection to bay at once.
+ *
+ * The client closing stdin is the client going away — a stopped turn, a quit — and nothing the
+ * proxy could still say would reach anyone. Waiting for an in-flight call's reply kept the proxy
+ * alive (and connected to bay) for as long as the tool took; for a proxy that its client's kill
+ * did not reach (Codex starts MCP servers in their own process group), that was the tool call
+ * running on after the user pressed Stop. Abandoning it is the intent. The entry point exits when
+ * this returns, so a pending launch wait does not hold the process either.
+ */
 export async function runProxy(options: ProxyOptions): Promise<void> {
   const buffer = new LineBuffer()
+  const open = new Set<Socket>()
   process.stdin.setEncoding('utf8')
 
   /** Tool calls go to the app; everything else is answered here. */
@@ -163,6 +174,8 @@ export async function runProxy(options: ProxyOptions): Promise<void> {
     const attempt = await connectOrLaunch(options)
     if (!attempt.socket) return { ok: false, value: `"${tool}" was not applied. ${attempt.reason}` }
     const socket = attempt.socket
+    open.add(socket)
+    socket.once('close', () => open.delete(socket))
     const id = `proxy-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
     const reply = (await forward(
       socket,
@@ -215,6 +228,7 @@ export async function runProxy(options: ProxyOptions): Promise<void> {
     process.stdin.on('end', () => resolve())
     process.stdin.on('close', () => resolve())
   })
+  for (const socket of open) socket.destroy()
 }
 
 /** Starts bay detached, so the proxy exiting does not take the editor with it. */
