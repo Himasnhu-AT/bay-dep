@@ -35,6 +35,27 @@ import type { ClipboardPayload, PasteAttribute } from '@shared/clipboard'
 import type { FreezeResult } from '@shared/freeze-frame'
 import type { AgentCheckpoint, AgentRevert } from './agent-turns'
 
+/** What `placeDub` lays down: lines on one audio track, and what happens to the original sound. */
+export interface DubPlacement {
+  trackName: string
+  clips: readonly { asset: Asset; from: Frames; durationInFrames: Frames; speed: number }[]
+  original: { itemIds: readonly string[]; mode: 'duck' | 'mute' | 'keep'; amountDb: number }
+}
+
+export interface DubPlaced {
+  trackId: string
+  trackName: string
+  /** The placed lines' item ids, in the order of `clips`. */
+  itemIds: string[]
+  /** Lines already on the track that a new one replaced. */
+  replaced: number
+  /** Items whose sound was ducked or muted. */
+  ducked: string[]
+  muted: string[]
+  /** Original items left alone because their track is locked. */
+  lockedOriginals: string[]
+}
+
 /** The three regions around the preview that can be hidden. The preview itself cannot. */
 export type RegionId = 'side' | 'inspector' | 'timeline'
 
@@ -436,6 +457,14 @@ export interface EditorActions {
    * the file rather than stacking two. One undo step.
    */
   placeSubtitles(sourceItemId: string, asset: Asset): { itemId: string; trackName: string; replaced: number } | { error: string }
+  /**
+   * Put a dub's generated lines (`@shared/dub`) on the audio track named `trackName` (made if
+   * missing), each at its frame and speed, replacing lines already on that track where a new one
+   * lands; then duck or mute the original dialogue — the clips named, or the audio items their
+   * sound was detached onto — under that track. Assets not yet in the project are added. One undo
+   * step. Refused, changing nothing, when the dub track is locked.
+   */
+  placeDub(spec: DubPlacement): DubPlaced | { error: string }
   /**
    * Change the canvas and re-fit what was fitted to the old one: video and images by `fit`
    * (`auto` picks cover or contain the way placement does), compositions to the full frame, text

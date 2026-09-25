@@ -8,6 +8,7 @@ import { handlers as brfHandlers } from './brf'
 import { handlers as captionsHandlers } from './captions'
 import { handlers as compositionsHandlers } from './compositions'
 import { handlers as cutsHandlers } from './cuts'
+import { handlers as dubHandlers } from './dub'
 import { handlers as exportsHandlers } from './exports'
 import { handlers as feedbackHandlers } from './feedback'
 import { handlers as frameGridHandlers } from './frameGrid'
@@ -37,6 +38,7 @@ export const HANDLER_GROUPS: Record<string, Handlers> = {
   'captions': captionsHandlers,
   'compositions': compositionsHandlers,
   'cuts': cutsHandlers,
+  'dub': dubHandlers,
   'exports': exportsHandlers,
   'feedback': feedbackHandlers,
   'frameGrid': frameGridHandlers,
@@ -67,6 +69,7 @@ export const HANDLERS: Handlers = {
   ...captionsHandlers,
   ...compositionsHandlers,
   ...cutsHandlers,
+  ...dubHandlers,
   ...exportsHandlers,
   ...feedbackHandlers,
   ...frameGridHandlers,
