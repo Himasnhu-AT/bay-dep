@@ -2,6 +2,7 @@ import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import {
   ArrowUp,
   AtSign,
+  Paperclip,
   Bot,
   Clock,
   Film,
@@ -28,6 +29,11 @@ import {
 import { cn } from '@/lib/cn'
 import { selectFps, selectTimeline, useEditor } from '@/store/editor'
 import { AGENT_STARTERS } from './agentStarters'
+import type { PendingAttachment } from '@/lib/agentAttachments'
+import { IMAGE_MIME, VIDEO_EXTENSIONS } from '@shared/agent-attachments'
+
+/** What the paperclip's file picker offers. The composer checks each pick again anyway. */
+const PICKER_ACCEPT = [...Object.keys(IMAGE_MIME), 'video/*', ...VIDEO_EXTENSIONS.map((e) => `.${e}`)].join(',')
 
 /**
  * The agent's composer: the text box, what is pinned, and the `@` and `/` menus.
@@ -62,6 +68,11 @@ export interface ComposerProps {
   draft: string
   setDraft: (text: string) => void
   textareaRef: React.RefObject<HTMLTextAreaElement | null>
+  /** Images and video attached to the next message, shown as chips with a remove button. */
+  attachments: readonly PendingAttachment[]
+  /** Files picked with the paperclip or pasted into the box. */
+  onAddFiles: (files: readonly File[]) => void
+  onRemoveAttachment: (id: string) => void
 }
 
 const PIN_ICON: Record<Pin['kind'], LucideIcon> = { asset: Film, clip: Film, range: Clock }
@@ -141,8 +152,12 @@ export function Composer({
   onNewConversation,
   draft,
   setDraft,
-  textareaRef
+  textareaRef,
+  attachments,
+  onAddFiles,
+  onRemoveAttachment
 }: ComposerProps): ReactNode {
+  const picker = useRef<HTMLInputElement | null>(null)
   const project = useEditor((state) => state.project)
   const timeline = useEditor(selectTimeline)
   const fps = useEditor(selectFps)
@@ -272,7 +287,7 @@ export function Composer({
 
   const send = (): void => {
     const text = draft.trim()
-    if (!text || running) return
+    if ((!text && attachments.length === 0) || running) return
     void onSend(text)
   }
 
@@ -377,6 +392,35 @@ export function Composer({
           </ul>
         )}
 
+        {attachments.length > 0 && (
+          <ul aria-label="Attached" className="flex flex-wrap gap-1.5 px-2 pt-2">
+            {attachments.map((attachment) => (
+              <li
+                key={attachment.id}
+                title={attachment.name}
+                className="group relative grid size-12 place-items-center overflow-hidden rounded-md border border-line-strong bg-surface-3"
+              >
+                {attachment.thumb ? (
+                  <img src={attachment.thumb} alt={attachment.name} className="size-full object-cover" draggable={false} />
+                ) : (
+                  <Loader2 aria-label={`Preparing ${attachment.name}`} className="size-3.5 animate-spin text-ink-2" />
+                )}
+                {attachment.kind === 'video' && (
+                  <Film aria-label="video" className="absolute bottom-0.5 left-0.5 size-3 rounded-sm bg-black/60 p-px text-white" />
+                )}
+                <button
+                  type="button"
+                  aria-label={`Remove ${attachment.name}`}
+                  onClick={() => onRemoveAttachment(attachment.id)}
+                  className="t-fast absolute top-0.5 right-0.5 grid size-4 place-items-center rounded-full bg-black/70 text-white hover:bg-black"
+                >
+                  <X aria-hidden="true" className="size-3" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+
         {rangeOpen && (
           <RangeEditor
             fps={fps}
@@ -420,6 +464,13 @@ export function Composer({
             setDraft(event.target.value)
             setCaret(event.target.selectionStart)
             setDismissed(null)
+          }}
+          onPaste={(event) => {
+            // Pictures on the clipboard become attachments; text pastes as text.
+            const files = Array.from(event.clipboardData.files)
+            if (files.length === 0) return
+            event.preventDefault()
+            onAddFiles(files)
           }}
           onSelect={syncCaret}
           onClick={syncCaret}
@@ -467,6 +518,23 @@ export function Composer({
           </span>
           <ToolbarButton label="Pin an asset, clip or time" icon={AtSign} onClick={openMention} />
           <ToolbarButton
+            label="Attach images or video (or paste, or drop them here)"
+            icon={Paperclip}
+            onClick={() => picker.current?.click()}
+          />
+          <input
+            ref={picker}
+            type="file"
+            multiple
+            accept={PICKER_ACCEPT}
+            hidden
+            onChange={(event) => {
+              const files = Array.from(event.target.files ?? [])
+              event.target.value = ''
+              if (files.length > 0) onAddFiles(files)
+            }}
+          />
+          <ToolbarButton
             label={approval ? 'Ask before editing: on — the agent proposes, you approve' : 'Ask before editing: off — the agent edits, you can revert'}
             icon={ShieldCheck}
             pressed={approval}
@@ -499,7 +567,7 @@ export function Composer({
             <button
               type="button"
               onClick={send}
-              disabled={draft.trim().length === 0}
+              disabled={draft.trim().length === 0 && attachments.length === 0}
               aria-label="Send"
               title="Send (Enter)"
               className="t-press grid size-7 place-items-center rounded-full bg-accent text-accent-ink hover:bg-accent-hover active:scale-[0.96] disabled:bg-surface-4 disabled:text-ink-3"

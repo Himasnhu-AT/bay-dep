@@ -37,7 +37,7 @@ import { restoreBounds, DEFAULT_HEIGHT, DEFAULT_WIDTH, MIN_HEIGHT, MIN_WIDTH } f
 import { onAccessChange, startAccess, stopAccess } from './auth/access'
 import { startGeneration, stopGeneration } from './generate/service'
 import { startUpdates, stopUpdates } from './update/updater'
-import { disposeAgent } from './agent/host'
+import { disposeAgent, sweepAgentAttachments } from './agent/host'
 import { cancelUrlImports, sweepIncompleteDownloads } from './media/url-import'
 import { isEntitled } from '@shared/access'
 import { appNameFor } from './app-name'
@@ -255,6 +255,10 @@ void app.whenReady().then(() => {
   installMenu()
   onRecentsChanged(rebuildMenu)
   rebuildMenu()
+
+  // What the user attached to a conversation that ended without `dispose` — a crash, a force
+  // quit. No conversation exists yet, so nothing is reading them.
+  sweepAgentAttachments()
 
   // Reclaims thumbnail and waveform directories left by an older cache scheme. Nothing else
   // in bay evicts, so without this a scheme change leaks its entire previous cache for the

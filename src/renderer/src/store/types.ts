@@ -22,6 +22,7 @@ import type { BrfCodeMeta, BrfDocument } from '@shared/brf'
 import type { CanvasFit } from '@shared/project'
 import type { AgentEntry, AgentEvent, AgentGate, Proposal } from '@shared/agent'
 import type { Pin } from '@shared/pins'
+import type { AgentAttachmentView } from '@shared/agent-attachments'
 import type { RippleDeleteResult } from '@shared/ripple'
 import type { OpenSpanResult } from '@shared/insert-edit'
 import type { TrackMove } from '@shared/track-move'
@@ -211,7 +212,7 @@ export interface EditorActions {
   /** Begin an in-app agent session: from here writes are gated until something is approved. */
   startAgentSession(): void
   /** Append what the user typed, so it reads in order beside the replies. */
-  logUserMessage(text: string, pins?: Pin[]): void
+  logUserMessage(text: string, pins?: Pin[], attachments?: AgentAttachmentView[]): void
   /** Fold one runtime event into the conversation. */
   applyAgentEvent(event: AgentEvent): void
   /** Throw the conversation away. The gate and the session are untouched. */

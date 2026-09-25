@@ -21,6 +21,9 @@ export function transcriptMarkdown(projectName: string, log: readonly AgentEntry
         if (entry.pins && entry.pins.length > 0) {
           out.push(`Pinned: ${entry.pins.map((pin) => '`' + JSON.stringify(pin) + '`').join(', ')}`, '')
         }
+        if (entry.attachments && entry.attachments.length > 0) {
+          out.push(`Attached: ${entry.attachments.map((a) => `${a.kind} “${a.name}”`).join(', ')}`, '')
+        }
         out.push(entry.text, '')
         break
       case 'assistant':

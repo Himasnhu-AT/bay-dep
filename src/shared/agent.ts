@@ -23,6 +23,7 @@
 
 import { TOOLS, VALIDATE_ONLY, acceptsValidateOnly, findTool, type ToolSpec } from './mcp'
 import type { Pin } from './pins'
+import type { AgentAttachmentView } from './agent-attachments'
 import type { ChangeLine } from './diff'
 
 // ---------------------------------------------------------------------------
@@ -125,8 +126,11 @@ export interface AgentRuntime {
  * state rather than two that must be paired up by eye.
  */
 export type AgentEntry =
-  /** `pins` are what was pinned when it was sent, shown as chips; `text` is what was typed. */
-  | { kind: 'user'; id: string; text: string; pins?: Pin[] }
+  /**
+   * `pins` are what was pinned when it was sent, shown as chips; `text` is what was typed;
+   * `attachments` the images and video sent with it, as thumbnails.
+   */
+  | { kind: 'user'; id: string; text: string; pins?: Pin[]; attachments?: AgentAttachmentView[] }
   | { kind: 'assistant'; id: string; text: string }
   | { kind: 'thought'; id: string; text: string }
   /** How long the model thought, when its reasoning itself was not sent. */

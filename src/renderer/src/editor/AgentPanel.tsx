@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { AlertTriangle, Brain, Check, ChevronRight, Download, Loader2, Undo2 } from 'lucide-react'
+import { useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react'
+import { AlertTriangle, Brain, Check, ChevronRight, Download, Film, Loader2, Paperclip, Undo2 } from 'lucide-react'
 import { approvalMessage, DECLINED_MESSAGE, formatElapsed, type AgentEntry } from '@shared/agent'
 import { Button, Markdown, Panel, ScrollArea } from '@/components'
 import { AGENT_STARTERS, STARTERS_SHOWN, type AgentStarter } from './agentStarters'
@@ -12,6 +12,19 @@ import { estimateToolCallUsd } from '@shared/generation'
 import { estimateSpeechToolCallUsd } from '@shared/speech'
 import { toolPreview } from '@shared/tool-preview'
 import { Composer } from './Composer'
+import { ASSET_DRAG_TYPE } from './AssetTile'
+import { findAsset } from '@shared/project'
+import type { AgentAttachmentView } from '@shared/agent-attachments'
+import {
+  makeThumb,
+  pendingFromAsset,
+  pendingFromFile,
+  roomFor,
+  toInput,
+  toView,
+  type PendingAttachment
+} from '@/lib/agentAttachments'
+import { cn } from '@/lib/cn'
 
 /**
  * Claude Code, in the editor.
@@ -42,6 +55,56 @@ export function AgentPanel(): ReactNode {
 
   const [draft, setDraft] = useState('')
   const [problem, setProblem] = useState<string | null>(null)
+  const [attachments, setAttachments] = useState<PendingAttachment[]>([])
+  const [dragOver, setDragOver] = useState(false)
+
+  /**
+   * Add what the user attached, up to the limit, saying what was refused and why. Thumbnails are
+   * made after the chips appear, so a large video does not hold the chip back.
+   */
+  const addAttachments = (candidates: Array<{ ok: true; pending: PendingAttachment } | { ok: false; error: string }>): void => {
+    const refused = candidates.flatMap((c) => (c.ok ? [] : [c.error]))
+    const accepted = candidates.flatMap((c) => (c.ok ? [c.pending] : []))
+    const room = roomFor(attachments.length, accepted.length)
+    const taken = accepted.slice(0, room.take)
+    if (room.error) refused.push(room.error)
+    setProblem(refused.length > 0 ? refused.join(' ') : null)
+    if (taken.length === 0) return
+    setAttachments((list) => [...list, ...taken])
+    for (const pending of taken) {
+      void makeThumb(pending).then((thumb) =>
+        setAttachments((list) => list.map((a) => (a.id === pending.id ? { ...a, thumb } : a)))
+      )
+    }
+  }
+  const addFiles = (files: readonly File[]): void => {
+    let pasted = 0
+    addAttachments(files.map((file) => pendingFromFile(file, `Pasted image ${(pasted += 1)}`)))
+  }
+  const removeAttachment = (id: string): void => setAttachments((list) => list.filter((a) => a.id !== id))
+
+  // Files from Finder and assets from the media bin. The window's own drop handler imports files
+  // into the project; a drop here is taken (`preventDefault`) and that one then leaves it alone.
+  const accepts = (event: DragEvent): boolean =>
+    event.dataTransfer.types.includes('Files') || event.dataTransfer.types.includes(ASSET_DRAG_TYPE)
+  const onDragOver = (event: DragEvent): void => {
+    if (!accepts(event)) return
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'copy'
+    setDragOver(true)
+  }
+  const onDrop = (event: DragEvent): void => {
+    if (!accepts(event)) return
+    event.preventDefault()
+    setDragOver(false)
+    const assetId = event.dataTransfer.getData(ASSET_DRAG_TYPE)
+    if (assetId) {
+      const asset = findAsset(useEditor.getState().project, assetId)
+      addAttachments([asset ? pendingFromAsset(asset) : { ok: false, error: 'That asset is no longer in the project.' }])
+      return
+    }
+    addFiles(Array.from(event.dataTransfer.files))
+  }
   const bottom = useRef<HTMLDivElement | null>(null)
   const composer = useRef<HTMLTextAreaElement | null>(null)
 
@@ -85,15 +148,20 @@ export function AgentPanel(): ReactNode {
    * `shown` is what the conversation displays when it differs from what the agent receives — an
    * approval is one short line to the user and the full list of calls to the model.
    */
-  const deliver = async (text: string, pins: Pin[] = [], shown?: string): Promise<void> => {
-    if (!text || running) return
+  const deliver = async (
+    text: string,
+    pins: Pin[] = [],
+    shown?: string,
+    attached: PendingAttachment[] = []
+  ): Promise<void> => {
+    if ((!text && attached.length === 0) || running) return
     const api = bay()
     if (!api) {
       setProblem('bay is not answering. The main process may still be starting.')
       return
     }
     setProblem(null)
-    logUserMessage(shown ?? text, pins)
+    logUserMessage(shown ?? text, pins, attached.map(toView))
 
     // Starting is separate from sending so a missing `claude` binary reads as "could not start"
     // rather than as a model that ignored the message.
@@ -107,15 +175,22 @@ export function AgentPanel(): ReactNode {
     }
     // The log shows what was typed, with the pins as chips; the agent receives the pins spelled
     // out as ids and frames ahead of it.
-    const sent = await api.agent.send(composeMessage(text, pins, selectFps(useEditor.getState())))
-    if (!sent.ok) setProblem(sent.error ?? 'The message could not be delivered.')
+    const inputs = await Promise.all(attached.map(toInput))
+    const sent = await api.agent.send(composeMessage(text, pins, selectFps(useEditor.getState())), inputs)
+    if (!sent.ok) {
+      setProblem(sent.error ?? 'The message could not be delivered.')
+      // Given back rather than lost: the user removes the one that was refused and sends again.
+      if (attached.length > 0) setAttachments((list) => [...attached, ...list])
+    }
   }
 
   // Typed messages carry the pins; a decision on a proposal card does not — it already names
   // the exact calls it approves.
   const send = async (text: string): Promise<void> => {
+    const attached = attachments
     setDraft('')
-    await deliver(text, useEditor.getState().agentPins)
+    setAttachments([])
+    await deliver(text, useEditor.getState().agentPins, undefined, attached)
   }
 
   const stop = (): void => {
@@ -144,6 +219,7 @@ export function AgentPanel(): ReactNode {
     endAgentSession()
     clearAgentLog()
     useEditor.getState().clearAgentPins()
+    setAttachments([])
     setDraft('')
     setProblem(null)
   }
@@ -152,7 +228,7 @@ export function AgentPanel(): ReactNode {
     <Panel
       title="Agent"
       className="h-full"
-      bodyClassName="flex flex-col"
+      bodyClassName={cn('relative flex flex-col', dragOver && 'ring-2 ring-accent ring-inset')}
       actions={
         debugMode || log.length > 0 ? (
           <>
@@ -176,6 +252,24 @@ export function AgentPanel(): ReactNode {
         ) : undefined
       }
     >
+      <div
+        className="contents"
+        onDragOver={onDragOver}
+        onDragLeave={(event) => {
+          if (!event.currentTarget.parentElement?.contains(event.relatedTarget as Node | null)) setDragOver(false)
+        }}
+        onDrop={onDrop}
+      >
+      {dragOver && (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 z-10 grid place-items-center bg-accent/5 text-[12px] font-medium text-ink-0"
+        >
+          <span className="flex items-center gap-1.5 rounded-md bg-surface-2 px-2 py-1 shadow-pop">
+            <Paperclip className="size-3.5" /> Attach to the message
+          </span>
+        </div>
+      )}
       <ScrollArea className="flex-1">
         {log.length === 0 ? (
           <Starters onPick={pickStarter} />
@@ -205,12 +299,35 @@ export function AgentPanel(): ReactNode {
         draft={draft}
         setDraft={setDraft}
         textareaRef={composer}
+        attachments={attachments}
+        onAddFiles={addFiles}
+        onRemoveAttachment={removeAttachment}
       />
+      </div>
     </Panel>
   )
 }
 
-type Deliver = (text: string, pins?: Pin[], shown?: string) => Promise<void>
+type Deliver = (text: string, pins?: Pin[], shown?: string, attached?: PendingAttachment[]) => Promise<void>
+
+/** An attachment as the transcript shows it: its thumbnail, or its name when there is none. */
+function AttachmentThumb({ view }: { view: AgentAttachmentView }): ReactNode {
+  return (
+    <li
+      title={view.name}
+      className="relative grid size-14 place-items-center overflow-hidden rounded-md border border-line-strong bg-surface-2"
+    >
+      {view.thumb ? (
+        <img src={view.thumb} alt={view.name} className="size-full object-cover" draggable={false} />
+      ) : (
+        <span className="px-1 text-center text-[9.5px] leading-tight break-all text-ink-2">{view.name}</span>
+      )}
+      {view.kind === 'video' && (
+        <Film aria-label="video" className="absolute right-0.5 bottom-0.5 size-3 rounded-sm bg-black/60 p-px text-white" />
+      )}
+    </li>
+  )
+}
 
 /** What the user sent: their words, with what they had pinned shown as chips above them. */
 function UserEntry({ entry }: { entry: Extract<AgentEntry, { kind: 'user' }> }): ReactNode {
@@ -218,6 +335,13 @@ function UserEntry({ entry }: { entry: Extract<AgentEntry, { kind: 'user' }> }):
 
   return (
     <div className="flex max-w-[92%] flex-col items-end gap-1 self-end">
+      {entry.attachments && entry.attachments.length > 0 && (
+        <ul aria-label="Attached to this message" className="flex flex-wrap justify-end gap-1">
+          {entry.attachments.map((view, index) => (
+            <AttachmentThumb key={index} view={view} />
+          ))}
+        </ul>
+      )}
       {entry.pins && entry.pins.length > 0 && (
         <ul aria-label="Pinned for this message" className="flex flex-wrap justify-end gap-1">
           {entry.pins.map((pin) => (
@@ -232,7 +356,7 @@ function UserEntry({ entry }: { entry: Extract<AgentEntry, { kind: 'user' }> }):
           ))}
         </ul>
       )}
-      <p className="rounded-lg bg-surface-3 px-2.5 py-1.5 text-[12px] leading-relaxed whitespace-pre-wrap text-ink-0">
+      {entry.text && <p className="rounded-lg bg-surface-3 px-2.5 py-1.5 text-[12px] leading-relaxed whitespace-pre-wrap text-ink-0">
         {skillSegments(entry.text).map((part, index) =>
           part.skill ? (
             <span
@@ -246,7 +370,7 @@ function UserEntry({ entry }: { entry: Extract<AgentEntry, { kind: 'user' }> }):
             <span key={index}>{part.text}</span>
           )
         )}
-      </p>
+      </p>}
     </div>
   )
 }

@@ -24,6 +24,7 @@ import type {
 } from '@shared/ipc'
 import { IPC } from '@shared/ipc'
 import type { AgentEntry, AgentEvent, AgentProvider } from '@shared/agent'
+import type { AgentAttachmentInput } from '@shared/agent-attachments'
 import type { McpToolCall, McpToolResult } from '@shared/mcp'
 import type { Project } from '@shared/project'
 import type { WhisperDownload } from '@shared/whisper'
@@ -132,7 +133,7 @@ const api: BayApi = {
   agent: {
     start: (options?: { provider?: AgentProvider }) => ipcRenderer.invoke(IPC.agentStart, options),
     providers: () => ipcRenderer.invoke(IPC.agentProviders),
-    send: (text: string) => ipcRenderer.invoke(IPC.agentSend, text),
+    send: (text: string, attachments?: AgentAttachmentInput[]) => ipcRenderer.invoke(IPC.agentSend, text, attachments),
     stop: () => ipcRenderer.invoke(IPC.agentStop),
     dispose: () => ipcRenderer.invoke(IPC.agentDispose),
     exportTranscript: (projectName: string, log: AgentEntry[]) =>

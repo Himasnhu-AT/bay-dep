@@ -336,6 +336,11 @@ export function App(): ReactNode {
     // for a dropped file in a renderer is to *navigate to it*, which unloads the app. It
     // has to be prevented everywhere, including over gaps between panels.
     const onDragOver = (event: DragEvent): void => {
+      // Taken by a drop target of its own (the agent panel's attachments): no import overlay.
+      if (event.defaultPrevented) {
+        setDropping(false)
+        return
+      }
       if (!event.dataTransfer?.types.includes('Files')) return
       event.preventDefault()
       event.dataTransfer.dropEffect = 'copy'
@@ -345,6 +350,10 @@ export function App(): ReactNode {
       if (event.relatedTarget === null) setDropping(false)
     }
     const onDrop = (event: DragEvent): void => {
+      if (event.defaultPrevented) {
+        setDropping(false)
+        return
+      }
       if (!event.dataTransfer?.types.includes('Files')) return
       event.preventDefault()
       setDropping(false)

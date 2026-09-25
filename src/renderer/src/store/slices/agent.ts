@@ -113,11 +113,17 @@ export function agentSlice({ set, get, restoreFiles }: StoreKit): Actions {
       set((state) => ({ compositionEpochs: { ...state.compositionEpochs, [path]: (state.compositionEpochs[path] ?? 0) + 1 } }))
     },
 
-    logUserMessage(text, pins) {
+    logUserMessage(text, pins, attachments) {
       set((state) => ({
         agentLog: [
           ...state.agentLog,
-          { kind: 'user', id: newId('msg'), text, ...(pins && pins.length > 0 ? { pins } : {}) }
+          {
+            kind: 'user',
+            id: newId('msg'),
+            text,
+            ...(pins && pins.length > 0 ? { pins } : {}),
+            ...(attachments && attachments.length > 0 ? { attachments } : {})
+          }
         ]
       }))
     },
