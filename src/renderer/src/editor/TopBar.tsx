@@ -35,8 +35,10 @@ export interface TopBarProps {
  * inside a drag region is not a button, it is a handle. The 80px of left padding is the macOS
  * traffic lights, drawn by the system at a fixed offset; nothing may sit under them.
  *
- * Toggle labels give way before anything else when the window narrows (below 1120px of bar):
- * the icons stay, and each keeps its name as its tooltip and accessible name.
+ * When the window narrows, the "bay" wordmark goes first (the mark stays), then the toggle labels
+ * (the icons stay, each keeping its name as its tooltip and accessible name). Measured with a
+ * short project name: labelled toggles and the wordmark need 370px of the left column, 337px
+ * without the wordmark, and a 1024px window gives the column 349px.
  */
 
 /** A panel toggle's "on" state: a neutral fill. The accent is for state that needs noticing. */
@@ -135,6 +137,10 @@ function SaveButton({ saving }: { saving: boolean }): ReactNode {
   )
 }
 
+/** Widths of the bar's content box (the window less the 92px of padding) that each keeps. */
+const WORDMARK_FROM = 980
+const LABELS_FROM = 930
+
 export function TopBar({ onExport, saving, regions }: TopBarProps): ReactNode {
   const canUndo = useEditor((state) => state.past.length > 0)
   const canRedo = useEditor((state) => state.future.length > 0)
@@ -148,7 +154,8 @@ export function TopBar({ onExport, saving, regions }: TopBarProps): ReactNode {
   const barRef = useRef<HTMLElement>(null)
   const { width } = useElementSize(barRef)
   // 0 before the first measurement: show labels, which is right for any window bay opens at.
-  const labels = width === 0 || width >= 1120
+  const labels = width === 0 || width >= LABELS_FROM
+  const wordmark = width === 0 || width >= WORDMARK_FROM
 
   const region = (id: RegionId, name: string, icon: ReactNode, command: 'workspace.toggleLibrary' | 'workspace.toggleInspector' | 'workspace.toggleTimeline'): ReactNode => (
     <ToolButton
@@ -173,7 +180,7 @@ export function TopBar({ onExport, saving, regions }: TopBarProps): ReactNode {
       <div className="flex min-w-0 items-center gap-2">
         <div className="flex shrink-0 items-center gap-1.5 select-none">
           <BayMark size={18} />
-          <span className="text-[14px] font-semibold tracking-tight text-ink-0">bay</span>
+          {wordmark && <span className="text-[14px] font-semibold tracking-tight text-ink-0">bay</span>}
         </div>
         <span aria-hidden="true" className="h-4 w-px shrink-0 bg-line-strong" />
         <div role="group" aria-label="Panels" className="no-drag flex min-w-0 items-center gap-0.5">
