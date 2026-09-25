@@ -87,6 +87,8 @@ test('bay is launched the way the Claude runtimes launch it: its socket, full mo
   assert.equal(valueIn(toml, 'mcp_servers.bay.env', 'BAY_MCP_SOCKET'), JSON.stringify(OPTIONS.socketPath))
   assert.equal(valueIn(toml, 'mcp_servers.bay.env', 'BAY_MCP_MODE'), '"full"')
   assert.equal(valueIn(toml, 'mcp_servers.bay.env', 'ELECTRON_RUN_AS_NODE'), '"1"')
+  // Without it every write tool is refused by Codex itself under approval_policy "never".
+  assert.equal(valueIn(toml, 'mcp_servers.bay', 'default_tools_approval_mode'), '"approve"')
 })
 
 test('the sandbox is read-only, nothing waits on approval, and there is no web search', () => {

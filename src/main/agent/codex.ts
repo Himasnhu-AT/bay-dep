@@ -167,6 +167,12 @@ export function codexConfig(options: Pick<CodexOptions, 'proxyPath' | 'socketPat
     `args = [${server.args.map(tomlString).join(', ')}]`,
     'startup_timeout_sec = 30',
     `tool_timeout_sec = ${toolTimeoutSeconds()}`,
+    // With approval_policy "never", Codex refuses every MCP call it would otherwise ask about —
+    // measured on 0.149.1: read_project ran, add_track came back "MCP tool call requires
+    // approval, but approval policy is never" and the timeline was unchanged. bay's tools are
+    // gated by bay (policy.ts, and "Ask before editing" through propose_edit), so Codex approves
+    // them and leaves the decision to bay.
+    'default_tools_approval_mode = "approve"',
     '',
     '[mcp_servers.bay.env]',
     ...Object.entries(server.env).map(([key, value]) => `${key} = ${tomlString(value)}`),
