@@ -72,7 +72,7 @@ function utilityWorker(modelDir: string): VisionWorker {
       if (child === next) child = null
       for (const [id, call] of pending) {
         pending.delete(id)
-        call.reject(new Error(`The visual search process stopped (exit ${code}). Try again; if it keeps stopping, delete and re-download the model in Settings › Visual search.`))
+        call.reject(new Error(`The visual search process stopped (exit ${code}). Try again; if it keeps stopping, delete and re-download the model in Preferences › Visual search.`))
       }
     })
     child = next

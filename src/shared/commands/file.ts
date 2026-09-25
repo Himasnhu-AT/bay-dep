@@ -33,7 +33,7 @@ export const fileCommands = [
   { id: 'file.projectSettings', label: 'Project Settings…', group: 'File' },
   {
     id: 'app.settings',
-    label: 'Settings…',
+    label: 'Preferences…',
     group: 'File',
     shortcut: 'Mod+,',
     accelerator: 'native'

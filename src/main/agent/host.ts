@@ -88,7 +88,7 @@ function broadcast(event: AgentEvent): void {
   }
 }
 
-/** Which providers' CLIs this machine has, for Settings › Agent. Never throws. */
+/** Which providers' CLIs this machine has, for Preferences › Agent. Never throws. */
 export async function agentProviders(): Promise<AgentProviderStatus[]> {
   const searched = (await searchDirs()).length
   const [claude, codex] = await Promise.all([findClaude(), findCodex()])

@@ -39,7 +39,7 @@ export type AgentProvider = 'claude' | 'codex'
 
 export const AGENT_PROVIDERS: readonly AgentProvider[] = ['claude', 'codex']
 
-/** Whether a provider's CLI was found on this machine — what Settings › Agent shows. */
+/** Whether a provider's CLI was found on this machine — what Preferences › Agent shows. */
 export interface AgentProviderStatus {
   provider: AgentProvider
   /** The binary bay would run, or null when none was found where a GUI app can look. */

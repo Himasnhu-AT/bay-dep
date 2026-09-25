@@ -73,7 +73,7 @@ test('OpenAI: a refused key says to fix it in Settings, not in chat', async () =
   try {
     await assert.rejects(
       openaiImage.start(request({ model: 'gpt-image-1', prompt: 'x' }, 'image'), ctx(stub, { apiKey: 'bad' })),
-      /refused the key \(401\).*Incorrect API key provided.*Settings › Providers/
+      /refused the key \(401\).*Incorrect API key provided.*Preferences › AI providers/
     )
   } finally {
     await stub.close()

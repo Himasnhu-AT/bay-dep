@@ -93,8 +93,12 @@ export function alive(pid: number): boolean {
   }
 }
 
-/** Poll until `check` holds, or fail naming what was waited for. */
-export async function waitFor(what: string, check: () => boolean, timeoutMs = 5000): Promise<void> {
+/**
+ * Poll until `check` holds, or fail naming what was waited for. The default is a ceiling, not an
+ * expectation: 5 s was exceeded by a fake agent's start-up while parallel builds loaded the
+ * machine, and a longer wait costs nothing when the thing arrives.
+ */
+export async function waitFor(what: string, check: () => boolean, timeoutMs = 8_000): Promise<void> {
   const deadline = Date.now() + timeoutMs
   while (!check()) {
     if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`)

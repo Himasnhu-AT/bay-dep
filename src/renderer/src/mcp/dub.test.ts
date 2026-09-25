@@ -288,7 +288,7 @@ test('the session budget is checked for the whole dub: refused with nothing star
   const dryBlocked = value(await call('apply_dub', { ...BASE, translations: translations(), validateOnly: true }))
   assert.match(String(dryBlocked.blocked), /past its limit/)
   const refused = errorOf(await call('apply_dub', { ...BASE, translations: translations() }))
-  assert.match(refused, /The whole dub \(3 lines\) is estimated at .*past its limit.*Settings › Providers/)
+  assert.match(refused, /The whole dub \(3 lines\) is estimated at .*past its limit.*Preferences › AI providers/)
   assert.equal(started.length, 0)
 
   spending = { ...spending, spentUsd: 0 }

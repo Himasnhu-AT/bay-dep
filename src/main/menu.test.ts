@@ -315,10 +315,10 @@ test('View has no page-zoom in/out roles: ⌘= and ⌘- zoom the timeline', () =
 
 test('Settings is in the application menu on macOS and in File elsewhere', () => {
   const mac = build({ isMac: true }).template
-  assert.ok(itemsOf(mac, 'bay').some((item) => item.label === 'Settings…'))
-  assert.equal(itemsOf(mac, 'File').some((item) => item.label === 'Settings…'), false)
+  assert.ok(itemsOf(mac, 'bay').some((item) => item.label === 'Preferences…'))
+  assert.equal(itemsOf(mac, 'File').some((item) => item.label === 'Preferences…'), false)
   const other = build({ isMac: false }).template
-  assert.ok(itemsOf(other, 'File').some((item) => item.label === 'Settings…'))
+  assert.ok(itemsOf(other, 'File').some((item) => item.label === 'Preferences…'))
 })
 
 test('no menu starts or ends with a separator, or has two in a row', () => {

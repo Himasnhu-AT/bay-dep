@@ -618,15 +618,15 @@ function ToolbarButton({
 
 /**
  * Whether the agent asks before editing, shown where the user is about to send — and changed in
- * one place, Settings › Agent. This used to be a second switch here, an unlabelled shield that
+ * one place, Preferences › Agent. This used to be a second switch here, an unlabelled shield that
  * changed a setting with consequences (every edit then waits for an approved plan) from a
  * toolbar nobody read as settings. A badge keeps the state visible at the moment it matters and
  * leaves one control for it; clicking it opens that control.
  */
 function ApprovalBadge({ on }: { on: boolean }): ReactNode {
   const label = on
-    ? 'Ask before editing is on: the agent proposes a plan and waits for your approval. Change it in Settings › Agent.'
-    : 'Ask before editing is off: the agent edits directly, and every change can be reverted. Change it in Settings › Agent.'
+    ? 'Ask before editing is on: the agent proposes a plan and waits for your approval. Change it in Preferences › Agent.'
+    : 'Ask before editing is off: the agent edits directly, and every change can be reverted. Change it in Preferences › Agent.'
   return (
     <Tooltip label={label} side="top">
       <button

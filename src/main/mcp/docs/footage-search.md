@@ -10,7 +10,7 @@ slow and costly on an hour of it. Visual search runs on this Mac and sends nothi
 Call `index_footage` with no arguments. It answers at once and indexes every video and image in
 the project in the background; files already indexed (by content, across sessions) are skipped.
 Call it again with no arguments to see progress — it says `done: true` when nothing is left.
-If it says the model is not downloaded, tell the user to get it in Settings › Visual search; do
+If it says the model is not downloaded, tell the user to get it in Preferences › Visual search; do
 not keep calling.
 
 ## 2. Search in words, like a caption

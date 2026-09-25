@@ -7,7 +7,7 @@ export const tool: ToolSpec = {
   name: 'generate_speech',
   description:
     'Generate a voiceover — the exact words given, spoken by an AI voice — on the provider named ' +
-    'by the model, using the key the user set in Settings › Providers. It costs the user money: ' +
+    'by the model, using the key the user set in Preferences › AI providers. It costs the user money: ' +
     'run it with validateOnly: true first to check the options and see the estimated cost and ' +
     'spoken length (the same estimate estimate_speech gives), and fit the script to the gap before ' +
     'paying for it. Returns a jobId at once; the audio is not in the project yet. **Call ' +
@@ -17,7 +17,7 @@ export const tool: ToolSpec = {
     SPEECH_STYLE_IDS.join(', ') +
     ') and custom instructions shape the delivery on models that take them; an option a model ' +
     'does not take is refused with what it does. If no key is set, tell the user to add one in ' +
-    'Settings › Providers — never ask for a key in chat. Models: ' +
+    'Preferences › AI providers — never ask for a key in chat. Models: ' +
     describeSpeechModels(),
   category: 'write',
   readOnly: false,

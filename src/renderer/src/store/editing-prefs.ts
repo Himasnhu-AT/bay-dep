@@ -1,6 +1,6 @@
 /**
  * Editing preferences: per machine, in localStorage, and each one read by the code whose
- * behaviour it changes. Settings › Editing is the only writer.
+ * behaviour it changes. Preferences › Editing is the only writer.
  *
  * A store of its own rather than fields on the editor store: nothing here is project state or
  * undoable, and the editor store's shape is shared by every part of the app.

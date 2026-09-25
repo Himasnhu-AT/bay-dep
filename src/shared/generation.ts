@@ -2,7 +2,7 @@
  * AI image and video generation: the contract, written before any adapter.
  *
  * This is bay's fourth network exception (CLAUDE.md, "Nothing reaches the network"). Main — never
- * the renderer — calls a provider's first-party API with a key the user pasted into Settings ›
+ * the renderer — calls a provider's first-party API with a key the user pasted into Preferences ›
  * Providers, and only when a generation tool is called. What is sent is the prompt, the options
  * and, for image-to-image or image-to-video, the one reference picture the call named. Nothing
  * else about the project leaves the machine. For speech (`@shared/speech`) the prompt is the text
@@ -672,7 +672,7 @@ export function spendRefusalOf(spending: GenerationSpending, estimateUsd: number
       reason: 'room',
       error:
         `${spending.active} generation job${spending.active === 1 ? ' is' : 's are'} already running, and the limit is ${spending.maxActive} at once. Nothing was sent. ` +
-        'Wait for one to finish (track_generation), or ask the user to raise "Jobs at once" in Settings › Providers.'
+        'Wait for one to finish (track_generation), or ask the user to raise "Jobs at once" in Preferences › AI providers.'
     }
   }
   const reserved = spending.reservedUsd ?? 0
@@ -683,7 +683,7 @@ export function spendRefusalOf(spending: GenerationSpending, estimateUsd: number
         `This call (~${usd(estimateUsd)}) would take generation spending this session past its limit: ${usd(spending.spentUsd)} spent` +
         (reserved > 0 ? ` and ${usd(reserved)} held for a dub still generating` : '') +
         ` of ${usd(spending.budgetUsd)}. ` +
-        'Nothing was sent. Ask the user to raise the session budget in Settings › Providers if they want to spend more; do not retry until they have.'
+        'Nothing was sent. Ask the user to raise the session budget in Preferences › AI providers if they want to spend more; do not retry until they have.'
     }
   }
   return null

@@ -216,7 +216,7 @@ test('with no key there is no row and no request; with one the same call starts'
     await jobs.load()
     const refused = await jobs.start(req({ model: 'gpt-image-1', prompt: 'x' }, 'image'))
     assert.equal(refused.ok, false)
-    assert.match(refused.ok ? '' : refused.error, /No OpenAI key is set.*Settings › Providers.*never ask for a key in chat/)
+    assert.match(refused.ok ? '' : refused.error, /No OpenAI key is set.*Preferences › AI providers.*never ask for a key in chat/)
     assert.equal(stub.requests.length, 0)
     assert.equal(jobs.list().length, 0)
     assert.equal((await readdir(dir)).includes('generation-jobs.json'), false)
@@ -403,7 +403,7 @@ test('the spend guard refuses a call past the session budget, naming spent, limi
     assert.equal(second.ok, false)
     assert.match(
       second.ok ? '' : second.error,
-      /This call \(~\$0\.06\) would take generation spending this session past its limit: \$0\.06 spent of \$0\.10\. Nothing was sent\. .*Settings › Providers/
+      /This call \(~\$0\.06\) would take generation spending this session past its limit: \$0\.06 spent of \$0\.10\. Nothing was sent\. .*Preferences › AI providers/
     )
     assert.equal(stub.requests.length, 1, 'the refused call reached no provider')
     assert.equal(second.ok ? null : second.reason, 'budget')
@@ -458,7 +458,7 @@ test('the spend guard caps jobs at once, and two calls racing for the last place
     ])
     assert.deepEqual([b.ok, c.ok].sort(), [false, true])
     const refused = b.ok ? c : b
-    assert.match(refused.ok ? '' : refused.error, /2 generation jobs are already running, and the limit is 2 at once\. Nothing was sent\..*Settings › Providers/)
+    assert.match(refused.ok ? '' : refused.error, /2 generation jobs are already running, and the limit is 2 at once\. Nothing was sent\..*Preferences › AI providers/)
     assert.equal(refused.ok ? null : refused.reason, 'room', 'a caller can tell a full room (wait) from a spent budget (stop)')
     assert.equal(stub.requests.filter((r) => r.url.endsWith(':predictLongRunning')).length, 2)
     assert.equal(jobs.spending().active, 2)

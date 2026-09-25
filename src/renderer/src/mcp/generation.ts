@@ -64,7 +64,7 @@ async function generate(kind: GenerationKind, args: Record<string, unknown>): Pr
   const keys = await api().generation.keys()
   const keySet = keys.some((k) => k.provider === request.provider && k.set)
   const noKey =
-    `No ${label} key is set, so this cannot run. Tell the user to add one in Settings › Providers ` +
+    `No ${label} key is set, so this cannot run. Tell the user to add one in Preferences › AI providers ` +
     `(bay never takes keys in chat), then call this again.`
 
   if (dry) {
@@ -138,7 +138,7 @@ async function speak(args: Record<string, unknown>): Promise<Record<string, unkn
   const keys = await api().generation.keys()
   const keySet = keys.some((k) => k.provider === request.provider && k.set)
   const noKey =
-    `No ${label} key is set, so this cannot run. Tell the user to add one in Settings › Providers ` +
+    `No ${label} key is set, so this cannot run. Tell the user to add one in Preferences › AI providers ` +
     `(bay never takes keys in chat), then call this again.`
   const estimated = { ...spoken(estimate), note: 'An estimate; the generated file’s measured length is the authority.' }
 
@@ -212,7 +212,7 @@ function sessionSpend(spending: GenerationSpending | undefined): Record<string, 
     sessionSpendUsd: spending.spentUsd,
     sessionBudgetUsd: spending.budgetUsd,
     spendNote:
-      'Estimated spend this session against the budget the user set in Settings › Providers. bay refuses a call that would pass it. ' +
+      'Estimated spend this session against the budget the user set in Preferences › AI providers. bay refuses a call that would pass it. ' +
       'A call the provider accepted counts even if it later fails (it may have been billed); one the provider refused outright (a 4xx) does not.'
   }
 }

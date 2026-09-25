@@ -72,7 +72,7 @@ pnpm release:signed   # sign + notarize + staple → DMG, update zip, latest-mac
 
 Environment switches worth knowing: `BAY_AGENT_RUNTIME=sdk` hosts the in-app agent on the Agent
 SDK instead of the `claude` CLI (default), and `=codex` on OpenAI's `codex` CLI — either overrides
-the Settings › Agent › Model choice; `BAY_MCP_MODE=gateway` makes the proxy list three tools
+the Preferences › Agent › Model choice; `BAY_MCP_MODE=gateway` makes the proxy list three tools
 (`get_active_project`, `get_guidelines`, `execute`) instead of the whole catalog. `BAY_ACCESS=dev` skips the
 invite-only access check — **unpackaged builds only** — and `./run.sh` sets it (`--gate` does not).
 
@@ -133,7 +133,7 @@ something saves, and nothing a probe does should.
   of what is *allowed* cannot miss a tool the CLI adds later; a list of what is denied can.
 
 **The Codex provider has no allow-list, so its sandbox is Codex's own, and it is weaker in one
-named way** (`src/main/agent/codex.ts`, Settings › Agent › Model; `BAY_AGENT_RUNTIME=codex`
+named way** (`src/main/agent/codex.ts`, Preferences › Agent › Model; `BAY_AGENT_RUNTIME=codex`
 overrides). One `codex exec --json` per turn, `exec resume <thread>` after the first, under
 bay's own `CODEX_HOME` (`<userData>/.agent-codex`: a generated `config.toml` plus a *link* to
 the user's `auth.json`, nothing else of `~/.codex`) and a `HOME` inside it. Measured on
@@ -971,16 +971,16 @@ projects — indexing an array yields `T | undefined` and you must handle it.
   search would pick. Audio never leaves the machine. The same exception covers **visual search's
   model** (`src/main/vision/`, `@shared/visual-search`, `index_footage`/`search_footage`): SigLIP's
   four files from `Xenova/siglip-base-patch16-224` at a pinned commit, each with a pinned size and
-  SHA-256, fetched only on Download in Settings › Visual search or when `index_footage` finds no
+  SHA-256, fetched only on Download in Preferences › Visual search or when `index_footage` finds no
   model and that same switch is on. Frames, embeddings and queries never leave the machine; the
   model runs on onnxruntime-node in a utility process (`vision/worker.js`, nice 10). The third is **updates**
   (`src/main/update/`): electron-updater's own session (`electron-updater` partition, never the
   editor's) may reach only the origin of the feed in `@shared/update-feed`, enforced in
   `onBeforeRequest` by `allowUpdateRequest`, redirects included. The feed is **unset**, so a
-  shipped bay contacts nothing and Settings › About says "Updates: releasing soon".
+  shipped bay contacts nothing and Preferences › About says "Updates: releasing soon".
   `BAY_UPDATE_FEED` points it at a loopback feed for testing, and nothing else. The fourth is
   **AI generation** (`src/main/generate/`, `@shared/generation`, `@shared/speech`, `generate_image`/
-  `generate_video`/`generate_speech`/`track_generation`), and only with a key the user set in Settings › Providers (sealed by
+  `generate_video`/`generate_speech`/`track_generation`), and only with a key the user set in Preferences › AI providers (sealed by
   `safeStorage`, memory-only without a keychain, never returned to the renderer), only when a
   generation tool starts a job or a job still running at the last quit is resumed. Hosts, per
   provider, enforced by `providerHttp` on every hop of a redirect (manual follow; credentials

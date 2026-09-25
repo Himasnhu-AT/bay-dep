@@ -1,5 +1,5 @@
 /**
- * Which provider's model drives the in-app agent — Claude Code or Codex — chosen in Settings ›
+ * Which provider's model drives the in-app agent — Claude Code or Codex — chosen in Preferences ›
  * Agent and passed on every `agent.start`.
  *
  * Remembered per machine under `bay.agentProvider`, a compatibility surface like every

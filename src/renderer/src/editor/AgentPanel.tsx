@@ -414,7 +414,7 @@ function AgentHeader({
       <h2 id="agent-dock-title" className="text-[13px] font-semibold text-ink-0">
         Agent
       </h2>
-      <Tooltip label={`Answered by ${PROVIDER_LABELS[provider]}, with bay's tools and nothing else. Change it in Settings › Agent.`}>
+      <Tooltip label={`Answered by ${PROVIDER_LABELS[provider]}, with bay's tools and nothing else. Change it in Preferences › Agent.`}>
         <button
           type="button"
           onClick={() => useEditor.getState().setSettingsOpen(true, 'agent')}

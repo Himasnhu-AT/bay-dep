@@ -86,7 +86,7 @@ export function httpFailure(provider: GenerationProvider, status: number, body: 
   const said = detail ? ` ${label} said: "${detail}"` : ''
   if (status === 401 || status === 403) {
     return new ProviderError(
-      `${label} refused the key (${status}).${said} Ask the user to check the ${label} key in Settings › Providers — never ask for a key in chat.`,
+      `${label} refused the key (${status}).${said} Ask the user to check the ${label} key in Preferences › AI providers — never ask for a key in chat.`,
       false,
       status
     )

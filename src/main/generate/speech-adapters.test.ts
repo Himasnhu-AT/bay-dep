@@ -77,7 +77,7 @@ test('OpenAI: a refused key points at Settings; a 200 that is not audio is a ref
   const stub = await startStub((_r, response) => json(response, status, status === 401 ? { error: { message: 'Incorrect API key provided' } } : { note: 'queued' }))
   try {
     const request = speech({ model: 'gpt-4o-mini-tts', text: 'Hi.' })
-    await assert.rejects(openaiSpeech.start(request, ctx(stub)), /refused the key \(401\).*Incorrect API key provided.*Settings › Providers/)
+    await assert.rejects(openaiSpeech.start(request, ctx(stub)), /refused the key \(401\).*Incorrect API key provided.*Preferences › AI providers/)
     status = 200
     await assert.rejects(openaiSpeech.start(request, ctx(stub)), /OpenAI answered without audio/)
   } finally {
@@ -111,7 +111,7 @@ test('ElevenLabs: its { detail: { message } } error reaches the agent', async ()
   try {
     await assert.rejects(
       elevenlabsSpeech.start(speech({ model: 'eleven_flash_v2_5', text: 'Hi.' }), ctx(stub)),
-      /ElevenLabs refused the key \(401\)\. ElevenLabs said: "Invalid API key".*Settings › Providers/
+      /ElevenLabs refused the key \(401\)\. ElevenLabs said: "Invalid API key".*Preferences › AI providers/
     )
   } finally {
     await stub.close()
