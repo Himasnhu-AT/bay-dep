@@ -144,10 +144,16 @@ export function startBlocker(input: {
   keys: readonly ProviderKeyStatus[] | null
   spending: GenerationSpending | null
   estimatedCostUsd: number | null
-}): { reason: 'loading' | 'no-key' | 'room' | 'budget'; text: string; providers: boolean } | null {
-  const { provider, keys, spending, estimatedCostUsd } = input
+  /** Why reading the keys failed, when it did. Without it an unanswered read looks like one still in flight. */
+  readError?: string | null
+}): { reason: 'loading' | 'unreadable' | 'no-key' | 'room' | 'budget'; text: string; providers: boolean } | null {
+  const { provider, keys, spending, estimatedCostUsd, readError } = input
   if (!provider) return null
-  if (keys === null) return { reason: 'loading', text: 'Checking provider keys…', providers: false }
+  if (keys === null) {
+    return readError
+      ? { reason: 'unreadable', text: `Could not check the provider keys: ${readError}. bay tries again when Preferences closes.`, providers: true }
+      : { reason: 'loading', text: 'Checking provider keys…', providers: false }
+  }
   const label = PROVIDERS[provider].label
   const status = keys.find((k) => k.provider === provider)
   if (!status?.set) {

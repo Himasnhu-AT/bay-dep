@@ -38,7 +38,9 @@ const ids = (page: WorkspacePage): Frame['ids'] => ({
   bottom: `bay.layout.${page}.bottom`
 })
 
-const EDIT_LEFT = { defaultSize: '300px', minSize: '220px', maxSize: '480px' } as const
+// The cap is a share of the window, not pixels: 480px was fine at 1440 and left a 1024 window
+// with a library at 40% of it and the viewer squeezed. 30% is 432px at 1440, 307px at 1024.
+const EDIT_LEFT = { defaultSize: '300px', minSize: '220px', maxSize: '30%' } as const
 const INSPECTOR = { defaultSize: '268px', minSize: '220px', maxSize: '45%' } as const
 const BESIDE = { defaultSize: '280px', minSize: '200px', maxSize: '50%' } as const
 
@@ -69,7 +71,9 @@ export const PAGE_FRAMES: Record<WorkspacePage, Frame> = {
     ids: ids('color'),
     left: EDIT_LEFT,
     right: { defaultSize: '320px', minSize: '260px', maxSize: '50%' },
-    timeline: { defaultSize: '190px', minSize: '120px' },
+    // The clip strip (~150px) sits inside this region, above the timeline: 190px left the
+    // timeline's toolbar with no tracks under it.
+    timeline: { defaultSize: '360px', minSize: '280px' },
     beside: BESIDE,
     viewerMin: '320px',
     workMin: '45%'
@@ -169,8 +173,10 @@ export function PageLayout({ page, content }: { page: WorkspacePage; content: Pa
 
   const timelineBody = (
     <div className="flex h-full min-h-0 flex-col">
-      {content.aboveTimeline}
-      <div className="min-h-0 flex-1">
+      {/* Under pressure the strip gives way, not the timeline: the timeline keeps room for its
+          toolbar and a track or two whatever the region's height. */}
+      {content.aboveTimeline !== undefined && <div className="min-h-0 shrink overflow-hidden">{content.aboveTimeline}</div>}
+      <div className="min-h-28 flex-1">
         {content.besideTimeline === undefined ? (
           <Slot name="timeline" />
         ) : (

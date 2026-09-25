@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useStore } from 'zustand'
 import { AlertTriangle, AudioLines, Check, Download, Film, ImageIcon, KeyRound, LoaderCircle, Sparkles } from 'lucide-react'
-import type { GenerationJob, GenerationKind, GenerationSpending, ProviderKeyStatus } from '@shared/generation'
+import type { GenerationJob, GenerationKind } from '@shared/generation'
 import { PROVIDERS } from '@shared/generation'
 import { Button, ProgressBar, Select, Tabs, Tooltip } from '@/components'
 import { bay } from '@/lib/bay'
@@ -25,6 +26,7 @@ import {
   usd,
   type GenerateForm
 } from './generateForm'
+import { createGenerationJobs } from './generationJobs'
 
 /**
  * AI actions without typing a prompt to the agent: generate a picture, a clip or a voiceover
@@ -96,13 +98,38 @@ function AskTheAgent({ onDraft }: { onDraft: (text: string) => void }): ReactNod
 }
 
 function openProviders(): void {
-  // Settings has no way to open on a page from outside yet (WP6); it opens where it was left.
   useEditor.getState().setSettingsOpen(true, 'providers')
 }
 
+/**
+ * The jobs this window started, and the polling that lands them, for as long as the window is
+ * open — not as long as the tab is. The tab unmounts when the dock shows Chat or closes.
+ */
+const generation = createGenerationJobs({
+  api: () => bay()?.generation ?? null,
+  isImported: (job) => job.outputPath !== undefined && useEditor.getState().project.assets.some((a) => a.path === job.outputPath),
+  async importJob(job) {
+    const notify = useEditor.getState().notify
+    try {
+      // The agent's own `track_generation`: import through `media.importPaths`, one undo step.
+      const result = (await generationTools.track_generation!({ jobId: job.id })) as { asset?: { name: string }; error?: string }
+      if (result.asset) notify(`${KIND_LABELS[job.kind]} “${result.asset.name}” is in the media pool.`)
+      else notify(result.error ?? 'The generated file could not be imported.', 'error')
+    } catch (error) {
+      notify(error instanceof Error ? error.message : String(error), 'error')
+    }
+  },
+  schedule: (run, ms) => setTimeout(run, ms),
+  now: () => Date.now(),
+  pollMs: POLL_MS
+})
+
 function GenerateSection(): ReactNode {
   const notify = useEditor((state) => state.notify)
-  const assetPaths = useEditor((state) => state.project.assets.map((a) => a.path).join('\n'))
+  // The asset list itself, which changes only when assets do — not a string rebuilt from it on
+  // every store change, which during playback is every frame.
+  const assets = useEditor((state) => state.project.assets)
+  const assetPaths = useMemo(() => new Set(assets.map((a) => a.path)), [assets])
   const settingsOpen = useEditor((state) => state.settingsOpen)
 
   const [forms, setForms] = useState<Record<GenerationKind, GenerateForm>>(() => ({
@@ -114,77 +141,22 @@ function GenerateSection(): ReactNode {
   const form = forms[kind]
   const update = (patch: Partial<GenerateForm>): void => setForms((all) => ({ ...all, [kind]: { ...all[kind], ...patch } }))
 
-  const [keys, setKeys] = useState<ProviderKeyStatus[] | null>(null)
-  const [spending, setSpending] = useState<GenerationSpending | null>(null)
-  const [jobs, setJobs] = useState<GenerationJob[]>([])
+  const { keys, spending, jobs: list, now, readError } = useStore(generation.store)
   const [starting, setStarting] = useState(false)
   const [problem, setProblem] = useState<string | null>(null)
-  const [now, setNow] = useState(() => Date.now())
-  // Jobs started from this panel import themselves when they land; the agent's own it imports.
-  const mine = useRef(new Set<string>())
-  const importing = useRef(new Set<string>())
   const available = bay() !== null
-
-  const refresh = useCallback(async (): Promise<void> => {
-    const api = bay()
-    if (!api) return
-    const [nextKeys, nextSpending, nextJobs] = await Promise.all([
-      api.generation.keys(),
-      api.generation.spending(),
-      api.generation.jobs()
-    ])
-    setKeys(nextKeys)
-    setSpending(nextSpending)
-    setJobs(nextJobs)
-    setNow(Date.now())
-  }, [])
+  const refresh = generation.refresh
 
   // On mount, and again when Settings closes: a key added there should unlock the button here.
   useEffect(() => {
     if (!settingsOpen) void refresh()
   }, [settingsOpen, refresh])
 
-  const active = jobs.some((job) => job.status === 'queued' || job.status === 'running')
-  useEffect(() => {
-    if (!active) return
-    const timer = setInterval(() => void refresh(), POLL_MS)
-    return () => clearInterval(timer)
-  }, [active, refresh])
-
-  const imported = (job: GenerationJob): boolean => job.outputPath !== undefined && assetPaths.split('\n').includes(job.outputPath)
-
-  const importJob = useCallback(
-    async (job: GenerationJob): Promise<void> => {
-      if (importing.current.has(job.id)) return
-      importing.current.add(job.id)
-      try {
-        // The agent's own `track_generation`: import through `media.importPaths`, one undo step.
-        const result = (await generationTools.track_generation!({ jobId: job.id })) as { asset?: { name: string }; error?: string }
-        if (result.asset) notify(`${KIND_LABELS[job.kind]} “${result.asset.name}” is in the media pool.`)
-        else notify(result.error ?? 'The generated file could not be imported.', 'error')
-      } catch (error) {
-        notify(error instanceof Error ? error.message : String(error), 'error')
-      } finally {
-        importing.current.delete(job.id)
-      }
-    },
-    [notify]
-  )
-
-  useEffect(() => {
-    for (const job of jobs) {
-      if (job.status === 'done' && mine.current.has(job.id)) {
-        mine.current.delete(job.id)
-        if (!imported(job)) void importJob(job)
-      }
-    }
-    // `imported` reads `assetPaths`, which is in the list.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [jobs, assetPaths, importJob])
+  const imported = (job: GenerationJob): boolean => job.outputPath !== undefined && assetPaths.has(job.outputPath)
 
   const checked = checkForm(form)
   const provider = providerOf(kind, form.model)
-  const blocker = startBlocker({ provider, keys, spending, estimatedCostUsd: checked.estimatedCostUsd })
+  const blocker = startBlocker({ provider, keys, spending, estimatedCostUsd: checked.estimatedCostUsd, readError })
   const canStart = available && checked.ok && !blocker && !starting
 
   const start = async (): Promise<void> => {
@@ -194,7 +166,7 @@ function GenerateSection(): ReactNode {
     const call = toolCall(form)
     try {
       const result = (await generationTools[call.tool]!(call.args)) as { jobId?: string }
-      if (result.jobId) mine.current.add(result.jobId)
+      if (result.jobId) generation.adopt(result.jobId)
       notify(`Generating ${KIND_LABELS[kind].toLowerCase()}. It lands in the media pool when it is done.`)
       await refresh()
     } catch (error) {
@@ -205,7 +177,7 @@ function GenerateSection(): ReactNode {
     }
   }
 
-  const recent = jobs.slice(0, 6)
+  const recent = list.slice(0, 6)
 
   return (
     <section aria-labelledby="ai-generate-heading" className="mt-2 border-t border-line">
@@ -293,6 +265,12 @@ function GenerateSection(): ReactNode {
               Open Providers settings
             </Button>
           )}
+          {readError && keys !== null && (
+            <p className="flex items-start gap-1.5 text-warning">
+              <AlertTriangle aria-hidden="true" className="mt-px size-3.5 shrink-0" />
+              <span className="text-pretty">Could not refresh the jobs ({readError}); what shows is from the last read.</span>
+            </p>
+          )}
           {problem && (
             <p role="alert" className="flex items-start gap-1.5 text-danger">
               <AlertTriangle aria-hidden="true" className="mt-px size-3.5 shrink-0" />
@@ -322,7 +300,7 @@ function GenerateSection(): ReactNode {
           <SectionHeading>Jobs</SectionHeading>
           <ul aria-label="Generation jobs" className="flex flex-col gap-1 px-2 pb-3">
             {recent.map((job) => (
-              <JobRow key={job.id} job={job} imported={imported(job)} now={now} onImport={() => void importJob(job)} />
+              <JobRow key={job.id} job={job} imported={imported(job)} now={now} onImport={() => void generation.importJob(job)} />
             ))}
           </ul>
         </div>
