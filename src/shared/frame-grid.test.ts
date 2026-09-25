@@ -46,6 +46,22 @@ test('gridLayout stays inside the edge bound on both sides, for landscape and po
   }
 })
 
+test('a grid is never larger than the 1568px the model sees, since frame_grid sends it as an image', () => {
+  // A literal, not MAX_GRID_EDGE: the bound is the Claude API's, and a test that read the constant
+  // would move with it if someone raised it back to 2048.
+  let largest = 0
+  for (const aspect of [16 / 9, 9 / 16, 1, 21 / 9, 4 / 5]) {
+    for (const cells of [1, 2, 4, 6, 9, 12, 16, 20, 36]) {
+      const g = gridLayout(cells, aspect)
+      largest = Math.max(largest, g.width, g.height)
+      assert.ok(g.width <= 1568 && g.height <= 1568, `${cells} @ ${aspect.toFixed(2)}: ${g.width}×${g.height}`)
+    }
+  }
+  // The specimen reaches the bound: with a 2048 edge these same grids run past 1568.
+  assert.ok(gridLayout(16, 16 / 9, 2048).width > 1568, 'the specimen must be able to exceed the bound')
+  assert.ok(largest > 1400, `the grids should use the room they have (largest ${largest})`)
+})
+
 test('gridLayout lays twelve landscape frames out as a grid, not a strip', () => {
   const g = gridLayout(12, 16 / 9)
   assert.ok(g.columns >= 3 && g.columns <= 4, `columns ${g.columns}`)

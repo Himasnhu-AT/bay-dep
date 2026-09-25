@@ -14,11 +14,14 @@ import { toolPreview } from '@shared/tool-preview'
 import { Composer } from './Composer'
 import { ASSET_DRAG_TYPE } from './AssetTile'
 import { findAsset } from '@shared/project'
-import type { AgentAttachmentView } from '@shared/agent-attachments'
+import { isAttachableFile, manyImagesNote, splitDrop, type AgentAttachmentView } from '@shared/agent-attachments'
 import {
+  deliverMessage,
+  IMPORT_FILES_EVENT,
   makeThumb,
   pendingFromAsset,
   pendingFromFile,
+  picturesSent,
   roomFor,
   toInput,
   toView,
@@ -47,7 +50,6 @@ import { cn } from '@/lib/cn'
 export function AgentPanel(): ReactNode {
   const log = useEditor((state) => state.agentLog)
   const running = useEditor((state) => state.agentRunning)
-  const sessionActive = useEditor((state) => state.agentSessionActive)
   const logUserMessage = useEditor((state) => state.logUserMessage)
   const startAgentSession = useEditor((state) => state.startAgentSession)
   const endAgentSession = useEditor((state) => state.endAgentSession)
@@ -57,6 +59,9 @@ export function AgentPanel(): ReactNode {
   const [problem, setProblem] = useState<string | null>(null)
   const [attachments, setAttachments] = useState<PendingAttachment[]>([])
   const [dragOver, setDragOver] = useState(false)
+  const [sending, setSending] = useState(false)
+  const sendingNow = useRef(false)
+  const manyPictures = manyImagesNote(picturesSent(log))
 
   /**
    * Add what the user attached, up to the limit, saying what was refused and why. Thumbnails are
@@ -83,27 +88,40 @@ export function AgentPanel(): ReactNode {
   }
   const removeAttachment = (id: string): void => setAttachments((list) => list.filter((a) => a.id !== id))
 
-  // Files from Finder and assets from the media bin. The window's own drop handler imports files
-  // into the project; a drop here is taken (`preventDefault`) and that one then leaves it alone.
-  const accepts = (event: DragEvent): boolean =>
-    event.dataTransfer.types.includes('Files') || event.dataTransfer.types.includes(ASSET_DRAG_TYPE)
+  // Files from Finder and assets from the media bin. Only pictures and video are the panel's: a
+  // drop here is taken (`preventDefault`, which the window's own handler respects) only when it
+  // holds at least one, and whatever else it holds is handed to the window's import
+  // (`IMPORT_FILES_EVENT`) — dropping a song or a caption file here imports it, as anywhere else.
+  // While dragging, only MIME types are visible, so a Finder file without one (some `.mkv`) shows
+  // the import overlay but is still attached on drop, where its name can be read.
+  const mediaDrag = (event: DragEvent): boolean =>
+    event.dataTransfer.types.includes(ASSET_DRAG_TYPE) ||
+    Array.from(event.dataTransfer.items).some((item) => item.kind === 'file' && isAttachableFile('', item.type))
   const onDragOver = (event: DragEvent): void => {
-    if (!accepts(event)) return
+    if (!mediaDrag(event)) {
+      setDragOver(false)
+      return
+    }
     event.preventDefault()
     event.dataTransfer.dropEffect = 'copy'
     setDragOver(true)
   }
   const onDrop = (event: DragEvent): void => {
-    if (!accepts(event)) return
-    event.preventDefault()
     setDragOver(false)
     const assetId = event.dataTransfer.getData(ASSET_DRAG_TYPE)
     if (assetId) {
+      event.preventDefault()
       const asset = findAsset(useEditor.getState().project, assetId)
       addAttachments([asset ? pendingFromAsset(asset) : { ok: false, error: 'That asset is no longer in the project.' }])
       return
     }
-    addFiles(Array.from(event.dataTransfer.files))
+    const files = Array.from(event.dataTransfer.files)
+    const { attach, importRest } = splitDrop(files.map((file) => ({ name: file.name, type: file.type })))
+    // Nothing to attach: not the panel's drop. The window imports it all.
+    if (attach.length === 0) return
+    event.preventDefault()
+    addFiles(attach.map((i) => files[i]!))
+    if (importRest.length > 0) window.dispatchEvent(new CustomEvent(IMPORT_FILES_EVENT, { detail: importRest.map((i) => files[i]!) }))
   }
   const bottom = useRef<HTMLDivElement | null>(null)
   const composer = useRef<HTMLTextAreaElement | null>(null)
@@ -154,33 +172,43 @@ export function AgentPanel(): ReactNode {
     shown?: string,
     attached: PendingAttachment[] = []
   ): Promise<void> => {
-    if ((!text && attached.length === 0) || running) return
+    // `sendingNow` rather than the state: two clicks in one frame both read the state as false.
+    if ((!text && attached.length === 0) || running || sendingNow.current) return
     const api = bay()
     if (!api) {
       setProblem('bay is not answering. The main process may still be starting.')
+      if (attached.length > 0) setAttachments((list) => [...attached, ...list])
       return
     }
     setProblem(null)
     logUserMessage(shown ?? text, pins, attached.map(toView))
 
-    // Starting is separate from sending so a missing `claude` binary reads as "could not start"
-    // rather than as a model that ignored the message.
-    if (!sessionActive) {
-      const started = await api.agent.start({ provider: useAgentProvider.getState().provider })
-      if (!started.ok) {
-        setProblem(started.error)
-        return
-      }
-      startAgentSession()
-    }
-    // The log shows what was typed, with the pins as chips; the agent receives the pins spelled
-    // out as ids and frames ahead of it.
-    const inputs = await Promise.all(attached.map(toInput))
-    const sent = await api.agent.send(composeMessage(text, pins, selectFps(useEditor.getState())), inputs)
-    if (!sent.ok) {
-      setProblem(sent.error ?? 'The message could not be delivered.')
-      // Given back rather than lost: the user removes the one that was refused and sends again.
-      if (attached.length > 0) setAttachments((list) => [...attached, ...list])
+    // From the click until main has the message — the start, reading the files, main preparing a
+    // video — the composer says so and takes no second message, which would otherwise be sent
+    // while this one was still on its way.
+    sendingNow.current = true
+    setSending(true)
+    try {
+      await deliverMessage(attached, {
+        // Starting is separate from sending so a missing `claude` binary reads as "could not
+        // start" rather than as a model that ignored the message.
+        start: async () => {
+          if (useEditor.getState().agentSessionActive) return { ok: true }
+          const started = await api.agent.start({ provider: useAgentProvider.getState().provider })
+          if (started.ok) startAgentSession()
+          return started.ok ? { ok: true } : started
+        },
+        toInputs: (list) => Promise.all(list.map(toInput)),
+        // The log shows what was typed, with the pins as chips; the agent receives the pins
+        // spelled out as ids and frames ahead of it.
+        send: (inputs) => api.agent.send(composeMessage(text, pins, selectFps(useEditor.getState())), inputs),
+        // Given back rather than lost: the user removes the one that was refused and sends again.
+        giveBack: (list) => setAttachments((current) => [...list, ...current]),
+        problem: setProblem
+      })
+    } finally {
+      sendingNow.current = false
+      setSending(false)
     }
   }
 
@@ -291,8 +319,13 @@ export function AgentPanel(): ReactNode {
         </div>
       )}
 
+      {manyPictures && (
+        <p className="border-t border-line px-2 py-1.5 text-[11px] leading-relaxed text-ink-2">{manyPictures}</p>
+      )}
+
       <Composer
         running={running}
+        sending={sending}
         onSend={send}
         onStop={stop}
         onNewConversation={reset}

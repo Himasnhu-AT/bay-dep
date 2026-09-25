@@ -13,8 +13,17 @@ import type { TranscriptSegment } from './transcribe'
 
 export const DEFAULT_GRID_CELLS = 12
 export const MAX_GRID_CELLS = 36
-/** The whole grid's longest edge. Past this a client downsizes it anyway, and the labels go first. */
-export const MAX_GRID_EDGE = 2048
+/**
+ * The longest edge of any picture bay hands a model: the Claude API scales an image whose long
+ * side is past 1568px down to it before the model sees it. So a larger picture costs upload and
+ * base64 and buys nothing — and for a grid, the downscale is what shrinks the labels past reading.
+ */
+export const MAX_MODEL_IMAGE_EDGE = 1568
+/**
+ * The whole grid's longest edge. `frame_grid`'s image goes to the agent as MCP image content and
+ * so to the model as a picture, which is why it is the model's bound and not a larger one.
+ */
+export const MAX_GRID_EDGE = MAX_MODEL_IMAGE_EDGE
 /** Height of the caption strip under each cell: a timecode line and a words line. */
 export const LABEL_HEIGHT = 40
 

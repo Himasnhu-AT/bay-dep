@@ -61,6 +61,11 @@ interface MenuRow {
 
 export interface ComposerProps {
   running: boolean
+  /**
+   * A message is on its way to main — the conversation starting, attachments being read and
+   * prepared. No second message is taken until it has been handed over.
+   */
+  sending?: boolean
   /** Send one message. Resolves once it has been handed over. */
   onSend: (text: string) => Promise<void>
   onStop: () => void
@@ -147,6 +152,7 @@ function iconForCandidate(candidate: MentionCandidate, project: Project): Lucide
 
 export function Composer({
   running,
+  sending = false,
   onSend,
   onStop,
   onNewConversation,
@@ -287,7 +293,7 @@ export function Composer({
 
   const send = (): void => {
     const text = draft.trim()
-    if ((!text && attachments.length === 0) || running) return
+    if ((!text && attachments.length === 0) || running || sending) return
     void onSend(text)
   }
 
@@ -546,10 +552,10 @@ export function Composer({
             pressed={rangeOpen}
             onClick={() => setRangeOpen((value) => !value)}
           />
-          {running && (
-            <span className="ml-1 flex items-center gap-1 text-[11px] text-ink-2">
+          {(running || sending) && (
+            <span role="status" className="ml-1 flex items-center gap-1 text-[11px] text-ink-2">
               <Loader2 aria-hidden="true" className="size-3 animate-spin" />
-              Working…
+              {running ? 'Working…' : 'Sending…'}
             </span>
           )}
           <div className="flex-1" />
@@ -567,7 +573,7 @@ export function Composer({
             <button
               type="button"
               onClick={send}
-              disabled={draft.trim().length === 0 && attachments.length === 0}
+              disabled={sending || (draft.trim().length === 0 && attachments.length === 0)}
               aria-label="Send"
               title="Send (Enter)"
               className="t-press grid size-7 place-items-center rounded-full bg-accent text-accent-ink hover:bg-accent-hover active:scale-[0.96] disabled:bg-surface-4 disabled:text-ink-3"

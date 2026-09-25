@@ -6,7 +6,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Asset } from '@shared/project'
 import { validateAttachments } from '@shared/agent-attachments'
-import { pendingFromAsset, pendingFromFile, roomFor, toInput } from './agentAttachments'
+import { deliverMessage, pendingFromAsset, pendingFromFile, picturesSent, roomFor, toInput } from './agentAttachments'
 
 const asset = (kind: Asset['kind'], path: string | null = '/Users/x/take.mov'): Asset =>
   ({ id: 'a1', kind, name: 'take', path, durationUs: 1_000_000, width: 1920, height: 1080, fps: 30, hasAudio: true, hasVideo: true, posterPath: null, waveformPath: null, createdAt: 0 }) as Asset
@@ -47,4 +47,74 @@ test('what the composer sends is what main accepts: bytes for a file, id and pat
   assert.ok(inputs[0]?.source === 'bytes' && inputs[0].data instanceof Uint8Array && inputs[0].data.byteLength === 5)
   const checked = validateAttachments(inputs)
   assert.ok(checked.ok, !checked.ok ? checked.error : '')
+})
+
+/** A delivery whose steps each succeed unless told otherwise, recording what happened. */
+function steps(fail: { start?: string; read?: string; send?: string } = {}) {
+  const given: string[][] = []
+  const problems: string[] = []
+  let sent = 0
+  return {
+    given,
+    problems,
+    sent: () => sent,
+    steps: {
+      start: async () => (fail.start ? { ok: false as const, error: fail.start } : { ok: true as const }),
+      toInputs: async (list: readonly string[]) => {
+        if (fail.read) throw new Error(fail.read)
+        return list.map((name) => ({ source: 'asset' as const, kind: 'image' as const, name, assetId: name, path: `/${name}` }))
+      },
+      send: async () => {
+        sent += 1
+        return fail.send ? { ok: false, error: fail.send } : { ok: true }
+      },
+      giveBack: (list: string[]) => given.push(list),
+      problem: (message: string) => problems.push(message)
+    }
+  }
+}
+
+test('every way a message can fail gives its attachments back and says why; a sent one keeps nothing', async () => {
+  const startFails = steps({ start: 'claude was not found' })
+  assert.equal(await deliverMessage(['a.png', 'b.mov'], startFails.steps), false)
+  assert.deepEqual(startFails.given, [['a.png', 'b.mov']])
+  assert.deepEqual(startFails.problems, ['claude was not found'])
+  assert.equal(startFails.sent(), 0)
+
+  const readFails = steps({ read: 'NotFoundError: the file was moved' })
+  assert.equal(await deliverMessage(['a.png'], readFails.steps), false)
+  assert.deepEqual(readFails.given, [['a.png']])
+  assert.match(readFails.problems[0]!, /An attachment could not be read \(NotFoundError: the file was moved\)\. Remove it and attach the file again\./)
+  assert.equal(readFails.sent(), 0)
+
+  const refused = steps({ send: 'b.mov has no video in it' })
+  assert.equal(await deliverMessage(['b.mov'], refused.steps), false)
+  assert.deepEqual(refused.given, [['b.mov']])
+  assert.deepEqual(refused.problems, ['b.mov has no video in it'])
+
+  // Positive control: nothing fails, nothing is given back.
+  const fine = steps()
+  assert.equal(await deliverMessage(['a.png'], fine.steps), true)
+  assert.deepEqual(fine.given, [])
+  assert.deepEqual(fine.problems, [])
+  assert.equal(fine.sent(), 1)
+
+  // A text-only message that fails has nothing to give back, but still says why.
+  const textOnly = steps({ start: 'no binary' })
+  await deliverMessage([], textOnly.steps)
+  assert.deepEqual(textOnly.given, [])
+  assert.deepEqual(textOnly.problems, ['no binary'])
+})
+
+test('pictures sent are counted from the user turns of the log', () => {
+  const view = { kind: 'image' as const, name: 'x', thumb: null }
+  assert.equal(
+    picturesSent([
+      { kind: 'user', id: '1', text: 'a', attachments: [view, view] },
+      { kind: 'assistant', id: '2', text: 'b' },
+      { kind: 'user', id: '3', text: 'c' },
+      { kind: 'user', id: '4', text: 'd', attachments: [view] }
+    ]),
+    3
+  )
 })
