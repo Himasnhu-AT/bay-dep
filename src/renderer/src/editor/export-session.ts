@@ -19,9 +19,11 @@ import {
   isAudioOnly,
   loudnessTarget,
   EXPORT_PRESETS,
+  exportAspectMismatch,
   matchExportPreset,
   resolveExportRange,
   resolveExportSize,
+  type ExportPreset,
   type ExportRangeChoice,
   type ExportSettings
 } from '@shared/export-presets'
@@ -56,6 +58,13 @@ export interface ExportSession {
   setRangeKind(kind: RangeKind): void
   setCustom(bounds: { start?: string; end?: string }): void
   setOutputPath(path: string | null): void
+  /**
+   * The Deliver page's first look: while the settings are still the untouched defaults (which
+   * match no preset, so the cards would light Custom), choose the first preset that fits the
+   * canvas. Anything the user has set, even back to the default values, is left alone, and ⌘E on
+   * its own never calls this. Returns whether it chose one.
+   */
+  adoptFittingPreset(canvasWidth: number, canvasHeight: number): boolean
   start(): Promise<void>
   cancel(): void
 }
@@ -111,6 +120,19 @@ export function exportFormFields(state: ExportSession) {
     starting: state.starting,
     running: state.progress !== null && !TERMINAL.includes(state.progress.stage)
   }
+}
+
+/**
+ * The first preset whose picture is the canvas's shape — YouTube 1080p for 16:9, the vertical
+ * preset for 9:16, the square one for 1:1 — so a default never letterboxes the picture. Master
+ * (canvas size) when no frame preset fits; the podcast preset is never a default for a picture.
+ */
+export function firstFittingPreset(canvasWidth: number, canvasHeight: number): ExportPreset {
+  const pictures = EXPORT_PRESETS.filter((preset) => !isAudioOnly(preset.settings.format))
+  const fits = pictures.find(
+    (preset) => preset.settings.size.kind === 'frame' && exportAspectMismatch(preset.settings, canvasWidth, canvasHeight) === null
+  )
+  return fits ?? pictures.find((preset) => preset.settings.size.kind === 'timeline') ?? pictures[0]!
 }
 
 /**
@@ -172,6 +194,14 @@ export const useExportSession = create<ExportSession>((set, get) => ({
   },
   setOutputPath(path) {
     set({ outputPath: path })
+  },
+  adoptFittingPreset(canvasWidth, canvasHeight) {
+    const session = get()
+    // By identity: the defaults object is replaced by the first `setSettings`, whatever it sets.
+    if (session.settings !== DEFAULT_EXPORT_SETTINGS || session.starting) return false
+    if (session.progress && !TERMINAL.includes(session.progress.stage)) return false
+    get().setSettings(firstFittingPreset(canvasWidth, canvasHeight).settings)
+    return true
   },
 
   async start() {

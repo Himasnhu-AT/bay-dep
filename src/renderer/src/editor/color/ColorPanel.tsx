@@ -22,7 +22,8 @@ export interface ColorPanelProps {
 /**
  * The Color page's grading panel: the selected clip's grade, large. A header with Copy / Paste /
  * Reset Grade, then three labelled cards side by side where there is room — Primaries (the
- * inspector's `GradeSection`), Adjustments (`AdjustmentsSection`), and the project's LUTs.
+ * inspector's `GradeSection`), the project's LUTs, and Look filters (`AdjustmentsSection`,
+ * closed by default, so the grade's Saturation and the filter's Saturate are not side by side).
  *
  * The sections are the inspector's own components with the same props, so a value set here is
  * the value the inspector shows, stored through the same `patchItem` path, one undo step per
@@ -125,12 +126,26 @@ export function ColorPanel({ className }: ColorPanelProps): ReactNode {
           <Card label="Primaries">
             <GradeSection items={items} luts={usableLuts} />
           </Card>
-          <Card label="Adjustments and blend">
-            <AdjustmentsSection items={items} timeline={timeline} />
-          </Card>
           <Card label="LUTs">
             <Section id="color.luts" title={`LUTs · ${usableLuts.length}`} collapsible>
               <LutList items={items} luts={luts} />
+            </Section>
+          </Card>
+          {/* The quick filter look, after the grade and closed by default. Open beside the grade,
+              its Saturate read as a second Saturation: two sliders that sound the same and do
+              different things. Here it is named for what it is, and its hint names the other. */}
+          <Card label="Look filters and blend">
+            <Section
+              id="color.look-filters"
+              title="Look filters"
+              collapsible
+              defaultOpen={false}
+              hint="Brightness, Contrast, Saturate and the rest are a quick filter drawn after the grade, the same controls as the inspector's Effects tab. Colour the picture with Primaries: its Saturation is the grade's, and Saturate here multiplies with it."
+            >
+              <p className="mb-2 text-[11px] text-pretty text-ink-2">
+                A filter over the graded picture. For colour, use Primaries: Saturate here multiplies with its Saturation.
+              </p>
+              <AdjustmentsSection items={items} timeline={timeline} />
             </Section>
           </Card>
         </div>
