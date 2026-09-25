@@ -28,6 +28,7 @@ import { tool as generateSpeech } from './generate-speech'
 import { tool as generateVideo } from './generate-video'
 import { tool as importMedia } from './import-media'
 import { tool as importUrl } from './import-url'
+import { tool as indexFootage } from './index-footage'
 import { tool as inspectItem } from './inspect-item'
 import { tool as listProjects } from './list-projects'
 import { tool as markHighlights } from './mark-highlights'
@@ -45,6 +46,7 @@ import { tool as removeMarker } from './remove-marker'
 import { tool as removeRange } from './remove-range'
 import { tool as removeTransition } from './remove-transition'
 import { tool as resolveFeedback } from './resolve-feedback'
+import { tool as searchFootage } from './search-footage'
 import { tool as setCanvas } from './set-canvas'
 import { tool as setPlayhead } from './set-playhead'
 import { tool as splitAt } from './split-at'
@@ -65,6 +67,8 @@ export const TOOLS: ToolSpec[] = [
   findHighlights,
   detectBeats,
   detectCuts,
+  indexFootage,
+  searchFootage,
   readProject,
   browseAssets,
   inspectItem,

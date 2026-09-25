@@ -39,6 +39,7 @@ import { masterFilter } from '../export/master'
 import { colourFilter } from '../media/frame-grab'
 import { sceneCutFilter } from '../media/scene-cuts'
 import { contactSheetArgs, contactSheetPlan, imageScaleFilter } from '../agent/attachments'
+import { sampleFilter } from '@shared/visual-search'
 import { NO_VENDORED_FFMPEG, vendoredTools } from './vendor'
 
 const TOOLS = vendoredTools()
@@ -141,6 +142,8 @@ function filtersTheCodeWrites(): Set<string> {
   // Agent attachments (agent/attachments.ts): a video's contact sheet and an image's downscale.
   const sheet = contactSheetArgs('/in.mov', contactSheetPlan(10, 1920, 1080), '/out.jpg')
   graphs.push(valueOf(sheet, '-filter_complex') ?? '', imageScaleFilter(2000, 1000))
+  // Visual search's index pass (shared/visual-search.ts `sampleFilter`): select, showinfo, scale, format.
+  graphs.push(sampleFilter())
   for (const format of FORMATS) {
     for (const quality of QUALITIES) {
       const vf = valueOf(videoCodecArgs(format, quality), '-vf')

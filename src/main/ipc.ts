@@ -43,6 +43,7 @@ import { locate, openCaptions, readCaptions, saveCaptions } from './media/files'
 import { forgetPath, importDialog, importPaths } from './media/import'
 import { freezeFrame } from './media/freeze-frame'
 import { importFromUrl } from './media/url-import'
+import { vision } from './vision/host'
 import { downloadsDir } from './paths'
 import * as store from './project/store'
 import * as encode from './export/encode'
@@ -63,7 +64,7 @@ import {
 } from './generate/service'
 
 /** Channels pushed *to* the renderer. They carry no handler, so the table excludes them. */
-type PushChannel = 'exportProgress' | 'appMenuCommand' | 'mcpToolCall' | 'agentEvent' | 'whisperProgress' | 'accessChanged' | 'updateChanged'
+type PushChannel = 'exportProgress' | 'appMenuCommand' | 'mcpToolCall' | 'agentEvent' | 'whisperProgress' | 'visionChanged' | 'accessChanged' | 'updateChanged'
 type InvokeChannel = Exclude<keyof typeof IPC, PushChannel | 'mcpToolResult' | 'mcpExecutorReady'>
 
 interface ChannelApi {
@@ -86,6 +87,14 @@ interface ChannelApi {
   whisperCancel: BayApi['whisper']['cancelDownload']
   whisperDelete: BayApi['whisper']['deleteModel']
   whisperInstall: BayApi['whisper']['installEngine']
+
+  visionStatus: BayApi['vision']['status']
+  visionDownload: BayApi['vision']['download']
+  visionCancelDownload: BayApi['vision']['cancelDownload']
+  visionDelete: BayApi['vision']['deleteModel']
+  visionIndex: BayApi['vision']['index']
+  visionCancelIndex: BayApi['vision']['cancelIndex']
+  visionSearch: BayApi['vision']['search']
   mediaFilmstrip: BayApi['media']['filmstrip']
   mediaWaveform: BayApi['media']['waveform']
   mediaBeats: BayApi['media']['beats']
@@ -272,6 +281,33 @@ const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
   whisperCancel: async () => cancelWhisperDownload(),
   whisperDelete: (_event, file) => deleteWhisperModel(app.getPath('userData'), file),
   whisperInstall: () => installWhisperEngine(),
+
+  visionStatus: () => vision().status(),
+  visionDownload: async () => {
+    try {
+      await vision().downloadModel('user')
+      return { ok: true as const }
+    } catch (error) {
+      return { ok: false as const, error: error instanceof Error ? error.message : String(error) }
+    }
+  },
+  visionCancelDownload: async () => vision().cancelDownload(),
+  visionDelete: () => vision().deleteModel(),
+  visionIndex: async (_event, assets, options) => {
+    try {
+      return await vision().index(Array.isArray(assets) ? assets : [], { dryRun: options?.dryRun === true, download: options?.download === true })
+    } catch (error) {
+      return { ok: false as const, error: error instanceof Error ? error.message : String(error) }
+    }
+  },
+  visionCancelIndex: async () => vision().cancelIndex(),
+  visionSearch: async (_event, request) => {
+    try {
+      return await vision().search(request)
+    } catch (error) {
+      return { ok: false as const, error: error instanceof Error ? error.message : String(error) }
+    }
+  },
   mediaWaveform: (_event, assetId, path, buckets) => waveform(assetId, path, buckets),
   mediaBeats: async (_event, path, options) => {
     try {
@@ -372,6 +408,13 @@ export function registerIpcHandlers(): void {
   onWhisperDownload((download) => {
     for (const window of BrowserWindow.getAllWindows()) {
       if (!window.isDestroyed()) window.webContents.send(IPC.whisperProgress, download)
+    }
+  })
+
+  // The indexing job and the model download, to every window, for the same reason.
+  vision().onChange((status) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send(IPC.visionChanged, status)
     }
   })
 

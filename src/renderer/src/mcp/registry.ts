@@ -11,6 +11,7 @@ import { handlers as cutsHandlers } from './cuts'
 import { handlers as dubHandlers } from './dub'
 import { handlers as exportsHandlers } from './exports'
 import { handlers as feedbackHandlers } from './feedback'
+import { handlers as footageHandlers } from './footage'
 import { handlers as frameGridHandlers } from './frameGrid'
 import { handlers as generationHandlers } from './generation'
 import { handlers as highlightsHandlers } from './highlights'
@@ -41,6 +42,7 @@ export const HANDLER_GROUPS: Record<string, Handlers> = {
   'dub': dubHandlers,
   'exports': exportsHandlers,
   'feedback': feedbackHandlers,
+  'footage': footageHandlers,
   'frameGrid': frameGridHandlers,
   'generation': generationHandlers,
   'highlights': highlightsHandlers,
@@ -72,6 +74,7 @@ export const HANDLERS: Handlers = {
   ...dubHandlers,
   ...exportsHandlers,
   ...feedbackHandlers,
+  ...footageHandlers,
   ...frameGridHandlers,
   ...generationHandlers,
   ...highlightsHandlers,

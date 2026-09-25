@@ -28,6 +28,7 @@ import type { AgentAttachmentInput } from '@shared/agent-attachments'
 import type { McpToolCall, McpToolResult } from '@shared/mcp'
 import type { Project } from '@shared/project'
 import type { WhisperDownload } from '@shared/whisper'
+import type { VisionStatus } from '@shared/visual-search'
 import type { AccessStatus } from '@shared/access'
 import type { UpdateStatus } from '@shared/update'
 
@@ -116,6 +117,21 @@ const api: BayApi = {
       const handler = (_event: unknown, payload: WhisperDownload): void => listener(payload)
       ipcRenderer.on(IPC.whisperProgress, handler)
       return () => ipcRenderer.removeListener(IPC.whisperProgress, handler)
+    }
+  },
+
+  vision: {
+    status: () => ipcRenderer.invoke(IPC.visionStatus),
+    download: () => ipcRenderer.invoke(IPC.visionDownload),
+    cancelDownload: () => ipcRenderer.invoke(IPC.visionCancelDownload),
+    deleteModel: () => ipcRenderer.invoke(IPC.visionDelete),
+    index: (assets, options) => ipcRenderer.invoke(IPC.visionIndex, assets, options),
+    cancelIndex: () => ipcRenderer.invoke(IPC.visionCancelIndex),
+    search: (request) => ipcRenderer.invoke(IPC.visionSearch, request),
+    onChange: (listener) => {
+      const handler = (_event: unknown, payload: VisionStatus): void => listener(payload)
+      ipcRenderer.on(IPC.visionChanged, handler)
+      return () => ipcRenderer.removeListener(IPC.visionChanged, handler)
     }
   },
 
