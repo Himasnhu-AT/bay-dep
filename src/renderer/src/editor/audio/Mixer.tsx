@@ -4,7 +4,7 @@ import { cn } from '@/lib/cn'
 import { selectTimeline, useEditor } from '@/store/editor'
 import { useExportSession } from '../export-session'
 import { AudioMeter } from '../viewer/AudioMeter'
-import { mixerChannels, type MixerChannel } from './mixer'
+import { mixerChannels, type MixerChannel } from './channels'
 
 export interface MixerProps {
   className?: string

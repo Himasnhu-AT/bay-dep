@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Asset, AssetKind, Item, Project, Timeline, Track } from '@shared/project'
-import { mixerChannels } from './mixer'
+import { mixerChannels } from './channels'
 
 function asset(id: string, kind: AssetKind, hasAudio: boolean): Asset {
   return {
