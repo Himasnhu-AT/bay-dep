@@ -18,16 +18,17 @@ export interface PanelProps {
  * A titled region. Panels are separated by a 1px `line`, never by a gap or a shadow —
  * borders are what keep a dense tool from looking like a page of floating cards.
  *
- * The title sits in its own `chrome-raised` strip, as every Resolve panel's does ("Media Pool",
- * "Inspector"): with the header the same grey as the body, regions blurred into one field.
+ * The title sits in its own 28px `chrome-raised` strip, as every Resolve panel's does ("Media
+ * Pool", "Inspector") and as the workspace's `RegionHeader` draws the viewer's: with the header
+ * the same grey as the body, regions blurred into one field.
  */
 export function Panel({ title, actions, children, className, bodyClassName }: PanelProps): ReactNode {
   return (
     <section className={cn('flex min-h-0 min-w-0 flex-col bg-surface-1', className)}>
       {(title || actions) && (
-        <header className="flex h-8 shrink-0 items-center justify-between gap-2 border-b border-line bg-chrome-raised px-3">
+        <header className="flex h-7 min-w-0 shrink-0 items-center justify-between gap-2 border-b border-line bg-chrome-raised px-2">
           {title && (
-            <h2 className="truncate text-[12px] font-semibold text-ink-0">
+            <h2 className="min-w-0 truncate text-[11px] font-semibold text-ink-0 select-none">
               {title}
             </h2>
           )}
