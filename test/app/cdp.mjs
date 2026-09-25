@@ -112,6 +112,13 @@ let session = null
 /** Keys of the editor store a probe may move and must put back. Every `agent*` key joins them. */
 const RESTORED_KEYS = ['project', 'past', 'future', 'dirty', 'playhead', 'selection', 'playing', 'panel', 'debugMode']
 const APPROVAL_KEY = 'bay.agentApproval'
+/**
+ * Whether the agent is docked is remembered per machine. `setPanel('agent')` docks it through
+ * `setAgentDocked`, which writes this key; putting `agentDocked` back with `setState` restores
+ * the store and leaves the key at '1', so the user's next launch opened with the agent docked
+ * while the restore line said everything was back. The raw value is kept and put back instead.
+ */
+const DOCK_KEY = 'bay.workspace.agentDocked'
 
 /**
  * Connects, enables the probe surface, brings the window to front, and waits for the engine.
@@ -224,7 +231,9 @@ export async function attach(port = Number(process.env.PORT ?? 9222)) {
     const leftover = !!window.__bayProbeSnapshot
     // The workspace page and the Inspector/Library tabs are remembered per machine, so they are
     // put back through their own setters (which write the remembered value), not by setState.
-    const workspace = { page: st.page, inspectorTab: st.inspectorTab, libraryTab: st.libraryTab }
+    let dockRemembered = null
+    try { dockRemembered = localStorage.getItem(${JSON.stringify(DOCK_KEY)}) } catch {}
+    const workspace = { page: st.page, inspectorTab: st.inspectorTab, libraryTab: st.libraryTab, dockRemembered }
     window.__bayProbeSnapshot = { state, approval, workspace }
     window.__bayProbePatches = window.__bayProbePatches || []
     return { leftover, fingerprint: ${FINGERPRINT}, project: JSON.stringify(st.project),
@@ -296,7 +305,8 @@ const FINGERPRINT = `(() => {
   return { project: h, filePath: st.project.filePath ?? null, past: st.past.length,
            future: st.future.length, dirty: st.dirty, playhead: st.playhead,
            playing: st.playing, screen: st.screen, gate: st.agentGate === null ? null : 'set',
-           approval: st.agentApproval }
+           approval: st.agentApproval, docked: st.agentDocked,
+           dockRemembered: (() => { try { return localStorage.getItem(${JSON.stringify(DOCK_KEY)}) } catch { return null } })() }
 })()`
 
 /** Methods the probes are known to sabotage; after a restore each must be native again. */
@@ -346,6 +356,10 @@ async function restoreSession() {
         if (ws.page && now.page !== ws.page) now.setPage(ws.page)
         if (ws.inspectorTab && store.getState().inspectorTab !== ws.inspectorTab) store.getState().setInspectorTab(ws.inspectorTab)
         if (ws.libraryTab && store.getState().libraryTab !== ws.libraryTab) store.getState().setLibraryTab(ws.libraryTab)
+        try {
+          if (ws.dockRemembered === null) localStorage.removeItem(${JSON.stringify(DOCK_KEY)})
+          else localStorage.setItem(${JSON.stringify(DOCK_KEY)}, ws.dockRemembered)
+        } catch {}
       }
       try {
         if (snap.approval === null) localStorage.removeItem(${JSON.stringify(APPROVAL_KEY)})

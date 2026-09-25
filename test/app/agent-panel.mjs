@@ -31,8 +31,11 @@ await runProbe(async () => {
   console.log('\n── the panel is reachable')
   await evaluate(`(() => { window.bayEngine.store.getState().setPanel('agent'); return true })()`)
   await new Promise((r) => setTimeout(r, 400))
-  check('the Agent page is selected', await state('s.panel'), 'agent')
-  check('its rail button exists', await evaluate(
+  // The agent is a dock now, not a page: `setPanel('agent')` docks it, and `agentDocked` is
+  // what puts the panel on screen. `panel` still reads 'agent' for callers of the old rail ids.
+  check('setPanel(\'agent\') still answers with the agent id', await state('s.panel'), 'agent')
+  check('and the agent is docked', await state('s.agentDocked'), true)
+  check('its toggle button exists', await evaluate(
     `Boolean([...document.querySelectorAll('[aria-label]')].find((e) => e.getAttribute('aria-label') === 'Agent'))`
   ), true)
   check('the composer is on screen', await evaluate(
