@@ -21,11 +21,15 @@
 
 import type { ReactNode } from 'react'
 import type { WorkspacePage } from '@/store/editor'
-import { ExportPanel } from '@/editor/ExportPanel'
 import { Inspector } from '@/editor/Inspector'
 import { Library } from '@/editor/library/Library'
 import { MediaBrowser, MediaSourceViewer } from '@/editor/library/MediaBrowser'
-import { AudioStandIn, ColorStandIn } from './placeholders'
+import { AudioPanel } from '@/editor/audio/AudioPanel'
+import { Mixer } from '@/editor/audio/Mixer'
+import { ClipStrip } from '@/editor/color/ClipStrip'
+import { ColorPanel } from '@/editor/color/ColorPanel'
+import { DeliverSettings } from '@/editor/deliver/DeliverSettings'
+import { RenderQueue } from '@/editor/deliver/RenderQueue'
 
 export interface PageContent {
   /** A fixed strip at the far left, outside the resizable groups. */
@@ -62,24 +66,27 @@ export function pageContent(page: WorkspacePage): PageContent {
         timeline: true
       }
 
-    // WP5: `left: <ClipStrip />` or `aboveTimeline: <ClipStrip />`, `right: <ColorPanel />`.
+    // Resolve's Color page: the clip strip over the timeline, the grade large on the right.
     case 'color':
       return {
-        right: <ColorStandIn />,
+        right: <ColorPanel />,
+        aboveTimeline: <ClipStrip />,
         timeline: true
       }
 
-    // WP5: `right: <AudioPanel />`, `besideTimeline: <Mixer />`.
+    // Resolve's Fairlight, simplified: the mixer beside the timeline, the clip's sound on the right.
     case 'audio':
       return {
-        right: <AudioStandIn />,
+        right: <AudioPanel />,
+        besideTimeline: <Mixer />,
         timeline: true
       }
 
-    // WP5: `left: <DeliverSettings />`, `right: <RenderQueue />`.
+    // Resolve's Deliver page: render settings on the left, the queue on the right.
     case 'deliver':
       return {
-        left: <ExportPanel />,
+        left: <DeliverSettings />,
+        right: <RenderQueue />,
         timeline: true
       }
   }

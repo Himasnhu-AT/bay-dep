@@ -71,5 +71,6 @@ export const timelineHandlers = {
     }
   },
   'tool.select': { when: inEditor, run: () => useTimelineTool.getState().setTool('select') },
+  'tool.trim': { when: inEditor, run: () => useTimelineTool.getState().setTool('trim') },
   'tool.blade': { when: inEditor, run: () => useTimelineTool.getState().setTool('blade') }
 } satisfies Handlers

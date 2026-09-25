@@ -42,6 +42,11 @@ export interface ToolButtonProps extends ButtonHTMLAttributes<HTMLButtonElement>
   showLabel?: boolean
   /** `@shared/shortcuts` spelling, shown in the tooltip. */
   shortcut?: string
+  /**
+   * One sentence on what it does, under the name in the tooltip. Defaults to the button's
+   * `aria-description`, so the tooltip and the assistive description say the same thing.
+   */
+  detail?: ReactNode
   /** A toggle or a tool that is currently on. Emits `aria-pressed`. */
   active?: boolean
   tooltipSide?: TooltipSide
@@ -58,13 +63,14 @@ export function ToolButton({
   icon,
   showLabel = true,
   shortcut,
+  detail,
   active,
   tooltipSide = 'bottom',
   className,
   ...props
 }: ToolButtonProps): ReactNode {
   return (
-    <Tooltip label={label} shortcut={shortcut} side={tooltipSide}>
+    <Tooltip label={label} shortcut={shortcut} detail={detail ?? props['aria-description']} side={tooltipSide}>
       <button
         type="button"
         aria-label={label}

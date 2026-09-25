@@ -20,5 +20,6 @@ export const timelineCommands = [
   SEPARATOR,
   // The pointer tools, on Final Cut's and Resolve's letters. Escape also returns to Select.
   { id: 'tool.select', label: 'Select Tool', group: 'Timeline', shortcut: 'A' },
+  { id: 'tool.trim', label: 'Trim Tool', group: 'Timeline', shortcut: 'T' },
   { id: 'tool.blade', label: 'Blade Tool', group: 'Timeline', shortcut: 'B' }
 ] as const satisfies readonly CommandEntry[]

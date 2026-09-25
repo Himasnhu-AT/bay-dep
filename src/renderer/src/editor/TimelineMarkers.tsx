@@ -12,7 +12,7 @@ import { selectTimeline, useEditor } from '@/store/editor'
  * rather than a colour picker. `null` is the default marker colour (the accent), stored as
  * absence. These are *data* — written into the project as the model's hex — not chrome.
  */
-const MARKER_COLORS: readonly { value: string | null; name: string }[] = [
+export const MARKER_COLORS: readonly { value: string | null; name: string }[] = [
   { value: null, name: 'Default' },
   { value: '#E5484D', name: 'Red' },
   { value: '#F5A524', name: 'Amber' },

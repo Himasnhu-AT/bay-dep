@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { useSourceClip } from './timeline/sourceEdits'
 import { ArrowLeftFromLine, ArrowRightFromLine, ArrowRightToLine, Pause, Play, Plus, Replace, X } from 'lucide-react'
 import type { Asset } from '@shared/project'
 import { formatTimecode } from '@shared/timecode'
@@ -142,6 +143,21 @@ export function SourceViewer({
     setOutFrame(Math.max(atFrame, 1))
     if (inFrame !== null && inFrame >= atFrame) setInFrame(null)
   }
+
+  // The Edit toolbar's Insert / Overwrite / Replace / Append / Place on Top act on what this
+  // viewer holds: publish the asset and marks as they change, and withdraw them on close.
+  useEffect(() => {
+    const clip = {
+      assetId: asset.id,
+      ...(inFrame !== null ? { inUs: sourceFrameStartUs(inFrame, rate) } : {}),
+      ...(outFrame !== null ? { outUs: Math.min(duration, sourceFrameStartUs(outFrame, rate)) } : {})
+    }
+    useSourceClip.getState().setSourceClip(clip)
+    return () => {
+      // Only withdraw our own clip: another viewer may have published since.
+      if (useSourceClip.getState().source?.assetId === clip.assetId) useSourceClip.getState().setSourceClip(null)
+    }
+  }, [asset.id, inFrame, outFrame, rate, duration])
 
   const place = (where: 'insert' | 'overwrite' | 'end'): void => {
     // Marks go to the timeline as the exact start of their frames.

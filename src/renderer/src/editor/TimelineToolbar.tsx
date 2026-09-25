@@ -35,25 +35,13 @@ import { MarkerListButton } from './TimelineMarkers'
 import { CommentListButton } from './TimelineComments'
 import { canDetachAudio, canReattachAudio, runAudioLink } from './timeline/audioLink'
 import { runSourceEdit, SOURCE_EDIT_DETAIL, SOURCE_EDIT_LABEL, useSourceClip, type SourceEdit } from './timeline/sourceEdits'
+import { MARKER_COLORS } from './TimelineMarkers'
 
 /** The store's zoom range (`setPixelsPerFrame` clamps to it); the slider is logarithmic across it. */
 const MIN_PPF = 0.05
 const MAX_PPF = 60
 const LOG_MIN = Math.log(MIN_PPF)
 const LOG_MAX = Math.log(MAX_PPF)
-
-/**
- * Marker colours for the Marker button's menu: the ruler's own set (`TimelineMarkers`), as data
- * written into the project. `null` is the default (the accent), stored as absence.
- */
-const MARKER_COLORS: readonly { value: string | null; name: string }[] = [
-  { value: null, name: 'Default' },
-  { value: '#E5484D', name: 'Red' },
-  { value: '#F5A524', name: 'Amber' },
-  { value: '#30A46C', name: 'Green' },
-  { value: '#3E8BF5', name: 'Blue' },
-  { value: '#8E4EC6', name: 'Purple' }
-]
 
 /**
  * How much the toolbar shows at its current width, widest first. The toolbar is as wide as the
@@ -386,8 +374,9 @@ export function TimelineToolbar({ fps }: { fps: number }): ReactNode {
           icon={<Brackets className="size-3.5" />}
           showLabel={labelsTools}
           active={tool === 'trim'}
+          shortcut={shortcutOf('tool.trim')}
           aria-description={`Trim tool, ${trimLabel}: every drag on a clip trims`}
-          onClick={() => useTimelineTool.getState().setTool('trim')}
+          onClick={() => runCommand('tool.trim')}
         />
         <OptionsChevron
           label={`Trim mode: ${trimLabel}`}
