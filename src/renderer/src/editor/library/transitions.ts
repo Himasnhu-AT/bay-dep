@@ -45,22 +45,57 @@ export function targetJunction(
   kind: CutTrackKind,
   selection: readonly string[]
 ): Junction | null {
+  return nearestCandidate(junctionCandidates(project, timeline, kind, selection), frame)
+}
+
+/**
+ * The cuts `targetJunction` chooses among, before the playhead is consulted: the cut between two
+ * selected clips if there is one, else the pool the nearest is taken from. Split out so a view
+ * that follows the playhead can work this out once per edit (`memoJunctionCandidates`) rather
+ * than walk every track's cuts on every frame.
+ */
+export interface JunctionCandidates {
+  between: Junction | null
+  pool: readonly Junction[]
+}
+
+export function junctionCandidates(project: Project, timeline: Timeline, kind: CutTrackKind, selection: readonly string[]): JunctionCandidates {
   const all = timeline.tracks
     .filter((track) => track.kind === kind)
     .flatMap((track) => junctionsForTrack(project, timeline, track))
   const chosen = new Set(selection)
-  const between = all.find((junction) => chosen.has(junction.from.id) && chosen.has(junction.to.id))
-  if (between) return between
+  const between = all.find((junction) => chosen.has(junction.from.id) && chosen.has(junction.to.id)) ?? null
+  if (between) return { between, pool: [] }
   const selectedTracks = new Set(
     timeline.tracks.filter((track) => track.items.some((item) => chosen.has(item.id))).map((track) => track.id)
   )
   const preferred = all.filter((junction) => selectedTracks.has(junction.trackId))
-  const pool = preferred.length > 0 ? preferred : all
+  return { between: null, pool: preferred.length > 0 ? preferred : all }
+}
+
+export function nearestCandidate(candidates: JunctionCandidates, frame: Frames): Junction | null {
+  if (candidates.between) return candidates.between
   let best: Junction | null = null
-  for (const junction of pool) {
+  for (const junction of candidates.pool) {
     if (!best || Math.abs(junction.cutFrame - frame) < Math.abs(best.cutFrame - frame)) best = junction
   }
   return best
+}
+
+/**
+ * `junctionCandidates`, remembered for the last project, selection and kind it was asked about —
+ * by identity, since every edit makes a new project and every selection change a new array. A
+ * store selector runs on every store change, the playhead's included; with this, a frame of
+ * playback costs a scan of the cuts already found, not finding them again.
+ */
+export function memoJunctionCandidates(): (project: Project, timeline: Timeline, kind: CutTrackKind, selection: readonly string[]) => JunctionCandidates {
+  let last: { project: Project; timeline: Timeline; kind: CutTrackKind; selection: readonly string[]; result: JunctionCandidates } | null = null
+  return (project, timeline, kind, selection) => {
+    if (last && last.project === project && last.timeline === timeline && last.kind === kind && last.selection === selection) return last.result
+    const result = junctionCandidates(project, timeline, kind, selection)
+    last = { project, timeline, kind, selection, result }
+    return result
+  }
 }
 
 /** Where a library click would put a transition, as the editor's store sees it now. */

@@ -52,8 +52,14 @@ export function ColorPanel({ className }: ColorPanelProps): ReactNode {
     notify(`Copied the grade of ${name}.`)
   }
   const paste = (): void => {
-    const count = pasteGrade(items)
-    if (count > 0) notify(`Pasted the grade onto ${count === 1 ? 'the clip' : `${count} clips`}. ⌘Z to undo.`)
+    const { count, droppedLut } = pasteGrade(items)
+    if (count === 0) return
+    const onto = count === 1 ? 'the clip' : `${count} clips`
+    notify(
+      droppedLut
+        ? `Pasted the grade onto ${onto}, without its LUT: that LUT is not in this project. Import the .cube here to use it. ⌘Z to undo.`
+        : `Pasted the grade onto ${onto}. ⌘Z to undo.`
+    )
   }
 
   const header = (

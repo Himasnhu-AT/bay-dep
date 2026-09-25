@@ -48,7 +48,7 @@ export interface ExportSession {
   incomplete: IncompleteFrames | null
   starting: boolean
   /**
-   * Every export this window has run since it opened — this form's and the agent's — newest
+   * Every export this window has run since it opened — this form's and those started by the `export_timeline` tool — newest
    * first, for the Deliver page's render queue. `progress` above is only this form's current job.
    */
   history: readonly RenderRecord[]
@@ -96,8 +96,26 @@ export function exportBlocker(
 }
 
 /**
+ * What the export form reads from the session — the settings, the range, the destination and
+ * whether a job is running — and nothing that changes while frames are written. `progress` and
+ * `history` change on every frame; a form subscribed to them redrew the whole Deliver settings
+ * column per frame. Compared shallowly (`useShallow`), so a frame's progress leaves it equal.
+ */
+export function exportFormFields(state: ExportSession) {
+  return {
+    settings: state.settings,
+    rangeKind: state.rangeKind,
+    customStart: state.customStart,
+    customEnd: state.customEnd,
+    outputPath: state.outputPath,
+    starting: state.starting,
+    running: state.progress !== null && !TERMINAL.includes(state.progress.stage)
+  }
+}
+
+/**
  * Starts listening for export progress, once per window. The render queue calls it on mount so
- * the agent's exports show up even before this form has run one.
+ * a tool's exports show up even before this form has run one.
  */
 export function watchExports(): void {
   subscribe()
@@ -120,7 +138,7 @@ function subscribe(): void {
   subscribed = true
   api.export.onProgress((update) => {
     useExportSession.setState((state) => ({ history: applyProgress(state.history, update, Date.now()) }))
-    // Other windows and the agent export too; only this session's job drives this view.
+    // A tool call (`export_timeline`) exports from this window too; only this form's job drives this view.
     if (update.jobId !== jobId) return
     useExportSession.setState({ progress: update })
     const notify = useEditor.getState().notify

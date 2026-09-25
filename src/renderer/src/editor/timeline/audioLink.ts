@@ -4,7 +4,7 @@
  * `detach_audio` tool does; a refusal comes back with its reason and is shown as it comes.
  */
 
-import { findAsset, findItem, type Project, type Timeline } from '@shared/project'
+import { findAsset, findItem, findTimeline, type Project, type Timeline } from '@shared/project'
 import { linkedPartners } from '@shared/links'
 import { useEditor } from '@/store/editor'
 
@@ -25,6 +25,33 @@ export function canReattachAudio(timeline: Timeline, itemId: string): boolean {
 
 export function isLinked(timeline: Timeline, itemId: string): boolean {
   return linkedPartners(timeline, itemId).length > 0
+}
+
+/**
+ * What the toolbar's audio button offers for `selection`: Detach while any selected picture
+ * carries sound, else Link when there is sound to put back, else nothing.
+ */
+export function audioLinkOffer(project: Project, selection: readonly string[]): 'detach' | 'reattach' | null {
+  const timeline = findTimeline(project, project.activeTimelineId)
+  if (!timeline || selection.length === 0) return null
+  if (selection.some((id) => canDetachAudio(project, timeline, id))) return 'detach'
+  if (selection.some((id) => canReattachAudio(timeline, id))) return 'reattach'
+  return null
+}
+
+/**
+ * `audioLinkOffer`, remembered for the last project and selection by identity (every edit makes
+ * a new project, every selection change a new array). For a store selector, which runs on every
+ * store change — each playback frame included — while the answer changes only with these two.
+ */
+export function memoAudioLink(): (project: Project, selection: readonly string[]) => 'detach' | 'reattach' | null {
+  let last: { project: Project; selection: readonly string[]; offer: 'detach' | 'reattach' | null } | null = null
+  return (project, selection) => {
+    if (last && last.project === project && last.selection === selection) return last.offer
+    const offer = audioLinkOffer(project, selection)
+    last = { project, selection, offer }
+    return offer
+  }
 }
 
 export type AudioLinkAction = 'detach' | 'reattach' | 'unlink'

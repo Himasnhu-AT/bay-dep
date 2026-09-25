@@ -20,6 +20,7 @@ import { insertIndexFor } from '@/lib/timelineLayout'
 import { revealItem } from '@/lib/revealItem'
 import { stillDurationFrames } from '@/store/editing-prefs'
 import { selectTimeline, useEditor } from '@/store/editor'
+import { refusableEdit } from './refusable'
 
 export interface SourceClip {
   assetId: string
@@ -201,24 +202,28 @@ function replaceWith(asset: Asset, source: SourceClip, timeline: Timeline): { it
   }
   if (target.linkId) return { error: 'That clip is linked to its sound. Unlink it first (right-click › Audio › Unlink), then replace it.' }
   const replaced = findAsset(store.project, target.assetId)?.name ?? 'the clip'
-  const length = asset.durationUs > 0 ? Math.min(target.durationInFrames, markedFrames(asset, source, timeline.fps)) : target.durationInFrames
+  // A still takes the target's length; footage the target's or the marked part's, if shorter.
+  // Always passed, so the room `placeAsset` looks for is exactly the room the target leaves: a
+  // still placed at the default still length found the next clip in the way and landed on
+  // another track.
+  const footage = asset.durationUs > 0
+  const length = footage ? Math.min(target.durationInFrames, markedFrames(asset, source, timeline.fps)) : target.durationInFrames
+  const span = { sourceStartUs: footage ? Math.max(0, source.inUs ?? 0) : 0, durationInFrames: length }
   let placed: string | null = null
-  store.transact(() => {
+  // Refused inside the step if it did not land in the target's place, so the target is not left
+  // deleted with nothing where it was (`refusableEdit` puts the project back as it was).
+  const refused = refusableEdit(() => {
     store.select([target.id])
     store.deleteSelected()
-    const inUs = Math.max(0, source.inUs ?? 0)
-    placed = store.placeAsset(
-      asset.id,
-      target.from,
-      found.track.id,
-      asset.durationUs > 0 ? { sourceStartUs: inUs, durationInFrames: length } : undefined
-    )
-    // A still takes the target's length, not the default still length.
-    if (placed && !(asset.durationUs > 0)) {
-      store.patchItem(placed, { durationInFrames: target.durationInFrames }, { linked: false })
+    placed = store.placeAsset(asset.id, target.from, found.track.id, span)
+    const landed = placed ? findItem(selectTimeline(useEditor.getState())!, placed) : undefined
+    if (!landed || landed.track.id !== found.track.id || landed.item.from !== target.from) {
+      placed = null
+      return `${asset.name} could not be placed in ${replaced}’s place on ${found.track.name}.`
     }
-    if (placed) store.select([placed])
+    store.select([landed.item.id])
+    return null
   })
-  if (!placed) return { error: `${asset.name} could not be placed there.` }
+  if (refused !== null || !placed) return { error: refused ?? `${asset.name} could not be placed there.` }
   return { itemId: placed, replaced }
 }

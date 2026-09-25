@@ -460,7 +460,7 @@ function VisualSearch(): ReactNode {
           <ToolButton
             label="Settings"
             icon={<Settings2 className="size-3.5" />}
-            onClick={() => useEditor.getState().setSettingsOpen(true)}
+            onClick={() => useEditor.getState().setSettingsOpen(true, 'visual-search')}
             title="Preferences › Visual search: the model and its download"
           />
         </div>

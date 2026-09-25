@@ -33,7 +33,7 @@ import { TRIM_TOOL_MODES, useTimelineTool } from '@/lib/timelineTool'
 import { selectTimeline, useEditor } from '@/store/editor'
 import { MarkerListButton } from './TimelineMarkers'
 import { CommentListButton } from './TimelineComments'
-import { canDetachAudio, canReattachAudio, runAudioLink } from './timeline/audioLink'
+import { memoAudioLink, runAudioLink } from './timeline/audioLink'
 import { runSourceEdit, SOURCE_EDIT_DETAIL, SOURCE_EDIT_LABEL, useSourceClip, type SourceEdit } from './timeline/sourceEdits'
 import { MARKER_COLORS } from './TimelineMarkers'
 
@@ -211,13 +211,10 @@ export function TimelineToolbar({ fps }: { fps: number }): ReactNode {
   const selectionCount = useEditor((state) => state.selection.length)
   const hasRange = useEditor((state) => state.rangeIn !== null || state.rangeOut !== null)
   // Detach while any selected picture carries sound; otherwise Link, when there is sound to put back.
-  const audioLink = useEditor((state): 'detach' | 'reattach' | null => {
-    const timeline = selectTimeline(state)
-    if (!timeline || state.selection.length === 0) return null
-    if (state.selection.some((id) => canDetachAudio(state.project, timeline, id))) return 'detach'
-    if (state.selection.some((id) => canReattachAudio(timeline, id))) return 'reattach'
-    return null
-  })
+  // Worked out once per project and selection: the selector runs on every store change,
+  // playhead frames included, and the answer depends on neither the playhead nor anything else.
+  const [audioLinkFor] = useState(memoAudioLink)
+  const audioLink = useEditor((state) => audioLinkFor(state.project, state.selection))
   const tool = useTimelineTool((state) => state.tool)
   const trimMode = useTimelineTool((state) => state.trimMode)
   const source = useSourceClip((state) => state.source)

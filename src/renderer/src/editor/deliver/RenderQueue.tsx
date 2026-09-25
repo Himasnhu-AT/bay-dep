@@ -1,10 +1,11 @@
 import { useEffect, type ReactNode } from 'react'
 import { AlertTriangle, Bot, Check, Loader2, X } from 'lucide-react'
+import { useShallow } from 'zustand/react/shallow'
 import { Badge, Button, EmptyState, Panel, ProgressBar, ScrollArea } from '@/components'
 import { cn } from '@/lib/cn'
 import { DoneActions, StartButton, useExportForm } from '../ExportDialog'
 import { useExportSession, watchExports } from '../export-session'
-import { fileName, isRunning, recordStatus, type RecordTone, type RenderRecord } from './queue'
+import { fileName, isRunning, recordStatus, type RecordTone } from './queue'
 
 export interface RenderQueueProps {
   className?: string
@@ -28,7 +29,7 @@ function ToneIcon({ tone }: { tone: RecordTone }): ReactNode {
 
 /**
  * The Deliver page's Render Queue: every export this window has run since it opened — from
- * here, from ⌘E, or the agent's `export_timeline` — newest first, each with its progress, whether
+ * here, from ⌘E, or a tool call's `export_timeline` (the in-app agent's or a terminal client's) — newest first, each with its progress, whether
  * the file came out complete, and Show in Finder. The big Render button at the bottom starts the
  * export the Render Settings describe, the same job the dialog's Export starts.
  *
@@ -36,34 +37,36 @@ function ToneIcon({ tone }: { tone: RecordTone }): ReactNode {
  * queuing a second behind it.
  */
 export function RenderQueue({ className }: RenderQueueProps): ReactNode {
-  const history = useExportSession((state) => state.history)
+  // The job ids and how many are running, not the records: a record changes on every exported
+  // frame, and only its own row needs to redraw for that (`JobRow` reads it by id).
+  const jobIds = useExportSession(useShallow((state) => state.history.map((record) => record.jobId)))
+  const running = useExportSession((state) => state.history.filter(isRunning).length)
   const form = useExportForm()
   useEffect(() => watchExports(), [])
-  const running = history.filter(isRunning).length
   return (
     <Panel
       title="Render Queue"
       className={cn('h-full', className)}
       bodyClassName="flex flex-col"
       actions={
-        history.length > 0 ? (
+        jobIds.length > 0 ? (
           <span className="text-[11px] text-ink-2 tabular-nums">
             {running > 0 ? `${running} rendering · ` : ''}
-            {history.length} {history.length === 1 ? 'job' : 'jobs'}
+            {jobIds.length} {jobIds.length === 1 ? 'job' : 'jobs'}
           </span>
         ) : null
       }
     >
       <ScrollArea className="flex-1">
-        {history.length === 0 ? (
+        {jobIds.length === 0 ? (
           <EmptyState
             title="No renders yet"
-            hint="Choose a preset in Render Settings, then press Render. Exports made with ⌘E or by the agent appear here too."
+            hint="Choose a preset in Render Settings, then press Render. Exports made with ⌘E or by an agent’s export tool appear here too."
           />
         ) : (
           <ol aria-label="Render jobs" className="divide-y divide-line">
-            {history.map((record, index) => (
-              <JobRow key={record.jobId} record={record} number={history.length - index} />
+            {jobIds.map((jobId, index) => (
+              <JobRow key={jobId} jobId={jobId} number={jobIds.length - index} />
             ))}
           </ol>
         )}
@@ -100,12 +103,14 @@ function RenderButton(): ReactNode {
   )
 }
 
-function JobRow({ record, number }: { record: RenderRecord; number: number }): ReactNode {
-  const status = recordStatus(record)
+function JobRow({ jobId, number }: { jobId: string; number: number }): ReactNode {
+  const record = useExportSession((state) => state.history.find((candidate) => candidate.jobId === jobId))
   const cancel = useExportSession((state) => state.cancel)
-  const current = useExportSession((state) => state.progress?.jobId === record.jobId)
+  const current = useExportSession((state) => state.progress?.jobId === jobId)
+  if (!record) return null
+  const status = recordStatus(record)
   const percent = record.progress.progress === null ? null : record.progress.progress
-  const name = fileName(record.outputPath) ?? (record.origin === 'agent' ? 'Agent export' : 'Export')
+  const name = fileName(record.outputPath) ?? (record.origin === 'tool' ? 'Tool export' : 'Export')
   const done = record.progress.stage === 'done' && record.outputPath
   return (
     <li className="px-3 py-2.5" aria-label={`Job ${number}: ${name}, ${status.label}`}>
@@ -115,10 +120,14 @@ function JobRow({ record, number }: { record: RenderRecord; number: number }): R
         <span className="min-w-0 flex-1 truncate text-[12px] text-ink-0" title={record.outputPath ?? undefined}>
           {name}
         </span>
-        {record.origin === 'agent' && (
-          <Badge tone="neutral" className="gap-1">
-            <Bot aria-hidden="true" className="size-3" /> Agent
-          </Badge>
+        {record.origin === 'tool' && (
+          // Started by `export_timeline`: the in-app agent or a client on bay's socket. Which one
+          // this window cannot tell, so the badge names the route rather than guessing a caller.
+          <span title="Started by the export_timeline tool: the in-app agent, or an agent on bay’s socket">
+            <Badge tone="neutral" className="gap-1">
+              <Bot aria-hidden="true" className="size-3" /> Tool
+            </Badge>
+          </span>
         )}
       </div>
       <div className="mt-1 flex items-center gap-2 pl-7">
@@ -133,7 +142,7 @@ function JobRow({ record, number }: { record: RenderRecord; number: number }): R
           <div className="min-w-0 flex-1">
             <ProgressBar value={percent} label={`Progress of ${name}`} />
           </div>
-          {/* Only this form's job can be cancelled from here; the agent cancels its own. */}
+          {/* Only this form's job can be cancelled from here; a tool's job is cancelled by whoever started it. */}
           {record.origin === 'you' && current && (
             <Button variant="danger" onClick={cancel}>
               Cancel

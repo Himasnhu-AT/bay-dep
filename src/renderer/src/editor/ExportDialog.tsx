@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { AlertTriangle, Check, FolderOpen, Loader2, Upload } from 'lucide-react'
 import type { ExportFormat } from '@shared/ipc'
 import { formatFps, formatTimecode, timelineDuration } from '@shared/project'
@@ -21,7 +22,7 @@ import { call } from '@/lib/bay'
 import { cn } from '@/lib/cn'
 import { selectTimeline, useEditor } from '@/store/editor'
 import { useProjectSettingsDialog } from '@/store/project-settings-dialog'
-import { exportBlocker, rangeChoice, TERMINAL, useExportSession, type RangeKind } from './export-session'
+import { exportBlocker, exportFormFields, rangeChoice, TERMINAL, useExportSession, type RangeKind } from './export-session'
 
 const FORMATS: { value: ExportFormat; label: string }[] = [
   { value: 'mp4', label: 'MP4 · H.264' },
@@ -108,10 +109,16 @@ export function useExportForm() {
   })
   const rangeIn = useEditor((state) => state.rangeIn)
   const rangeOut = useEditor((state) => state.rangeOut)
-  const session = useExportSession()
+  // The form's own fields only. `progress` and `history` change on every exported frame, and
+  // everything built from this hook (the whole Deliver settings column, the dialog) would redraw
+  // with them; `ProgressView` and the render queue read those themselves.
+  const fields = useExportSession(useShallow(exportFormFields))
   if (!timeline) return null
-  const { settings, progress } = session
-  const running = progress !== null && !TERMINAL.includes(progress.stage)
+  const { settings, running } = fields
+  // The session's actions never change identity; the fields are the ones subscribed above. No
+  // `progress` here on purpose: a snapshot of it would be stale by the next frame.
+  const { setSettings, setRangeKind, setCustom, setOutputPath, start, cancel } = useExportSession.getState()
+  const session = { ...fields, setSettings, setRangeKind, setCustom, setOutputPath, start, cancel }
   const marks = { rangeIn, rangeOut }
   return {
     timeline,
@@ -122,10 +129,10 @@ export function useExportForm() {
     settings,
     audioOnly: isAudioOnly(settings.format),
     running,
-    locked: running || session.starting,
+    locked: running || fields.starting,
     marksSet: rangeIn !== null || rangeOut !== null,
-    range: resolveExportRange(rangeChoice(session, timeline.fps), duration, marks),
-    blockedBy: exportBlocker(session, timeline.fps, duration, marks),
+    range: resolveExportRange(rangeChoice(fields, timeline.fps), duration, marks),
+    blockedBy: exportBlocker(fields, timeline.fps, duration, marks),
     update: (patch: Partial<ExportSettings>): void => session.setSettings({ ...settings, ...patch })
   }
 }
@@ -428,9 +435,11 @@ export function DestinationField(): ReactNode {
 /** The current job's stage, bar, frame count, error or incomplete warning, and what to do with the file. */
 export function ProgressView(): ReactNode {
   const form = useExportForm()
+  // The job's state is read here, not through the form, so only this view redraws per frame.
+  const progress = useExportSession((state) => state.progress)
+  const incomplete = useExportSession((state) => state.incomplete)
   if (!form) return null
   const { session, blockedBy } = form
-  const { progress, incomplete } = session
   const percent = progress && progress.progress !== null ? Math.round(progress.progress * 100) : null
   const doneAt = progress?.stage === 'done' ? (progress.outputPath ?? session.outputPath) : null
   if (!progress) return <p className="text-[11px] text-ink-2">{blockedBy ?? 'Nothing exporting yet.'}</p>
@@ -585,12 +594,7 @@ export function ExportDialog({ open, onClose }: ExportDialogProps): ReactNode {
 
 /** The dialog's primary action, in the footer where a dialog's primary action belongs. */
 function DialogStart(): ReactNode {
-  const timeline = useEditor(selectTimeline)
-  const duration = timeline ? timelineDuration(timeline) : 0
-  const session = useExportSession()
-  const rangeIn = useEditor((state) => state.rangeIn)
-  const rangeOut = useEditor((state) => state.rangeOut)
-  if (!timeline) return null
-  const blockedBy = exportBlocker(session, timeline.fps, duration, { rangeIn, rangeOut })
-  return <StartButton blockedBy={blockedBy} />
+  const form = useExportForm()
+  if (!form) return null
+  return <StartButton blockedBy={form.blockedBy} />
 }
