@@ -122,7 +122,8 @@ export function extensionFor(mime: string): string | null {
     'audio/mp3': 'mp3',
     'audio/wav': 'wav',
     'audio/x-wav': 'wav',
-    'audio/wave': 'wav'
+    'audio/wave': 'wav',
+    'audio/ogg': 'ogg'
   }
   return map[base] ?? null
 }

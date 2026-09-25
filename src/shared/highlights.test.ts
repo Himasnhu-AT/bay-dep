@@ -87,6 +87,15 @@ test('overlap is found whatever order the picks arrive in', () => {
   assert.match(faults[0]!, /"Second".*overlaps.*"First"/)
 })
 
+test('a long pick that contains several short ones is reported against each of them in one refusal', () => {
+  const faults = checkPicks([pick('A', 0, 400), pick('B', 10, 20), pick('C', 30, 40)], { bounds: limits.bounds, fps: 30 })
+  assert.equal(faults.length, 2, faults.join('\n'))
+  assert.match(faults.join('\n'), /"B".*overlaps.*"A".*by 10 frames/)
+  assert.match(faults.join('\n'), /"C".*overlaps.*"A".*by 10 frames/)
+  // Positive control: the same short picks beside the long one, not inside it, pass.
+  assert.deepEqual(checkPicks([pick('A', 0, 400), pick('B', 400, 410), pick('C', 420, 430)], { bounds: limits.bounds, fps: 30 }), [])
+})
+
 test('the focus decides the ranking: a gripping clip wins viral, a complete one wins knowledge', () => {
   const gripping = { hook: 95, information: 30, emotion: 90, completeness: 50 }
   const thorough = { hook: 40, information: 95, emotion: 30, completeness: 95 }

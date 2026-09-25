@@ -415,6 +415,31 @@ test('the spend guard refuses a call past the session budget, naming spent, limi
   }
 })
 
+test('a submission the provider refuses with a 4xx is not counted against the budget; a 5xx still is', { timeout: 10000 }, async () => {
+  let status = 400
+  const stub = await startStub((_r, response) => json(response, status, { error: { message: status === 400 ? 'Invalid prompt' : 'overloaded' } }))
+  try {
+    const { deps } = await setup(stub, { limits: () => ({ budgetUsd: 1, maxActive: 3 }) })
+    const jobs = new GenerationJobs(deps)
+    const refused = await jobs.start(req({ model: 'gpt-image-1', prompt: 'one' }, 'image'))
+    assert.ok(refused.ok, refused.ok ? '' : refused.error)
+    const failed = await until(jobs, refused.job.id, ['done', 'failed'])
+    assert.equal(failed.status, 'failed')
+    assert.match(failed.error ?? '', /refused the request \(400\).*Invalid prompt/)
+    assert.equal(jobs.spending().spentUsd, 0, 'nothing was charged, so nothing is counted')
+
+    // Positive control: a server error may have been accepted and billed, so it stays counted.
+    status = 500
+    const errored = await jobs.start(req({ model: 'gpt-image-1', prompt: 'two' }, 'image'))
+    assert.ok(errored.ok)
+    assert.equal((await until(jobs, errored.job.id, ['done', 'failed'])).status, 'failed')
+    assert.equal(jobs.spending().spentUsd, 0.06)
+    await jobs.flush()
+  } finally {
+    await stub.close()
+  }
+})
+
 test('the spend guard caps jobs at once, and two calls racing for the last place get one between them', { timeout: 10000 }, async () => {
   let operations = 0
   const stub = await startStub((r, response) => {

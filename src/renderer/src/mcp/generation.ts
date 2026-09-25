@@ -211,7 +211,9 @@ function sessionSpend(spending: GenerationSpending | undefined): Record<string, 
   return {
     sessionSpendUsd: spending.spentUsd,
     sessionBudgetUsd: spending.budgetUsd,
-    spendNote: 'Estimated spend this session against the budget the user set in Settings › Providers. bay refuses a call that would pass it.'
+    spendNote:
+      'Estimated spend this session against the budget the user set in Settings › Providers. bay refuses a call that would pass it. ' +
+      'A call the provider accepted counts even if it later fails (it may have been billed); one the provider refused outright (a 4xx) does not.'
   }
 }
 
@@ -296,6 +298,9 @@ async function track(args: Record<string, unknown>): Promise<Record<string, unkn
   if (args.place === true && known && onTimeline) {
     return {
       ...summarise(job),
+      // A second look at a placed voiceover still needs its length: the agent re-checks here
+      // before fitting the edit to it.
+      ...measured,
       asset: { ...asset, id: known.id },
       placed: false,
       note: `Already imported and on the timeline (item ${onTimeline.id}), so it was not placed again. Call place_asset { assetId: "${known.id}" } if the edit needs a second copy.`

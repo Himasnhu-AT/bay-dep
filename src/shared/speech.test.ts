@@ -116,7 +116,29 @@ test('main’s re-validation of a validated request gives back the same request'
   }
 })
 
-const speechRequest: GenerationRequest = { provider: 'openai', model: 'gpt-4o-mini-tts', kind: 'speech', prompt: 'Hi', estimatedSeconds: 4 }
+test('no non-empty text is priced at zero seconds, whatever its script', () => {
+  const texts = [
+    'नमस्ते दोस्तों, आज हम वीडियो एडिटिंग के बारे में बात करेंगे।',
+    'مرحبا بالجميع، اليوم سنتحدث عن تحرير الفيديو.',
+    'Γεια σας σε όλους, σήμερα θα μιλήσουμε για το μοντάζ βίντεο.',
+    '我们今天讲一讲 machine learning and artificial intelligence',
+    // Nothing the estimator reads as words at all: only the floor stands between this and $0.
+    '🎉🎉🎉 → ★★★ ♪♪♪ ✓✓✓ ☀☀☀ ❤❤❤ 🎬🎬🎬 🎤🎤🎤'
+  ]
+  for (const text of texts) {
+    const ok = accepted({ model: 'gpt-4o-mini-tts', text })
+    const nonSpace = [...text.replace(/\s+/g, '')].length
+    assert.ok(ok.request.estimatedSeconds! >= nonSpace / 20 - 0.01, `${text}: ${ok.request.estimatedSeconds}s for ${nonSpace} characters`)
+    assert.ok(ok.estimatedCostUsd > 0, `${text}: $${ok.estimatedCostUsd}`)
+  }
+  const symbols = accepted({ model: 'gpt-4o-mini-tts', text: texts.at(-1)! })
+  assert.match(symbols.estimate.notes.join(' '), /raised to .*floor/)
+  // Positive control: ordinary English is priced by its syllables, above the floor and unflagged.
+  const english = accepted({ model: 'gpt-4o-mini-tts', text: 'The quick brown fox jumps over the lazy dog.' })
+  assert.doesNotMatch(english.estimate.notes.join(' '), /floor/)
+})
+
+const speechRequest: GenerationRequest ={ provider: 'openai', model: 'gpt-4o-mini-tts', kind: 'speech', prompt: 'Hi', estimatedSeconds: 4 }
 
 test('findings: audio with no stream or no length is blocking; a far-off length warns; a good one is clean', () => {
   const blocking = (probe: Parameters<typeof findingsFor>[1]) => findingsFor(speechRequest, probe).filter((f) => f.severity === 'blocking')

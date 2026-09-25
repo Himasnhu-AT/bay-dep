@@ -125,6 +125,42 @@ test('language detection, and an explicit language overrides it', () => {
   assert.equal(forced.detected, false)
 })
 
+test('a script bay has no profile for is detected as other and priced by its length, never as zero', () => {
+  const samples: Record<string, string> = {
+    hindi: 'नमस्ते दोस्तों, आज हम वीडियो एडिटिंग के बारे में बात करेंगे।',
+    arabic: 'مرحبا بالجميع، اليوم سنتحدث عن تحرير الفيديو.',
+    greek: 'Γεια σας σε όλους, σήμερα θα μιλήσουμε για το μοντάζ βίντεο.',
+    thai: 'สวัสดีทุกคน วันนี้เราจะพูดถึงการตัดต่อวิดีโอ'
+  }
+  for (const [name, text] of Object.entries(samples)) {
+    assert.equal(detectLanguage(text), 'other', name)
+    const estimate = estimateSpeech(text)
+    assert.equal(estimate.language, 'other', name)
+    // Each sample is one spoken sentence of 8–11 words: some seconds (the generic estimate is
+    // rough, and long for scripts written with many marks), not zero.
+    assert.ok(estimate.seconds > 2 && estimate.seconds < 12, `${name}: ${estimate.seconds}s`)
+    assert.match(estimate.notes.join(' '), /no speech profile for.*rough/, name)
+    // Called English by the caller, it is still not free: the letters are counted, not dropped.
+    const forced = estimateSpeech(text, { language: 'en' })
+    assert.ok(forced.seconds > 2, `${name} as en: ${forced.seconds}s`)
+    assert.match(forced.notes.join(' '), /outside the English alphabet/, name)
+  }
+  // Positive control: English with one accented word is still English, with no such note.
+  assert.equal(detectLanguage('We edited the café scene today.'), 'en')
+  assert.doesNotMatch(estimateSpeech('We edited the café scene today.').notes.join(' '), /outside/)
+})
+
+test('mixed Chinese and English counts both halves', () => {
+  const english = 'machine learning and artificial intelligence in production systems'
+  const mixed = `我们今天讲一讲 ${english}`
+  assert.equal(detectLanguage(mixed), 'en', 'mostly Latin letters: the English path')
+  const plain = estimateSpeech(english, { language: 'en' })
+  const both = estimateSpeech(mixed, { language: 'en' })
+  // Seven Han characters are seven syllables at the English rate.
+  assert.equal(both.units, plain.units + 7)
+  assert.ok(Math.abs(both.seconds - plain.seconds - 7 / 4.6) < 0.02, `${both.seconds} vs ${plain.seconds}`)
+})
+
 test('an unknown language gets the generic estimate and says so; a known one does not', () => {
   const fr = estimateSpeech('Bonjour tout le monde, comment allez-vous ?', { language: 'fr' })
   assert.equal(fr.language, 'other')
