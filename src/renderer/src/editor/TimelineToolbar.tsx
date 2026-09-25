@@ -71,6 +71,9 @@ const MARKER_COLORS: readonly { value: string | null; name: string }[] = [
 type Density = 'labels' | 'key-labels' | 'icons' | 'compact' | 'tight'
 
 function densityFor(width: number): Density {
+  // Not measured yet (the first render): icons, the middle of the range, rather than a flash of
+  // folded menus.
+  if (width === 0) return 'icons'
   if (width >= 1720) return 'labels'
   if (width >= 1240) return 'key-labels'
   if (width >= 1040) return 'icons'
@@ -145,8 +148,16 @@ function menuEntries(actions: readonly Action[]): MenuEntry[] {
   }))
 }
 
-/** A group folded into one button that names it and opens its actions as a menu. */
-function GroupMenu({ label, actions }: { label: string; actions: readonly Action[] }): ReactNode {
+/** A group folded into one button that names it and opens its actions (then `more`) as a menu. */
+function GroupMenu({
+  label,
+  actions,
+  more = []
+}: {
+  label: string
+  actions: readonly Action[]
+  more?: readonly Action[]
+}): ReactNode {
   const menu = useFloatingTrigger('menu')
   return (
     <>
@@ -157,7 +168,13 @@ function GroupMenu({ label, actions }: { label: string; actions: readonly Action
         active={menu.open}
         className="flex-row-reverse"
       />
-      <Menu {...menu.surfaceProps} label={label} items={menuEntries(actions)} side="bottom" align="start" />
+      <Menu
+        {...menu.surfaceProps}
+        label={label}
+        items={[...menuEntries(actions), ...(more.length > 0 ? [{ kind: 'separator' } as const, ...menuEntries(more)] : [])]}
+        side="bottom"
+        align="start"
+      />
     </>
   )
 }
@@ -283,6 +300,28 @@ export function TimelineToolbar({ fps }: { fps: number }): ReactNode {
     ...(density === 'tight' ? [transition] : [])
   ]
 
+  // The rest of the Clip and Mark menus' commands, one click away behind each group's ▾, so every
+  // command in those groups is reachable from the timeline without knowing its key.
+  const clipMore: Action[] = [
+    command('clip.duplicate', 'Duplicate', null, { disabled: selectionCount === 0 }),
+    command('clip.toggleEnabled', 'Enable/Disable Clip', null, { disabled: selectionCount === 0 }),
+    command('clip.delete', 'Delete (Leave Gap)', null, { disabled: selectionCount === 0 }),
+    command('clip.trimStartRipple', 'Ripple Trim Start to Playhead', null, { disabled: !hasClips }),
+    command('clip.trimEndRipple', 'Ripple Trim End to Playhead', null, { disabled: !hasClips }),
+    command('clip.trimStart', 'Trim Start to Playhead', null, { disabled: !hasClips }),
+    command('clip.trimEnd', 'Trim End to Playhead', null, { disabled: !hasClips }),
+    command('clip.nudgeLeft', 'Nudge Left One Frame', null, { disabled: selectionCount === 0 }),
+    command('clip.nudgeRight', 'Nudge Right One Frame', null, { disabled: selectionCount === 0 }),
+    command('clip.nudgeLeftMany', 'Nudge Left 10 Frames', null, { disabled: selectionCount === 0 }),
+    command('clip.nudgeRightMany', 'Nudge Right 10 Frames', null, { disabled: selectionCount === 0 })
+  ]
+  const markMore: Action[] = [
+    command('mark.goToIn', 'Go to In', null, { disabled: !hasRange }),
+    command('mark.goToOut', 'Go to Out', null, { disabled: !hasRange }),
+    command('mark.removeRange', 'Remove In to Out', null, { disabled: !hasRange, danger: true }),
+    command('mark.removeHere', 'Remove Marker at Playhead', null)
+  ]
+
   const addMarker = command('mark.add', 'Marker', <Bookmark className="size-3.5" />, {
     detail: 'Add a marker at the playhead'
   })
@@ -381,9 +420,14 @@ export function TimelineToolbar({ fps }: { fps: number }): ReactNode {
 
       <ToolbarGroup label="Clip">
         {folded ? (
-          <GroupMenu label="Clip" actions={clipActions} />
+          <GroupMenu label="Clip" actions={clipActions} more={clipMore} />
         ) : (
-          clipActions.map((action) => <ActionButton key={action.key} action={action} showLabel={labelsAll} />)
+          <>
+            {clipActions.map((action) => (
+              <ActionButton key={action.key} action={action} showLabel={labelsAll} />
+            ))}
+            <OptionsChevron label="More clip commands" items={menuEntries(clipMore)} />
+          </>
         )}
       </ToolbarGroup>
 
@@ -410,7 +454,7 @@ export function TimelineToolbar({ fps }: { fps: number }): ReactNode {
 
       <ToolbarGroup label="Mark">
         {folded ? (
-          <GroupMenu label="Mark" actions={markActions} />
+          <GroupMenu label="Mark" actions={markActions} more={markMore} />
         ) : (
           markActions.map((action) =>
             action.key === 'mark.add' ? (
@@ -423,6 +467,7 @@ export function TimelineToolbar({ fps }: { fps: number }): ReactNode {
             )
           )
         )}
+        {!folded && <OptionsChevron label="More mark commands" items={menuEntries(markMore)} />}
         <MarkerListButton fps={fps} />
         <CommentListButton fps={fps} />
       </ToolbarGroup>
