@@ -43,6 +43,7 @@ const api: BayApi = {
         ffmpeg: string | null
         ffprobe: string | null
       }>,
+    repairStorage: () => ipcRenderer.invoke(IPC.appRepairStorage) as ReturnType<BayApi['app']['repairStorage']>,
     storageReady: () =>
       ipcRenderer.invoke(IPC.appStorageReady) as Promise<{
         ready: boolean

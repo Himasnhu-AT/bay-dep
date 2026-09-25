@@ -17,6 +17,7 @@ import {
   Button,
   ContextMenu,
   IconButton,
+  InlineAlert,
   Menu,
   Modal,
   SearchField,
@@ -29,6 +30,7 @@ import { call } from '@/lib/bay'
 import { formatShortcut, runCommand, shortcutOf } from '@/lib/commands'
 import { cn } from '@/lib/cn'
 import { useEditor } from '@/store/editor'
+import { STORAGE_REPAIRED_EVENT, StorageRepairButton, useStorageStatus } from '@/editor/StorageRepair'
 
 /**
  * The projects screen: what bay shows at launch, and what the Home button goes back to.
@@ -101,7 +103,13 @@ export function ProjectsHome(): ReactNode {
 
   useEffect(() => {
     void load()
+    // A repair lists the projects folder again; show what it found.
+    const reload = (): void => void load()
+    window.addEventListener(STORAGE_REPAIRED_EVENT, reload)
+    return () => window.removeEventListener(STORAGE_REPAIRED_EVENT, reload)
   }, [load])
+  // An empty list here looks the same broken or new; this is what tells them apart.
+  const storage = useStorageStatus()
 
   const open = async (work: () => Promise<Project | null>): Promise<void> => {
     if (busy) return
@@ -249,6 +257,15 @@ export function ProjectsHome(): ReactNode {
               onClick={() => useEditor.getState().setSettingsOpen(true)}
             />
           </header>
+          {storage && !storage.ready && (
+            <InlineAlert tone="danger" className="m-3 mb-0 items-center">
+              <span className="flex-1">
+                <b className="font-semibold">Storage unavailable</b> — recent projects cannot be listed or remembered.
+                Your projects are files and are safe. {storage.error ? <span className="text-ink-2">({storage.error})</span> : null}
+              </span>
+              <StorageRepairButton />
+            </InlineAlert>
+          )}
 
           <div className="min-h-0 flex-1 overflow-y-auto p-4">
             {recents !== null && recents.length === 0 ? (

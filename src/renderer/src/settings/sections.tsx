@@ -17,6 +17,7 @@ import { AGENT_PROVIDERS, type AgentProviderStatus } from '@shared/agent'
 import { PROVIDER_LABELS, useAgentProvider } from '@/lib/agentProvider'
 import { bay } from '@/lib/bay'
 import { ShortcutsSheet } from '@/editor/ShortcutsDialog'
+import { StorageRepairButton, useStorageStatus } from '@/editor/StorageRepair'
 import { Group, Note, Row, Section, SwitchRow } from './parts'
 
 /**
@@ -85,7 +86,10 @@ export function MediaToolsSection(): ReactNode {
 }
 
 export function StorageSection(): ReactNode {
-  const { answer: storage, asked } = useAsked(() => bay()?.app.storageReady())
+  const live = useStorageStatus()
+  const { answer: first, asked } = useAsked(() => bay()?.app.storageReady())
+  // The live status once it has answered (it follows a repair); the first ask until then.
+  const storage = live ?? first
   return (
     <Section
       title="Storage"
@@ -106,7 +110,10 @@ export function StorageSection(): ReactNode {
           ) : storage.ready ? (
             <Badge tone="success">Ready</Badge>
           ) : (
-            <Badge tone="danger">Unavailable</Badge>
+            <span className="flex items-center gap-2">
+              <Badge tone="danger">Unavailable</Badge>
+              <StorageRepairButton />
+            </span>
           )}
         </Row>
       </Group>

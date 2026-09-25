@@ -10,6 +10,7 @@ import { runCommand } from '@/lib/commands'
 import { catalogMismatch } from '@/mcp'
 import { selectDuration, selectFps, selectTimeline, useEditor } from '@/store/editor'
 import { AudioMeter } from './viewer/AudioMeter'
+import { useStorageRepair } from './StorageRepair'
 
 function Stat({ label, value }: { label: string; value: ReactNode }): ReactNode {
   return (
@@ -35,6 +36,7 @@ export function StatusBar({ saving = false }: { saving?: boolean }): ReactNode {
   const downloading = download?.state === 'downloading' || download?.state === 'verifying'
   const [tools, setTools] = useState<{ ready: boolean } | null>(null)
   const [storage, setStorage] = useState<{ ready: boolean; error: string | null } | null>(null)
+  const { repair: repairStorage, repairing } = useStorageRepair()
   const [agent, setAgent] = useState<AgentSurfaceStatus | null>(null)
 
   useEffect(() => {
@@ -155,6 +157,16 @@ export function StatusBar({ saving = false }: { saving?: boolean }): ReactNode {
             Storage unavailable
           </span>
         </Tooltip>
+      )}
+      {storage && !storage.ready && (
+        <button
+          type="button"
+          onClick={() => void repairStorage().then(() => void bay()?.app.storageReady().then(setStorage))}
+          disabled={repairing}
+          className="rounded-sm px-1 text-accent underline-offset-2 hover:underline disabled:opacity-50"
+        >
+          {repairing ? 'Repairing…' : 'Repair'}
+        </button>
       )}
 
       {/* Not a `Stat`: the failing case is an accusation and the healthy case is a count, and

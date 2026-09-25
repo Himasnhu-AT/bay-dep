@@ -79,6 +79,7 @@ interface ChannelApi {
   appPlatform: BayApi['app']['platform']
   appMediaToolsReady: BayApi['app']['mediaToolsReady']
   appStorageReady: BayApi['app']['storageReady']
+  appRepairStorage: BayApi['app']['repairStorage']
   appMcpReady: BayApi['app']['mcpReady']
 
   mediaImportDialog: BayApi['media']['importDialog']
@@ -254,6 +255,7 @@ const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
     return { ready: tools.ready, ffmpeg: tools.ffmpeg, ffprobe: tools.ffprobe }
   },
   appMcpReady: async () => mcpStatus(),
+  appRepairStorage: () => store.repairStorage(),
   appStorageReady: async () => {
     // Opens the database on first ask if it is not open yet, so the status is the real one
     // rather than a guess made before anything tried.

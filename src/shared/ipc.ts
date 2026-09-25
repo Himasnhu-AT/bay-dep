@@ -359,6 +359,12 @@ export interface BayApi {
      */
     storageReady(): Promise<{ ready: boolean; error: string | null }>
     /**
+     * Makes the project database open again with nothing lost: the old file is renamed aside
+     * (never deleted), what it still yields is carried over, and the projects folder's `.bay`
+     * files are listed again. Projects themselves are never touched.
+     */
+    repairStorage(): Promise<{ ready: boolean; error: string | null; movedAside: string[]; recents: number }>
+    /**
      * Whether bay can be driven over MCP, and whether anything has.
      *
      * `connectionsSeen` is the reason this is not a boolean. "The socket never opened" and
@@ -793,6 +799,7 @@ export const IPC = {
   appPlatform: 'app:platform',
   appMediaToolsReady: 'app:media-tools-ready',
   appStorageReady: 'app:storage-ready',
+  appRepairStorage: 'app:repair-storage',
   appMcpReady: 'app:mcp-ready',
   appMenuCommand: 'app:menu-command',
   appMetrics: 'app:metrics',
