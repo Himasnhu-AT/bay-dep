@@ -293,7 +293,7 @@ export function AgentPanel(): ReactNode {
   }
 
   const moreItems: MenuEntry[] = [
-    { label: 'Agent settings…', onSelect: () => useEditor.getState().setSettingsOpen(true) },
+    { label: 'Agent settings…', onSelect: () => useEditor.getState().setSettingsOpen(true, 'agent') },
     ...(debugMode
       ? [
           { kind: 'separator' as const },
@@ -417,7 +417,7 @@ function AgentHeader({
       <Tooltip label={`Answered by ${PROVIDER_LABELS[provider]}, with bay's tools and nothing else. Change it in Settings › Agent.`}>
         <button
           type="button"
-          onClick={() => useEditor.getState().setSettingsOpen(true)}
+          onClick={() => useEditor.getState().setSettingsOpen(true, 'agent')}
           className="t-fast flex h-5 items-center gap-1 rounded-full border border-line-strong px-1.5 text-[10.5px] text-ink-1 hover:border-line-hover hover:text-ink-0"
         >
           {running && <Loader2 aria-hidden="true" className="size-2.5 animate-spin" />}

@@ -97,7 +97,7 @@ function AskTheAgent({ onDraft }: { onDraft: (text: string) => void }): ReactNod
 
 function openProviders(): void {
   // Settings has no way to open on a page from outside yet (WP6); it opens where it was left.
-  useEditor.getState().setSettingsOpen(true)
+  useEditor.getState().setSettingsOpen(true, 'providers')
 }
 
 function GenerateSection(): ReactNode {

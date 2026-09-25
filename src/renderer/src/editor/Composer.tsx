@@ -632,7 +632,7 @@ function ApprovalBadge({ on }: { on: boolean }): ReactNode {
       <button
         type="button"
         aria-label={label}
-        onClick={() => useEditor.getState().setSettingsOpen(true)}
+        onClick={() => useEditor.getState().setSettingsOpen(true, 'agent')}
         className={cn(
           't-fast ml-0.5 flex h-5 items-center gap-1 rounded-full border px-1.5 text-[10.5px] whitespace-nowrap',
           on ? 'border-accent/50 bg-accent/10 text-ink-0 hover:bg-accent/15' : 'border-line text-ink-2 hover:border-line-strong hover:text-ink-1'
