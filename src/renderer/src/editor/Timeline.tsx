@@ -37,9 +37,10 @@ import { TrackHeader } from './TrackHeader'
 import { ClipDialogs, clipMenuEntries } from './ClipCommands'
 import { detachToEntries, rippleDeleteThisTrack, trimModeEntries } from './clipMenuExtras'
 import { bladeFrame, clipZone, nearerEdge } from '@/lib/blade'
-import { useTimelineTool } from '@/lib/timelineTool'
+import { TRIM_TOOL_MODES, useTimelineTool } from '@/lib/timelineTool'
 import { pointerHint } from '@/lib/pointerHint'
 import { planTrackShift, type TrackMove } from '@shared/track-move'
+import { applyRippleTrim, rippleHeadRoom } from './timeline/rippleTrim'
 
 /** One shared empty list, so a timeline without markers does not hand the ruler a new array each render. */
 const NO_MARKERS: readonly Marker[] = []
@@ -120,6 +121,8 @@ interface TrimGesture {
   edge: 'start' | 'end'
   from: number
   durationInFrames: number
+  /** The Trim tool's ripple: later clips on the track follow the edge, and a head trim keeps the start. */
+  ripple?: boolean
 }
 
 /**
@@ -195,6 +198,7 @@ export function Timeline(): ReactNode {
   const panelRef = useRef<HTMLDivElement>(null)
   const tool = useTimelineTool((state) => state.tool)
   const armed = useTimelineTool((state) => state.armed)
+  const trimToolMode = useTimelineTool((state) => state.trimMode)
   const [hover, setHover] = useState<Hover | null>(null)
   // ⌥ and ⇧ as held now — for the cursor and the hint while the pointer rests on a clip.
   const [mods, setMods] = useState({ alt: false, shift: false })
@@ -501,9 +505,12 @@ export function Timeline(): ReactNode {
         const raw = trimEdgeFrame(current.edge === 'start' ? item.from : itemEnd(item), state.dx + scrolled, pixelsPerFrame)
         const frame = state.meta ? Math.round(raw) : snap(raw, new Set([item.id]))
         // The edge stops where the footage does, so what is drawn is what the store keeps.
-        const bounds = trimBounds(item, findAsset(project, item.assetId)?.durationUs ?? 0, timeline.fps)
+        const footageUs = findAsset(project, item.assetId)?.durationUs ?? 0
+        const bounds = trimBounds(item, footageUs, timeline.fps)
         if (current.edge === 'start') {
-          const from = Math.max(bounds.earliestFrom, Math.min(frame, itemEnd(item) - 1))
+          // A ripple head keeps the clip's start, so frame 0 does not limit it; the footage does.
+          const earliest = current.ripple ? item.from - rippleHeadRoom(item, timeline.fps, footageUs > 0) : bounds.earliestFrom
+          const from = Math.max(earliest, Math.min(frame, itemEnd(item) - 1))
           return { ...current, from, durationInFrames: itemEnd(item) - from }
         }
         const end = Math.min(frame, bounds.latestEnd)
@@ -515,12 +522,13 @@ export function Timeline(): ReactNode {
       setTrim(null)
       if (!current) return
       const store = useEditor.getState()
-      store.trimItem(
-        current.itemId,
-        current.edge,
-        current.edge === 'start' ? current.from : current.from + current.durationInFrames,
-        { linked: store.linkedSelection }
-      )
+      const toFrame = current.edge === 'start' ? current.from : current.from + current.durationInFrames
+      if (current.ripple) {
+        const error = applyRippleTrim(current.itemId, current.edge, toFrame)
+        if (error) store.notify(error, 'error')
+        return
+      }
+      store.trimItem(current.itemId, current.edge, toFrame, { linked: store.linkedSelection })
     },
     onClick: () => setTrim(null)
   })
@@ -594,6 +602,24 @@ export function Timeline(): ReactNode {
     [timeline, beginTrimMode]
   )
 
+  /** Starts dragging one edge of a clip: an ordinary trim, or with `ripple` the Trim tool's ripple. */
+  const startEdgeTrim = useCallback(
+    (event: React.PointerEvent, item: Item, edge: 'start' | 'end', ripple: boolean): void => {
+      const track = tracks.find((candidate) => candidate.id === item.trackId)
+      const store = useEditor.getState()
+      if (!track) return
+      if (track.locked) {
+        store.notify(`Track ${track.name} is locked — unlock it in the track header to trim it.`)
+        return
+      }
+      store.select([item.id])
+      trimScrollAtGrab.current = scrollRef.current?.scrollLeft ?? 0
+      setTrim({ itemId: item.id, edge, from: item.from, durationInFrames: item.durationInFrames, ripple })
+      beginTrim(event)
+    },
+    [tracks, beginTrim]
+  )
+
   /** The frame a blade click at `clientX` on `item` cuts at (`lib/blade`), or null on its edge. */
   const bladeFrameAt = useCallback(
     (clientX: number, item: Item, suspendSnap: boolean): number | null => {
@@ -639,6 +665,15 @@ export function Timeline(): ReactNode {
       const tools = useTimelineTool.getState()
       if (tools.tool === 'blade') {
         bladeCut(event, item)
+        return
+      }
+      // The Trim tool: every drag is the trim picked in its menu. On the body, ripple and roll
+      // act on the nearer edge; slip and slide on the clip.
+      if (tools.tool === 'trim') {
+        const box = (event.currentTarget as HTMLElement).getBoundingClientRect()
+        const edge = nearerEdge(event.clientX - box.left, box.width)
+        if (tools.trimMode === 'ripple') startEdgeTrim(event, item, edge, true)
+        else startTrimMode(event, item, tools.trimMode, tools.trimMode === 'roll' ? edge : undefined)
         return
       }
       // A trim mode armed from the clip menu is this drag's, then it disarms. A roll needs a
@@ -689,7 +724,7 @@ export function Timeline(): ReactNode {
       })
       beginMove(event)
     },
-    [timeline, tracks, beginMove, startTrimMode, bladeCut]
+    [timeline, tracks, beginMove, startTrimMode, bladeCut, startEdgeTrim]
   )
 
   const onTrimPointerDown = useCallback(
@@ -697,6 +732,11 @@ export function Timeline(): ReactNode {
       const track = tracks.find((candidate) => candidate.id === item.trackId)
       if (!track || track.locked) return
       const tools = useTimelineTool.getState()
+      if (tools.tool === 'trim') {
+        if (tools.trimMode === 'ripple') startEdgeTrim(event, item, edge, true)
+        else startTrimMode(event, item, tools.trimMode, tools.trimMode === 'roll' ? edge : undefined)
+        return
+      }
       // An armed slip or slide acts on the clip wherever it is grabbed; an armed roll rolls this edge.
       if (tools.armed) {
         const mode = tools.armed
@@ -709,12 +749,9 @@ export function Timeline(): ReactNode {
         startTrimMode(event, item, 'roll', edge)
         return
       }
-      useEditor.getState().select([item.id])
-      trimScrollAtGrab.current = scrollRef.current?.scrollLeft ?? 0
-      setTrim({ itemId: item.id, edge, from: item.from, durationInFrames: item.durationInFrames })
-      beginTrim(event)
+      startEdgeTrim(event, item, edge, false)
     },
-    [tracks, beginTrim, startTrimMode]
+    [tracks, startTrimMode, startEdgeTrim]
   )
 
   // -- empty lanes: marquee, gaps, the lane menu ------------------------------
@@ -916,7 +953,9 @@ export function Timeline(): ReactNode {
       ref={panelRef}
       // What a drag on a clip will do right now, for the clips' cursors (`Clip.tsx` reads it with
       // `in-data-[trim-hint=…]`, so holding ⌥ re-renders no clip).
-      data-trim-hint={armed ?? (mods.alt && tool === 'select' ? (mods.shift ? 'slide' : 'slip') : undefined)}
+      data-trim-hint={
+        tool === 'trim' ? trimToolMode : (armed ?? (mods.alt && tool === 'select' ? (mods.shift ? 'slide' : 'slip') : undefined))
+      }
       className="relative flex min-h-0 flex-1 flex-col border-t border-line bg-surface-1"
     >
       <TimelineToolbar fps={fps} />
@@ -1061,10 +1100,13 @@ export function Timeline(): ReactNode {
                         locked={track.locked}
                         hidden={track.kind === 'video' && track.hidden}
                         trackKind={track.kind}
-                        previewFrom={trimming ? trim.from : item.from}
+                        // A ripple head keeps the clip's start: the frames come off (or go on) at
+                        // the head of the footage, and the clip's end moves instead.
+                        previewFrom={trimming && !(trim.ripple && trim.edge === 'start') ? trim.from : item.from}
                         previewDuration={trimming ? trim.durationInFrames : item.durationInFrames}
                         dragging={(movingIds?.has(item.id) ?? false) || trimMode?.itemId === item.id}
                         blade={tool === 'blade'}
+                        trimTool={tool === 'trim'}
                         onPointerDownBody={onClipPointerDown}
                         onPointerDownTrim={onTrimPointerDown}
                         onContextMenu={onClipContextMenu}
@@ -1217,7 +1259,8 @@ export function Timeline(): ReactNode {
               const delta = original ? trim.durationInFrames - original.durationInFrames : 0
               return (
                 <>
-                  Trim {trim.edge === 'start' ? 'start' : 'end'} {formatDelta(trim.edge === 'start' ? -delta : delta)}
+                  {trim.ripple ? 'Ripple trim' : 'Trim'} {trim.edge === 'start' ? 'start' : 'end'}{' '}
+                  {formatDelta(trim.edge === 'start' ? -delta : delta)}
                   <span className="ml-2 text-ink-2">duration {formatTimecode(trim.durationInFrames, fps, true)}</span>
                 </>
               )
@@ -1229,7 +1272,13 @@ export function Timeline(): ReactNode {
       {/* Before any drag: what the tool in hand, an armed trim, or ⌥ over a clip will do. The
           gestures have no other visible affordance, so this is where they are learned. */}
       {!move && !trim && !trimMode && !marquee && (() => {
-        const hint = pointerHint(tool, armed, mods, hover, fps)
+        const hint =
+          tool === 'trim'
+            ? (() => {
+                const mode = TRIM_TOOL_MODES.find((option) => option.mode === trimToolMode)
+                return mode ? `Trim tool, ${mode.label}: ${mode.detail}. A or Escape for Select.` : null
+              })()
+            : pointerHint(tool, armed, mods, hover, fps)
         return hint ? (
           <div
             className="pointer-events-none absolute top-[3px] left-1/2 z-50 max-w-[50%] -translate-x-1/2 truncate rounded-sm border border-line bg-surface-2 px-2 py-1 text-[11px] text-ink-0 tabular-nums shadow-pop"
