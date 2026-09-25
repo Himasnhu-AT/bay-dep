@@ -68,7 +68,7 @@ export function RenderQueue({ className }: RenderQueueProps): ReactNode {
           </ol>
         )}
       </ScrollArea>
-      <footer className="shrink-0 border-t border-line bg-chrome px-3 py-3">
+      <footer className="shrink-0 border-t border-line bg-chrome-raised px-3 py-3">
         {form ? (
           <>
             <RenderButton />
