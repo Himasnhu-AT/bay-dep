@@ -14,6 +14,7 @@
  */
 
 import { create } from 'zustand'
+import { linkedPartners } from '@shared/links'
 import { assetTrackKind, findAsset, findItem, itemEnd, usToFrames, type Asset, type Item, type Timeline, type Track } from '@shared/project'
 import { editIntoTimeline, endOfTimeline, placeAssetRange } from '@/lib/mediaActions'
 import { insertIndexFor } from '@/lib/timelineLayout'
@@ -180,8 +181,9 @@ function placeOnTop(asset: Asset, source: SourceClip, timeline: Timeline): strin
 
 /**
  * Replace: the source's In point goes where the target clip starts, for the target's length (or
- * the marked part's, if shorter), on the target's track — the target is removed. Refused for a
- * linked clip, whose partner would be left describing footage that is no longer there.
+ * the marked part's, if shorter), on the target's track — the target is removed, and with it
+ * any clip linked to it (its sound on A1): a partner left behind would describe footage that is
+ * no longer there. A source with sound brings its own linked sound (Preferences › Editing).
  */
 function replaceWith(asset: Asset, source: SourceClip, timeline: Timeline): { itemId: string; replaced: string } | { error: string } {
   const store = useEditor.getState()
@@ -196,7 +198,7 @@ function replaceWith(asset: Asset, source: SourceClip, timeline: Timeline): { it
   if (found.track.kind !== kind) {
     return { error: `${asset.name} is ${kind === 'video' ? 'a picture' : 'sound'}, and the clip to replace is on ${found.track.name}, a ${found.track.kind} track.` }
   }
-  if (target.linkId) return { error: 'That clip is linked to its sound. Unlink it first (right-click › Audio › Unlink), then replace it.' }
+  const partners = linkedPartners(timeline, target.id).map((partner) => partner.id)
   const replaced = findAsset(store.project, target.assetId)?.name ?? 'the clip'
   // A still takes the target's length; footage the target's or the marked part's, if shorter.
   // Always passed, so the room `placeAsset` looks for is exactly the room the target leaves: a
@@ -209,7 +211,7 @@ function replaceWith(asset: Asset, source: SourceClip, timeline: Timeline): { it
   // Refused inside the step if it did not land in the target's place, so the target is not left
   // deleted with nothing where it was (`refusableEdit` puts the project back as it was).
   const refused = refusableEdit(() => {
-    store.select([target.id])
+    store.select([target.id, ...partners])
     store.deleteSelected()
     placed = store.placeAsset(asset.id, target.from, found.track.id, span)
     const landed = placed ? findItem(selectTimeline(useEditor.getState())!, placed) : undefined

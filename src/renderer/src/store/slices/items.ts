@@ -141,7 +141,10 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
       let target = placementTrack(timeline, kind, from, duration, trackId)
 
       const itemId = newId('itm')
-      editTimeline((tl) => {
+      // A video's sound on its own linked clip on an audio track, as in Resolve — in the same edit,
+      // so placing it is still one undo step (Preferences › Editing can keep it inside the picture).
+      const separateSound = asset.kind === 'video' && asset.hasVideo && asset.hasAudio && editingPrefs().separateClipAudio
+      editTimeline((tl, project) => {
         let track = target ? findTrack(tl, target.id) : undefined
         if (!track) {
           // Nothing had room, so the clip gets a new lane rather than overwriting one.
@@ -178,6 +181,16 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
         }
         track.items.push(item)
         track.items.sort((a, b) => a.from - b.from)
+        if (separateSound) {
+          detachAudio(project, tl, [itemId], {
+            makeId: newId,
+            makeAudioTrack: (timeline) => {
+              const audioTrack = makeTrack('audio', 1)
+              audioTrack.name = nextTrackName(timeline, 'audio')
+              return audioTrack
+            }
+          })
+        }
       })
       target = null
       set({ selection: [itemId] })

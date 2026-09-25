@@ -9,13 +9,13 @@
  */
 
 import type { Asset } from '@shared/project'
-import { textAssetName, usToFrames, timelineDuration } from '@shared/project'
+import { assetTrackKind, textAssetName, usToFrames, timelineDuration } from '@shared/project'
 import { captionsToSrt } from '@shared/caption-export'
 import { canRelink, relinkMismatch, siblingCandidates } from '@shared/relink'
 import { detectBeats } from '@/mcp/beats'
 import { addCaptions } from '@/mcp/captions'
 import { newId, selectTimeline, useEditor } from '@/store/editor'
-import { stillDurationFrames } from '@/store/editing-prefs'
+import { editingPrefs, stillDurationFrames } from '@/store/editing-prefs'
 import { bay, call, importMessage } from './bay'
 import { completeBrfImports } from './brfImport'
 
@@ -75,8 +75,15 @@ export function editIntoTimeline(
     asset.durationUs > 0
       ? Math.max(1, usToFrames(Math.max(0, outUs - inUs) || asset.durationUs, timeline.fps))
       : stillDurationFrames(timeline.fps)
-  const kind = asset.hasVideo || asset.kind === 'image' || asset.kind === 'text' ? 'video' : 'audio'
+  const kind = assetTrackKind(asset)
   const target = timeline.tracks.find((track) => track.kind === kind && !track.locked)
+  // A video whose sound will land on its own clip (Preferences › Editing): Overwrite clears that
+  // span of the audio track too, or the sound would be pushed onto a new track beside what it
+  // replaced. Insert already opens the time on every unlocked track.
+  const soundTrack =
+    mode === 'overwrite' && asset.kind === 'video' && asset.hasVideo && asset.hasAudio && editingPrefs().separateClipAudio
+      ? timeline.tracks.find((track) => track.kind === 'audio' && !track.locked)
+      : undefined
   const at = s.playhead
   let placed: string | null = null
   s.transact(() => {
@@ -84,6 +91,9 @@ export function editIntoTimeline(
       const room = s.openSpan(at, frames, mode, target.id)
       if (!room) return
     }
+    // Only beside a picture that is itself overwriting: with its track locked the picture goes to
+    // a lane of its own, and so must its sound rather than cutting into A1.
+    if (target && soundTrack) s.openSpan(at, frames, 'overwrite', soundTrack.id)
     placed = placeAssetRange(asset, { atFrame: at, ...(target ? { trackId: target.id } : {}), ...options })
   })
   return placed

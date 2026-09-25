@@ -167,7 +167,8 @@ test('track_generation: running reports and imports nothing; done imports and pl
   assert.deepEqual(value.findings, [{ severity: 'warn', message: 'no sound' }])
   assert.ok(value.placed, 'placed on the timeline')
   assert.ok(useEditor.getState().project.assets.some((a) => a.id === 'generated1'))
-  const items = useEditor.getState().project.timelines[0]!.tracks.flatMap((t) => t.items)
+  // Pictures: a video with sound also brings its linked sound clip (Preferences › Editing).
+  const items = useEditor.getState().project.timelines[0]!.tracks.filter((t) => t.kind === 'video').flatMap((t) => t.items)
   assert.equal(items.filter((i) => i.assetId === 'generated1').length, 1)
 })
 
@@ -230,7 +231,8 @@ test('track_generation with place: true on a job already placed does not place a
   const value = again.ok ? (again.value as Record<string, unknown>) : {}
   assert.equal(value.placed, false)
   assert.match(String(value.note), /already imported and on the timeline \(item .+\), so it was not placed again\. Call place_asset \{ assetId: "generated1" \}/i)
-  const items = useEditor.getState().project.timelines[0]!.tracks.flatMap((t) => t.items)
+  // Pictures: a video with sound also brings its linked sound clip (Preferences › Editing).
+  const items = useEditor.getState().project.timelines[0]!.tracks.filter((t) => t.kind === 'video').flatMap((t) => t.items)
   assert.equal(items.filter((i) => i.assetId === 'generated1').length, 1, 'one copy on the timeline')
   assert.equal(useEditor.getState().past.length, pastBefore, 'no undo step for a call that changed nothing')
 })

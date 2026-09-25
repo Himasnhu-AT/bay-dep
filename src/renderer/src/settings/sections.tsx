@@ -222,6 +222,8 @@ export function EditingSection(): ReactNode {
   const setTransitionSeconds = useEditingPrefs((state) => state.setTransitionSeconds)
   const newClipFit = useEditingPrefs((state) => state.newClipFit)
   const setNewClipFit = useEditingPrefs((state) => state.setNewClipFit)
+  const separateClipAudio = useEditingPrefs((state) => state.separateClipAudio)
+  const setSeparateClipAudio = useEditingPrefs((state) => state.setSeparateClipAudio)
   const fps = useEditor((state) => selectTimeline(state)?.fps ?? null)
 
   return (
@@ -275,6 +277,14 @@ export function EditingSection(): ReactNode {
             onChange={setNewClipFit}
           />
         </Row>
+      </Group>
+      <Group title="Sound">
+        <SwitchRow
+          label="Put a video's sound on its own track"
+          description="A placed video with sound arrives as two linked clips: the picture on a video track and its sound on an audio track (A1), as in Resolve. Linked, they move, trim and delete together; right-click › Audio › Unlink to edit them apart. Off: the sound stays inside the picture clip."
+          checked={separateClipAudio}
+          onChange={setSeparateClipAudio}
+        />
       </Group>
     </Section>
   )
