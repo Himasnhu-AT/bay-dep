@@ -1173,9 +1173,14 @@ export function Timeline(): ReactNode {
             )
           })}
 
-          <div className="flex">
+          {/* Pinned to the bottom of the scroller while the lanes overflow it: at the default
+              Edit layout three tracks already fill the panel, and the row sat half under its
+              bottom edge ("+ Video + Audio" cut off), reachable only by scrolling. Scrolled to
+              the end it rests after the last lane as before. Only the header cell is opaque;
+              the lane side lets the last lane show and takes no pointer. */}
+          <div className="pointer-events-none sticky bottom-0 z-[36] flex">
             <div
-              className="sticky left-0 z-30 flex shrink-0 items-center gap-1 border-r border-b border-line bg-surface-1 px-2 py-1.5"
+              className="pointer-events-auto sticky left-0 z-30 flex shrink-0 items-center gap-1 border-t border-r border-b border-line bg-surface-1 px-2 py-1.5"
               style={{ width: HEADER_WIDTH }}
             >
               {/* Words, not two bare glyphs: a camera and a note read as media, not as tracks. */}
@@ -1204,7 +1209,7 @@ export function Timeline(): ReactNode {
                 onClick={() => useEditor.getState().addTrack('audio')}
               />
             </div>
-            <div className="border-b border-line" style={{ width: contentWidth, height: 30 }} />
+            <div style={{ width: contentWidth, height: 30 }} />
           </div>
 
           {move && timeline && (
