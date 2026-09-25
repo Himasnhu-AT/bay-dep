@@ -50,6 +50,12 @@ const KIND_ICONS: Record<GenerationKind, ReactNode> = {
 }
 const KIND_LABELS: Record<GenerationKind, string> = { image: 'Image', video: 'Video', speech: 'Speech' }
 
+/** The form as last left, for the life of the window: the tab mounts and unmounts with the dock. */
+const draft: { forms: Record<GenerationKind, GenerateForm>; kind: GenerationKind } = {
+  forms: { image: initialForm('image'), video: initialForm('video'), speech: initialForm('speech') },
+  kind: 'image'
+}
+
 /** How often the job list is read while something is generating. Video takes minutes. */
 const POLL_MS = 3000
 
@@ -132,12 +138,13 @@ function GenerateSection(): ReactNode {
   const assetPaths = useMemo(() => new Set(assets.map((a) => a.path)), [assets])
   const settingsOpen = useEditor((state) => state.settingsOpen)
 
-  const [forms, setForms] = useState<Record<GenerationKind, GenerateForm>>(() => ({
-    image: initialForm('image'),
-    video: initialForm('video'),
-    speech: initialForm('speech')
-  }))
-  const [kind, setKind] = useState<GenerationKind>('image')
+  // Seeded from the window's draft and written back to it, so a half-written prompt survives the
+  // tab unmounting (Chat and back, or the dock closed) — it used to come back empty.
+  const [forms, setFormsState] = useState<Record<GenerationKind, GenerateForm>>(() => draft.forms)
+  const [kind, setKindState] = useState<GenerationKind>(() => draft.kind)
+  const setForms = (next: (all: Record<GenerationKind, GenerateForm>) => Record<GenerationKind, GenerateForm>): void =>
+    setFormsState((all) => (draft.forms = next(all)))
+  const setKind = (next: GenerationKind): void => setKindState((draft.kind = next))
   const form = forms[kind]
   const update = (patch: Partial<GenerateForm>): void => setForms((all) => ({ ...all, [kind]: { ...all[kind], ...patch } }))
 

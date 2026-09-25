@@ -42,7 +42,9 @@ const ids = (page: WorkspacePage): Frame['ids'] => ({
 // with a library at 40% of it and the viewer squeezed. 30% is 432px at 1440, 307px at 1024.
 const EDIT_LEFT = { defaultSize: '300px', minSize: '220px', maxSize: '30%' } as const
 const INSPECTOR = { defaultSize: '268px', minSize: '220px', maxSize: '45%' } as const
-const BESIDE = { defaultSize: '280px', minSize: '200px', maxSize: '50%' } as const
+// The mixer: its Master strip is 148px and each channel 84px, so 280px showed a strip and a half
+// and cut the M/S buttons. Room for Master and three channels; at least Master and one.
+const BESIDE = { defaultSize: '420px', minSize: '240px', maxSize: '60%' } as const
 
 /** Sizes per page. Pixel sizes for side panels, so a larger window goes to the viewer. */
 export const PAGE_FRAMES: Record<WorkspacePage, Frame> = {

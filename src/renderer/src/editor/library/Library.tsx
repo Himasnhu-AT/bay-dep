@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useRef, type ReactNode } from 'react'
 import { FolderOpen, ListTree, ScrollText, Sparkles } from 'lucide-react'
 import { ErrorBoundary, Tabs } from '@/components'
 import { useEditor, type LibraryTab } from '@/store/editor'
@@ -6,6 +6,7 @@ import { EffectsLibrary } from './EffectsLibrary'
 import { IndexPanel } from './IndexPanel'
 import { MediaPool } from './MediaPool'
 import { TranscriptPanel } from '../TranscriptPanel'
+import { useNarrow } from '../inspector/useNarrow'
 
 const TABS: { value: LibraryTab; label: string; icon: ReactNode }[] = [
   { value: 'media', label: 'Media Pool', icon: <FolderOpen aria-hidden="true" className="size-3.5" /> },
@@ -31,9 +32,13 @@ export interface LibraryProps {
 export function Library({ inlineSource = true }: LibraryProps): ReactNode {
   const tab = useEditor((state) => state.libraryTab)
   const setTab = useEditor((state) => state.setLibraryTab)
+  // Four icon-and-word tabs need ~380px; the slot defaults to 300. Below that the row is icons
+  // (named in the tooltip) rather than "Media … Effe… In…" — each panel's title strip names it.
+  const root = useRef<HTMLDivElement>(null)
+  const narrow = useNarrow(root, 380)
   return (
-    <div className="flex h-full min-h-0 min-w-0 flex-col bg-surface-1">
-      <Tabs<LibraryTab> label="Library" value={tab} items={TABS} onChange={setTab} />
+    <div ref={root} className="flex h-full min-h-0 min-w-0 flex-col bg-surface-1">
+      <Tabs<LibraryTab> label="Library" value={tab} items={TABS} onChange={setTab} iconsOnly={narrow} />
       <div className="min-h-0 flex-1">
         <ErrorBoundary key={tab} region={`the ${TABS.find((t) => t.value === tab)?.label ?? 'library'}`}>
           {tab === 'media' && <MediaPool variant="panel" inlineSource={inlineSource} />}

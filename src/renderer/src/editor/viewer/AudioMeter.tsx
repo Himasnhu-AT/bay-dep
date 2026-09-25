@@ -108,7 +108,9 @@ export function AudioMeter({
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
     }
     const colours = {
-      track: token('--color-surface-3', '#333'),
+      // line-strong, not surface-3: in the light theme surface-3 on a panel is ~1.1:1 and the
+      // empty track all but vanished.
+      track: token('--color-line-strong', '#333'),
       signal: token('--color-success', '#3c3'),
       caution: token('--color-warning', '#cc3'),
       hot: token('--color-danger', '#c33'),
