@@ -98,6 +98,18 @@ export function viewSlice({ set, get, currentTimeline }: StoreKit): Actions {
     },
 
     setPanel(panel) {
+      // The old left-rail ids, mapped onto the workspace so callers written against the rail
+      // (probes, the agent's own "open the transcript") still land somewhere that shows it.
+      const state = get()
+      if (panel === 'agent') {
+        if (!state.agentDocked) state.setAgentDocked(true)
+      } else if (panel === 'export') {
+        state.setPage('deliver')
+      } else {
+        const tab = panel === 'media' ? 'media' : panel === 'transcript' ? 'transcript' : 'effects'
+        if (state.page !== 'edit' && state.page !== 'media') state.setPage('edit')
+        set({ libraryTab: tab })
+      }
       set({ panel })
     },
 
