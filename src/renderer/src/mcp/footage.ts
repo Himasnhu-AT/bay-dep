@@ -11,9 +11,9 @@
  */
 
 import { VALIDATE_ONLY } from '@shared/mcp'
-import { allItems, US_PER_SECOND, type Asset, type Timeline } from '@shared/project'
+import { US_PER_SECOND, type Asset, type Timeline } from '@shared/project'
 import { timelineFrameAt } from '@shared/beats'
-import { describeDuration, describeJob, type VisionAssetRef, type VisionHit, type VisionIndexPlan } from '@shared/visual-search'
+import { describeDuration, describeJob, formatModelBytes, VISION_MODEL_BYTES, type VisionAssetRef, type VisionHit, type VisionIndexPlan } from '@shared/visual-search'
 import { bay } from '@/lib/bay'
 import { useEditor } from '@/store/editor'
 import { fail, project, resolveAsset, timeline, type Handlers } from './helpers'
@@ -53,13 +53,20 @@ export function footageRefs(assets: readonly Asset[], assetIds: unknown, resolve
   return all
 }
 
-/** Where a hit is on the timeline: every clip of its asset that plays that moment. */
+/**
+ * Where a hit is on the timeline: every clip of its asset that shows that moment. A clip on an
+ * audio track — a video's detached sound — plays the same file but shows no picture, so it is not
+ * where a picture was found.
+ */
 export function hitPlacements(hit: VisionHit, tl: Timeline): { itemId: string; frame: number }[] {
   const out: { itemId: string; frame: number }[] = []
-  for (const item of allItems(tl)) {
-    if (item.assetId !== hit.assetId) continue
-    const frame = timelineFrameAt(item, hit.us, tl.fps)
-    if (frame !== null) out.push({ itemId: item.id, frame })
+  for (const track of tl.tracks) {
+    if (track.kind === 'audio') continue
+    for (const item of track.items) {
+      if (item.assetId !== hit.assetId) continue
+      const frame = timelineFrameAt(item, hit.us, tl.fps)
+      if (frame !== null) out.push({ itemId: item.id, frame })
+    }
   }
   return out
 }
@@ -89,32 +96,34 @@ export async function indexFootage(args: Record<string, unknown>): Promise<Recor
   const dryRun = args[VALIDATE_ONLY] === true
   const answer = await api.vision.index(refs, { dryRun, download: useEditor.getState().autoDownloadModels })
   if (!answer.ok) fail(answer.error)
-  const plan = answer.plan
-  const unavailable = plan.unavailable.map((u) => `${u.name}: ${u.error}`)
-  if (dryRun) {
+  if (answer.started) {
+    // Main answers before the slow parts: the job downloads the model (when it must) and checks
+    // which files are new itself, so this call returns in well under the tool's deadline.
     return {
-      valid: true,
-      modelInstalled: status.installed,
-      files: plan.files,
-      alreadyIndexed: plan.indexed,
-      toIndex: plan.toIndex,
-      frames: plan.frames,
-      estimatedSeconds: plan.estimatedSeconds,
-      plan: describePlan(plan),
-      ...(unavailable.length > 0 ? { unavailable } : {}),
-      note: status.installed
-        ? 'Nothing was started. Call again without validateOnly to index.'
-        : 'Nothing was started, and the visual search model is not downloaded yet: the user gets it in Settings (⌘,) → Visual search.'
+      started: true,
+      downloading: answer.downloading,
+      progress: describeJob(answer.job),
+      next: answer.downloading
+        ? `The visual search model (${formatModelBytes(VISION_MODEL_BYTES)}) is downloading first; indexing starts when it arrives. Call index_footage again (no arguments) to see progress.`
+        : 'Indexing runs in the background. Call index_footage again (no arguments) to see progress; search_footage searches whatever is done.'
     }
   }
+  // Not started: the dry run's plan (main answers a real request with `started: true` always).
+  const plan = answer.plan
+  const unavailable = plan.unavailable.map((u) => `${u.name}: ${u.error}`)
   return {
-    started: answer.started,
+    valid: true,
+    modelInstalled: status.installed,
+    files: plan.files,
+    alreadyIndexed: plan.indexed,
+    toIndex: plan.toIndex,
+    frames: plan.frames,
+    estimatedSeconds: plan.estimatedSeconds,
     plan: describePlan(plan),
-    ...(answer.job ? { progress: describeJob(answer.job) } : {}),
     ...(unavailable.length > 0 ? { unavailable } : {}),
-    next: answer.started
-      ? 'Indexing runs in the background. Call index_footage again (no arguments) to see progress; search_footage searches whatever is done.'
-      : 'Nothing new to index — search_footage is ready.'
+    note: status.installed
+      ? 'Nothing was started. Call again without validateOnly to index.'
+      : 'Nothing was started, and the visual search model is not downloaded yet: the user gets it in Settings (⌘,) → Visual search.'
   }
 }
 

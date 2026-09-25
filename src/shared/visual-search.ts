@@ -296,31 +296,60 @@ export interface VisionDownload {
 }
 
 /**
- * The indexing job. Sentences: running → "Indexing Beach.mov — 3 of 12 files, 140 frames";
- * done → "12 files indexed"; cancelled → "Indexing stopped after 3 of 12 files";
- * failed files are listed by name with ffmpeg's or the model's own words.
+ * The indexing job. Sentences:
+ * running, download → "Waiting for the visual search model to download before indexing 12 files.";
+ * running, planning → "Checking which files need indexing: 5 of 12 checked, 3 to index, 2 already indexed.";
+ * running, indexing → "Indexing Beach.mov — 3 of 12 files, 140 frames so far; 2 already indexed.";
+ * done → "12 of 12 files indexed (600 frames)." or "All 12 files were already indexed.";
+ * cancelled → "Indexing stopped after 3 of 12 files."; failed → "Indexing did not start: <why>".
+ * Files that could not be read — missing, not a file, or refused by ffmpeg or the model — are
+ * listed by name with their own words, and count among `filesTotal`/`filesDone`.
+ *
+ * The job answers at once and does its slow parts itself: the model download (409 MB) and the
+ * check of which files are already indexed (a hash of three MiB per file) both happen inside it,
+ * so `index_footage` never waits on either.
  */
 export interface VisionIndexJob {
-  state: 'running' | 'done' | 'cancelled'
+  state: 'running' | 'done' | 'cancelled' | 'failed'
+  /** What a running job is doing: waiting for the model, checking files, or indexing them. */
+  phase: 'download' | 'planning' | 'indexing'
+  /** Files asked for and not yet checked. */
+  checking: number
+  /** Files checked and found indexed already: nothing to do for them. */
+  alreadyIndexed: number
+  /** Files checked and to be indexed (or found unreadable). Grows while files are checked. */
   filesTotal: number
   filesDone: number
   framesDone: number
   current: string | null
   failed: { assetId: string; name: string; error: string }[]
+  /** Why a `failed` job never started (the model download failed). */
+  error?: string
   startedAt: number
   finishedAt: number | null
 }
 
+const files = (n: number): string => `${n} file${n === 1 ? '' : 's'}`
+
 /** One line for the job, the sentence `VisionIndexJob` was written from. */
 export function describeJob(job: VisionIndexJob): string {
   const failed = job.failed.length > 0 ? ` ${job.failed.length} could not be read: ${job.failed.map((f) => `${f.name} (${f.error})`).join('; ')}.` : ''
+  const already = job.alreadyIndexed > 0 ? `; ${job.alreadyIndexed} already indexed` : ''
   switch (job.state) {
     case 'running':
-      return `Indexing${job.current ? ` ${job.current}` : ''} — ${job.filesDone} of ${job.filesTotal} files, ${job.framesDone} frames so far.${failed}`
+      if (job.phase === 'download') return `Waiting for the visual search model to download before indexing ${files(job.checking + job.filesTotal)}.`
+      if (job.phase === 'planning') {
+        const checked = job.alreadyIndexed + job.filesTotal
+        return `Checking which files need indexing: ${checked} of ${checked + job.checking} checked, ${job.filesTotal - job.failed.length} to index${already}.${failed}`
+      }
+      return `Indexing${job.current ? ` ${job.current}` : ''} — ${job.filesDone} of ${files(job.filesTotal)}, ${job.framesDone} frames so far${already}.${failed}`
     case 'cancelled':
-      return `Indexing stopped after ${job.filesDone} of ${job.filesTotal} files.${failed}`
+      return `Indexing stopped after ${job.filesDone} of ${files(job.filesTotal)}${already}.${failed}`
+    case 'failed':
+      return `Indexing did not start: ${job.error ?? 'unknown error'}`
     case 'done':
-      return `${job.filesDone - job.failed.length} of ${job.filesTotal} file${job.filesTotal === 1 ? '' : 's'} indexed (${job.framesDone} frames).${failed}`
+      if (job.filesTotal === 0) return job.alreadyIndexed > 0 ? `All ${files(job.alreadyIndexed)} ${job.alreadyIndexed === 1 ? 'was' : 'were'} already indexed.` : 'There was nothing to index.'
+      return `${job.filesDone - job.failed.length} of ${files(job.filesTotal)} indexed (${job.framesDone} frames)${already}.${failed}`
   }
 }
 
@@ -346,8 +375,14 @@ export interface VisionIndexPlan {
   unavailable: { assetId: string; name: string; error: string }[]
 }
 
+/**
+ * A dry run answers with the plan (it hashes the files, so it is the one slow answer); a real
+ * request answers at once with the job, which plans and — when `downloading` — waits for the
+ * model itself.
+ */
 export type VisionIndexAnswer =
-  | { ok: true; started: boolean; plan: VisionIndexPlan; job: VisionIndexJob | null }
+  | { ok: true; started: false; plan: VisionIndexPlan; job: VisionIndexJob | null }
+  | { ok: true; started: true; downloading: boolean; job: VisionIndexJob }
   | { ok: false; error: string }
 
 export interface VisionSearchRequest {

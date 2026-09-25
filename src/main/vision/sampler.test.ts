@@ -6,11 +6,11 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdtempSync } from 'node:fs'
+import { chmodSync, existsSync, mkdtempSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { NO_VENDORED_FFMPEG, vendoredTools } from '../ffmpeg/vendor'
-import { FRAME_BYTES, keptKeyframes, keyframeTimesUs, parseKeyframes, sampleArgs, sampleFrames, showinfoTimeUs, type SampledFrame } from './sampler'
+import { FRAME_BYTES, keptKeyframes, keyframeArgs, keyframeTimesUs, parseKeyframes, sampleArgs, sampleFrames, showinfoTimeUs, type SampledFrame } from './sampler'
 
 const TOOLS = vendoredTools()
 const SKIP = TOOLS ? false : NO_VENDORED_FFMPEG
@@ -121,4 +121,112 @@ test('an aborted pass stops without an error', { skip: SKIP, timeout: 60_000 }, 
     controller.abort()
   }
   assert.ok(frames.length >= 1 && frames.length < 5, `stopped early: ${frames.length}`)
+})
+
+/** A stand-in tool that records its pid and then hangs, as ffprobe/ffmpeg do on a drive that stopped answering. */
+function hangingTool(dir: string, name: string): { bin: string; pid(): number | null } {
+  const bin = join(dir, name)
+  const pidFile = join(dir, `${name}.pid`)
+  writeFileSync(bin, `#!/bin/sh\necho $$ > '${pidFile}'\nexec sleep 30\n`)
+  chmodSync(bin, 0o755)
+  return { bin, pid: () => (existsSync(pidFile) ? Number(readFileSync(pidFile, 'utf8').trim()) : null) }
+}
+
+const alive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function gone(pid: number, withinMs = 2000): Promise<boolean> {
+  const until = Date.now() + withinMs
+  while (Date.now() < until) {
+    if (!alive(pid)) return true
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+  return !alive(pid)
+}
+
+/** The stand-in's pid once it is running (a shell here can take half a second to start). */
+async function startedPid(tool: { pid(): number | null }, previous: number | null = null): Promise<number> {
+  const until = Date.now() + 5000
+  while (Date.now() < until) {
+    const pid = tool.pid()
+    if (pid !== null && pid !== previous && alive(pid)) return pid
+    await new Promise((resolve) => setTimeout(resolve, 20))
+  }
+  throw new Error('the stand-in tool never started')
+}
+
+test('the keyframe probe is killed on abort and after its timeout, and answers "no keyframes"', { timeout: 30_000 }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bay-sampler-hang-'))
+  const probe = hangingTool(dir, 'ffprobe')
+  // Positive control for the instrument: the stand-in really does hang when nothing stops it.
+  const unbounded = keyframeTimesUs(probe.bin, '/x.mov', { timeoutMs: 60_000 })
+  const firstPid = await startedPid(probe)
+  const raced = await Promise.race([unbounded.then(() => 'answered'), new Promise((resolve) => setTimeout(() => resolve('hanging'), 300))])
+  assert.equal(raced, 'hanging')
+  process.kill(firstPid, 'SIGKILL')
+  await unbounded
+
+  const controller = new AbortController()
+  const aborted = keyframeTimesUs(probe.bin, '/x.mov', { signal: controller.signal, timeoutMs: 60_000 })
+  const pid = await startedPid(probe, firstPid)
+  const started = Date.now()
+  controller.abort()
+  assert.deepEqual(await aborted, [])
+  assert.ok(Date.now() - started < 2000)
+  assert.ok(await gone(pid), 'the aborted probe was killed')
+
+  const timed = Date.now()
+  const timedOut = keyframeTimesUs(probe.bin, '/x.mov', { timeoutMs: 1500 })
+  const third = await startedPid(probe, pid)
+  assert.deepEqual(await timedOut, [])
+  assert.ok(Date.now() - timed < 4000, `timed out in ${Date.now() - timed} ms`)
+  assert.ok(await gone(third), 'the timed-out probe was killed')
+})
+
+test('a decode that produces nothing is stopped by the stall watchdog and reported', { timeout: 30_000 }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bay-sampler-stall-'))
+  const ffmpeg = hangingTool(dir, 'ffmpeg')
+  const started = Date.now()
+  // An image skips the probe, so the stand-in ffmpeg is the only process.
+  const frames = sampleFrames('/x.png', { ffmpeg: ffmpeg.bin, ffprobe: '/nonexistent', kind: 'image', durationUs: 0, stallMs: 2000 })
+  const next = frames.next()
+  next.catch(() => undefined)
+  const pid = await startedPid(ffmpeg)
+  await assert.rejects(next, /stopped producing frames of \/x\.png/)
+  assert.ok(Date.now() - started < 8000, `stopped in ${Date.now() - started} ms`)
+  assert.ok(await gone(pid), 'the stalled ffmpeg was killed')
+})
+
+test('a slow consumer is backpressure, not a stall: every frame still arrives', { skip: SKIP, timeout: 60_000 }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bay-sampler-'))
+  const path = makeClip(dir, 'slow.mp4', 1000)
+  const frames: SampledFrame[] = []
+  for await (const frame of sampleFrames(path, { ffmpeg: TOOLS!.ffmpeg, ffprobe: TOOLS!.ffprobe, kind: 'video', durationUs: 9_000_000, stallMs: 1000 })) {
+    frames.push(frame)
+    // Each frame is held past the stall limit: time the consumer spends is not ffmpeg's.
+    await new Promise((resolve) => setTimeout(resolve, 1500))
+  }
+  assert.deepEqual(frames.map((f) => f.us), [0, 2_000_000, 4_000_000, 6_000_000, 8_000_000])
+})
+
+test('a file whose name begins with "-" is probed as a file, not read as an option', { skip: SKIP, timeout: 60_000 }, async () => {
+  assert.deepEqual(keyframeArgs('-x.mov').slice(-2), ['-i', '-x.mov'])
+  const dir = mkdtempSync(join(tmpdir(), 'bay-sampler-dash-'))
+  renameSync(makeClip(dir, 'plain.mp4', 20), join(dir, '-show_format.mp4'))
+  const cwd = process.cwd()
+  process.chdir(dir)
+  try {
+    // The specimen: ffprobe given the bare name would read it as an option (and fail).
+    assert.throws(() => execFileSync(TOOLS!.ffprobe, ['-v', 'error', '-show_entries', 'packet=pts_time,flags', '-of', 'csv=p=0', '-show_format.mp4'], { stdio: 'pipe' }))
+    const keys = await keyframeTimesUs(TOOLS!.ffprobe, '-show_format.mp4')
+    assert.ok(keys.length >= 4, `keyframes: ${keys.join(', ')}`)
+  } finally {
+    process.chdir(cwd)
+  }
 })
