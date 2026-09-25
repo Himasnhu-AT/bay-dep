@@ -107,7 +107,9 @@ export function viewSlice({ set, get, currentTimeline }: StoreKit): Actions {
         state.setPage('deliver')
       } else {
         const tab = panel === 'media' ? 'media' : panel === 'transcript' ? 'transcript' : 'effects'
-        if (state.page !== 'edit' && state.page !== 'media') state.setPage('edit')
+        // The Media page shows the media pool and nothing else of the library, so only the
+        // media tab may stay there; every other tab is on the Edit page's library.
+        if (state.page !== 'edit' && !(state.page === 'media' && tab === 'media')) state.setPage('edit')
         set({ libraryTab: tab })
       }
       set({ panel })
