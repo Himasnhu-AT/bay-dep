@@ -936,7 +936,12 @@ projects — indexing an array yields `T | undefined` and you must handle it.
   renderer passes `download: true` only then). `downloadVerified` checks the size and SHA-256 from
   the redirect's `x-linked-size`/`x-linked-etag` — measured to be exactly `shasum -a 256` of the
   file — and writes to `.part` until they match, so a half-download never sits at a name the model
-  search would pick. Audio never leaves the machine. The third is **updates**
+  search would pick. Audio never leaves the machine. The same exception covers **visual search's
+  model** (`src/main/vision/`, `@shared/visual-search`, `index_footage`/`search_footage`): SigLIP's
+  four files from `Xenova/siglip-base-patch16-224` at a pinned commit, each with a pinned size and
+  SHA-256, fetched only on Download in Settings › Visual search or when `index_footage` finds no
+  model and that same switch is on. Frames, embeddings and queries never leave the machine; the
+  model runs on onnxruntime-node in a utility process (`vision/worker.js`, nice 10). The third is **updates**
   (`src/main/update/`): electron-updater's own session (`electron-updater` partition, never the
   editor's) may reach only the origin of the feed in `@shared/update-feed`, enforced in
   `onBeforeRequest` by `allowUpdateRequest`, redirects included. The feed is **unset**, so a

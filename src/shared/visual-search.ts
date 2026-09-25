@@ -311,6 +311,19 @@ export interface VisionIndexJob {
   finishedAt: number | null
 }
 
+/** One line for the job, the sentence `VisionIndexJob` was written from. */
+export function describeJob(job: VisionIndexJob): string {
+  const failed = job.failed.length > 0 ? ` ${job.failed.length} could not be read: ${job.failed.map((f) => `${f.name} (${f.error})`).join('; ')}.` : ''
+  switch (job.state) {
+    case 'running':
+      return `Indexing${job.current ? ` ${job.current}` : ''} — ${job.filesDone} of ${job.filesTotal} files, ${job.framesDone} frames so far.${failed}`
+    case 'cancelled':
+      return `Indexing stopped after ${job.filesDone} of ${job.filesTotal} files.${failed}`
+    case 'done':
+      return `${job.filesDone - job.failed.length} of ${job.filesTotal} file${job.filesTotal === 1 ? '' : 's'} indexed (${job.framesDone} frames).${failed}`
+  }
+}
+
 export interface VisionStatus {
   installed: boolean
   /** Where the model lives (or will), for Settings to show. */
