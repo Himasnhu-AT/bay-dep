@@ -11,7 +11,7 @@ import {
 import { Button } from '@/components'
 import { bay } from '@/lib/bay'
 import { cn } from '@/lib/cn'
-import { Row, Section } from './parts'
+import { Group, Row, Section } from './parts'
 
 /**
  * Keys for AI image, video and speech generation (`generate_image`, `generate_video`, `generate_speech`).
@@ -37,13 +37,17 @@ export function ProvidersSection(): ReactNode {
 
   return (
     <Section
-      title="Providers"
+      title="AI providers"
       description="Keys for generating pictures, clips and voiceovers with AI. bay sends a prompt or the words to be spoken (and a reference picture, when one is chosen) to the provider only when the agent generates something, and the provider bills your account."
     >
-      {GENERATION_PROVIDERS.map((provider) => (
-        <ProviderRow key={provider} provider={provider} status={keys?.find((k) => k.provider === provider) ?? null} onChange={setKeys} />
-      ))}
-      <SpendingRow />
+      <Group title="Keys">
+        {GENERATION_PROVIDERS.map((provider) => (
+          <ProviderRow key={provider} provider={provider} status={keys?.find((k) => k.provider === provider) ?? null} onChange={setKeys} />
+        ))}
+      </Group>
+      <Group title="Spending">
+        <SpendingRow />
+      </Group>
     </Section>
   )
 }
@@ -102,7 +106,7 @@ function SpendingRow(): ReactNode {
 
   const spent = spending ? `$${spending.spentUsd.toFixed(2)} of $${spending.budgetUsd.toFixed(2)} estimated so far this session.` : undefined
   return (
-    <div className="flex flex-col gap-2 border-t border-line pt-3">
+    <div className="flex flex-col pb-1">
       <Row label="Spending limit" hint={`bay refuses any generation that would pass these, and only you can raise them. ${spent ?? ''}`.trim()}>
         <form
           className="flex items-center gap-2"
@@ -145,7 +149,7 @@ function SpendingRow(): ReactNode {
           </Button>
         </form>
       </Row>
-      {message && <p className={cn('text-[12px] text-pretty', message.ok ? 'text-success' : 'text-danger')}>{message.text}</p>}
+      {message && <p className={cn('px-3 pb-2 text-[12px] text-pretty', message.ok ? 'text-success' : 'text-danger')}>{message.text}</p>}
     </div>
   )
 }
@@ -197,7 +201,7 @@ function ProviderRow(props: {
   }
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex flex-col pb-2.5">
       <Row
         label={spec.label}
         hint={
@@ -215,7 +219,7 @@ function ProviderRow(props: {
         )}
       </Row>
       <form
-        className="flex items-center gap-2"
+        className="flex items-center gap-2 px-3"
         onSubmit={(event) => {
           event.preventDefault()
           void save()
@@ -239,7 +243,7 @@ function ProviderRow(props: {
           {busy ? 'Saving…' : 'Save'}
         </Button>
       </form>
-      {message && <p className={cn('text-[12px] text-pretty', message.ok ? 'text-success' : 'text-danger')}>{message.text}</p>}
+      {message && <p className={cn('px-3 pt-1.5 text-[12px] text-pretty', message.ok ? 'text-success' : 'text-danger')}>{message.text}</p>}
     </div>
   )
 }

@@ -4,7 +4,7 @@ import { describeJob, formatModelBytes, VISION_MODEL, VISION_MODEL_BYTES, type V
 import { Badge, Button, IconButton, ProgressBar } from '@/components'
 import { bay } from '@/lib/bay'
 import { useEditor } from '@/store/editor'
-import { Row, Section, SwitchRow } from './parts'
+import { Group, LinkRow, Row, Section, usePreferencesNavigation } from './parts'
 
 /**
  * Settings › Visual search: the SigLIP model search_footage runs on, and the indexing job.
@@ -15,7 +15,7 @@ import { Row, Section, SwitchRow } from './parts'
  */
 export function VisualSearchSection(): ReactNode {
   const autoDownload = useEditor((state) => state.autoDownloadModels)
-  const setAutoDownload = useEditor((state) => state.setAutoDownloadModels)
+  const go = usePreferencesNavigation()
   const notify = useEditor((state) => state.notify)
   const [status, setStatus] = useState<VisionStatus | null>(null)
 
@@ -51,8 +51,11 @@ export function VisualSearchSection(): ReactNode {
       title="Visual search"
       description="The agent can find shots by describing them (“a dog running on a beach”). Frames are sampled and matched on this Mac by an image/text model; your footage never leaves it."
     >
-      <div className="flex flex-col gap-1">
-        <ul className="flex flex-col overflow-hidden rounded-md border border-line">
+      <div className="flex flex-col gap-1.5">
+        <div className="px-0.5">
+          <h4 className="text-[11px] font-semibold tracking-wide text-ink-1 uppercase">Model</h4>
+        </div>
+        <ul className="flex flex-col overflow-hidden rounded-md border border-line bg-surface-0/40">
           <li className="flex min-h-12 items-center gap-3 px-3 py-2">
             <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
@@ -96,27 +99,32 @@ export function VisualSearchSection(): ReactNode {
           </li>
         </ul>
         {status && (
-          <p className="text-[11px] text-pretty text-ink-2">
+          <p className="px-0.5 text-[11px] text-pretty text-ink-2">
             The model goes to <span className="text-ink-1 select-text">{status.modelDir}</span>. The index of your footage is
             kept by bay’s cache and rebuilt if it is cleared.
           </p>
         )}
       </div>
 
-      <SwitchRow
-        label="Download models when needed"
-        description={`When the agent indexes footage and the model is missing, bay downloads it (${formatModelBytes(VISION_MODEL_BYTES)}) from Hugging Face and checks it before use. The same switch covers transcription models.`}
-        checked={autoDownload}
-        onChange={setAutoDownload}
-      />
+      <Group title="Downloads">
+        {/* The switch lives on Transcription, the one home for every model download. */}
+        <LinkRow
+          label="Download models when needed"
+          hint={`${autoDownload ? 'On' : 'Off'}. When on and the agent indexes footage with the model missing, bay downloads it (${formatModelBytes(VISION_MODEL_BYTES)}) from Hugging Face and checks it before use.`}
+          action="Change in Transcription"
+          onClick={() => go('transcription')}
+        />
+      </Group>
 
-      <Row label="Indexing" hint={job ? describeJob(job) : 'Nothing indexed this session. The agent indexes the project’s footage with index_footage.'}>
-        {job?.state === 'running' && (
-          <Button variant="subtle" icon={<Square className="size-3" />} onClick={() => void api?.vision.cancelIndex()}>
-            Stop
-          </Button>
-        )}
-      </Row>
+      <Group title="Index">
+        <Row label="Indexing" hint={job ? describeJob(job) : 'Nothing indexed this session. The agent indexes the project’s footage with index_footage.'}>
+          {job?.state === 'running' && (
+            <Button variant="subtle" icon={<Square className="size-3" />} onClick={() => void api?.vision.cancelIndex()}>
+              Stop
+            </Button>
+          )}
+        </Row>
+      </Group>
     </Section>
   )
 }

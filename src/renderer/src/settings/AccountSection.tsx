@@ -4,7 +4,7 @@ import { Button } from '@/components'
 import { useAccess } from '@/access/AccessGate'
 import { bay } from '@/lib/bay'
 import { cn } from '@/lib/cn'
-import { Row, Section } from './parts'
+import { Group, Row, Section } from './parts'
 
 /**
  * Who is signed in, and referrals: an approved account can give up to five people access
@@ -50,18 +50,18 @@ export function AccountSection(): ReactNode {
   const left = status.referralsLeft
   return (
     <Section title="Account" description={detail}>
-      <Row label={status.email} hint={status.persisted ? undefined : 'Kept in memory only (no system keychain): you will sign in again after quitting.'}>
-        <Button variant="ghost" onClick={() => void bay()?.access.signOut()}>
-          Sign out
-        </Button>
-      </Row>
-      <div className="flex flex-col gap-2">
-        <div className="flex items-baseline justify-between">
-          <h4 className="text-[12px] font-medium text-ink-0">Refer someone</h4>
-          <span className="text-[11px] text-ink-2">
-            {left === null ? `Up to ${REFERRAL_LIMIT} referrals` : `${left} of ${REFERRAL_LIMIT} referrals left`}
-          </span>
-        </div>
+      <Group title="Signed in">
+        <Row label={status.email} hint={status.persisted ? undefined : 'Kept in memory only (no system keychain): you will sign in again after quitting.'}>
+          <Button variant="ghost" onClick={() => void bay()?.access.signOut()}>
+            Sign out
+          </Button>
+        </Row>
+      </Group>
+      <Group
+        title="Refer someone"
+        note={left === null ? `Up to ${REFERRAL_LIMIT} referrals` : `${left} of ${REFERRAL_LIMIT} referrals left`}
+      >
+        <div className="flex flex-col gap-2 px-3 py-2.5">
         <form
           className="flex items-center gap-2"
           onSubmit={(event) => {
@@ -86,7 +86,8 @@ export function AccountSection(): ReactNode {
           They sign in to bay with this address. A referral cannot be taken back, so use it for someone you know.
         </p>
         {result && <p className={cn('text-[12px] text-pretty', result.ok ? 'text-success' : 'text-danger')}>{result.text}</p>}
-      </div>
+        </div>
+      </Group>
     </Section>
   )
 }
