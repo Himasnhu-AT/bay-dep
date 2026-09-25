@@ -996,7 +996,7 @@ projects — indexing an array yields `T | undefined` and you must handle it.
   is sent, so a restart resumes polling instead of paying twice; results land content-addressed
   in `<userData>/generated`, are ffprobed, and a file with no picture (for speech: no audio stream, or no length) is a
   blocking finding that is never imported. The redirect hosts for Veo and Kling downloads are from the providers' docs,
-  not observed — the tests use a local stub and never a live API. The fifth is **`import_url`**
+  not observed — the tests use a local stub and never a live API. `BAY_GENERATION_BASE=http://127.0.0.1:<port>` points every provider at such a stub for an in-app run, honoured only unpackaged and only for a literal loopback host, which then is the only host the fence admits (`generate/local-base.ts`). The fifth is **`import_url`**
   (`src/main/media/url-import.ts`, `@shared/url-import`): the *user's own* `yt-dlp`, found like
   `claude` (`search-dirs.ts`), never shipped or fetched by bay — missing, the tool says
   `brew install yt-dlp`. It runs only when that tool is called, on one `http(s)` address
