@@ -118,7 +118,12 @@ export function AudioSection({
         />
       </div>
 
-      <h4 className="mt-3 mb-1.5 text-[11px] text-ink-1">J/L cut</h4>
+      <h4
+        className="mt-3 mb-1.5 text-[11px] font-medium text-ink-1"
+        title="The sound starts before the picture (J) or runs on after it (L), reading footage beyond the clip’s edges."
+      >
+        J/L cut
+      </h4>
       <div className="space-y-1.5">
         <NumberField
           row
@@ -151,15 +156,14 @@ export function AudioSection({
             ))}
           </ul>
         </div>
-      ) : (
-        <p className="mt-1.5 text-[10px] leading-relaxed text-ink-2">
-          The sound starts before the picture (J) or runs on after it (L), reading footage beyond
-          the clip’s edges.
-        </p>
-      )}
+      ) : null}
 
       <div className="mt-3 flex items-center justify-between gap-2">
-        <label htmlFor={`duck-${first.id}`} className="text-[11px] text-ink-1">
+        <label
+          htmlFor={`duck-${first.id}`}
+          className="text-[11px] text-ink-1"
+          title="Down while the other track has clips with sound; a pause inside a line stays down."
+        >
           Duck under another track
         </label>
         <Switch
@@ -174,9 +178,7 @@ export function AudioSection({
         />
       </div>
       {ducked.length === 0 && !suggested && (
-        <p className="mt-1 text-[10px] leading-relaxed text-ink-2">
-          Add another track first — a clip ducks under a different track’s sound.
-        </p>
+        <p className="mt-1 text-[10px] text-ink-2">Add another track to duck under.</p>
       )}
       {ducked.length > 0 && (
         <div className="mt-1.5 space-y-1.5">
@@ -224,9 +226,6 @@ export function AudioSection({
             {...tc}
             onCommit={(next) => editItems(ids, (id) => ({ duck: { keyTrackId: keyOf(items, id, suggested?.id), releaseFrames: Math.round(next) } }))}
           />
-          <p className="text-[10px] leading-relaxed text-ink-2">
-            Down while the other track has clips with sound; a pause inside a line stays down.
-          </p>
         </div>
       )}
     </Section>

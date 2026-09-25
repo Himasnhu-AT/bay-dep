@@ -138,8 +138,8 @@ export function viewSlice({ set, get, currentTimeline }: StoreKit): Actions {
       set({ hiddenRegions: { ...current, [region]: hidden } })
     },
 
-    setSettingsOpen(open) {
-      set({ settingsOpen: open })
+    setSettingsOpen(open, page) {
+      set({ settingsOpen: open, settingsPage: open ? (page ?? null) : null })
     },
 
     setAutoDownloadModels(on) {

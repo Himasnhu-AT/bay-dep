@@ -8,7 +8,7 @@ import {
   type Item,
   type Timeline
 } from '@shared/project'
-import { Section, SectionReset, Select, SliderField } from '@/components'
+import { Field, Section, SectionReset, Select, SliderField } from '@/components'
 import { adjustmentFilter, NO_FILTER } from '../engine/looks'
 import { useEditor } from '@/store/editor'
 
@@ -28,24 +28,26 @@ interface Control {
   step: number
   /** Shown after the number. Empty for pure multipliers. */
   unit?: string
+  /** The value that changes nothing; the slider fills from here. */
+  identity: number
 }
 
 const CONTROLS: Control[] = [
-  { key: 'brightness', label: 'Brightness', min: 0, max: 3, step: 0.01 },
-  { key: 'contrast', label: 'Contrast', min: 0, max: 3, step: 0.01 },
+  { key: 'brightness', label: 'Brightness', min: 0, max: 3, step: 0.01, identity: 1 },
+  { key: 'contrast', label: 'Contrast', min: 0, max: 3, step: 0.01, identity: 1 },
   // "Saturate", not "Saturation": the Grade has a saturation of its own (a GPU pass before the
   // LUT); this one is a CSS filter over the graded picture. Two controls with one name read as a
   // duplicate, and they are two fields that multiply.
-  { key: 'saturate', label: 'Saturate', min: 0, max: 3, step: 0.01 },
+  { key: 'saturate', label: 'Saturate', min: 0, max: 3, step: 0.01, identity: 1 },
   // Degrees, and the full turn is available: 360 is the identity but the wrap is how people
   // find the hue they want, so the range is not cut short at 359.
-  { key: 'hueRotate', label: 'Hue', min: -180, max: 180, step: 1, unit: '°' },
+  { key: 'hueRotate', label: 'Hue', min: -180, max: 180, step: 1, unit: '°', identity: 0 },
   // Canvas pixels, deliberately not normalised. 8px is a different blur at 1080p and at 4K, so
   // a 0..1 value would be a lie at one of them; the number shown is the number drawn.
-  { key: 'blur', label: 'Blur', min: 0, max: 40, step: 0.5, unit: 'px' },
-  { key: 'grayscale', label: 'Greyscale', min: 0, max: 1, step: 0.01 },
-  { key: 'sepia', label: 'Sepia', min: 0, max: 1, step: 0.01 },
-  { key: 'invert', label: 'Invert', min: 0, max: 1, step: 0.01 }
+  { key: 'blur', label: 'Blur', min: 0, max: 40, step: 0.5, unit: 'px', identity: 0 },
+  { key: 'grayscale', label: 'Greyscale', min: 0, max: 1, step: 0.01, identity: 0 },
+  { key: 'sepia', label: 'Sepia', min: 0, max: 1, step: 0.01, identity: 0 },
+  { key: 'invert', label: 'Invert', min: 0, max: 1, step: 0.01, identity: 0 }
 ]
 
 const BLEND_MODES: { value: BlendMode; label: string }[] = [
@@ -87,18 +89,25 @@ function same(a: number, b: number): boolean {
  *
  * **Adjustments, never Colour.** These are a look control — a saturation multiplier and a hue
  * rotation are not lift/gamma/gain — and calling them a grade would promise something 2D canvas
- * cannot reach. The name is the honest part.
+ * cannot reach. The name is the honest part. The inspector puts them under Effects and the grade
+ * under Color, so the two saturations (this `saturate`, the grade's `saturation`) never sit in
+ * one list looking like a duplicate: they are two fields that multiply.
  *
  * Every control here is backed: `applyLook` in the compositor reads both fields on both draw
  * paths, and the filter string shown at the bottom comes from `adjustmentFilter`, the function
  * that actually composites, rather than from a second opinion that could disagree with it.
+ *
+ * `blend: false` leaves the blend mode out, for a caller that shows it elsewhere (the
+ * inspector's Video › Composite); on its own this still renders both, as it always has.
  */
 export function AdjustmentsSection({
   items,
-  timeline
+  timeline,
+  blend = true
 }: {
   items: Item[]
   timeline: Timeline
+  blend?: boolean
 }): ReactNode {
   const patchItem = useEditor((state) => state.patchItem)
   // One slider commit is one undo step across the whole selection — see the note in
@@ -134,7 +143,81 @@ export function AdjustmentsSection({
 
   const built = adjustmentFilter(first.adjustments)
   const filter = built === NO_FILTER ? null : built
-  const touched = items.some((item) => adjustmentFilter(item.adjustments) !== NO_FILTER)
+  const touched = adjustmentsTouched(items)
+
+  return (
+    <>
+      <Section
+        id="inspector.adjustments"
+        title="Adjustments"
+        collapsible
+        hint="A quick filter look drawn over the picture, after the colour grade where a clip has one. Saturate here multiplies with the grade's Saturation."
+        // Not "Colour": a grade is what this explicitly is not, and the label is the promise.
+        actions={<SectionReset show={touched} label="Reset adjustments" onReset={reset} />}
+      >
+        <div className="space-y-0.5">
+          {CONTROLS.map((control) => {
+            const { value, mixed } = read(control.key)
+            return (
+              <SliderField
+                key={control.key}
+                label={control.label}
+                value={mixed ? control.identity : value}
+                mixed={mixed}
+                min={control.min}
+                max={control.max}
+                step={control.step}
+                origin={control.identity}
+                format={(v) => formatAdjustment(v, control)}
+                onCommit={(next) => set(control.key, next)}
+              />
+            )
+          })}
+        </div>
+
+        {/* The filter the compositor will actually use, in the order it will apply it. Blur is
+            last because it should act on the corrected colour — worth showing, because the
+            order is not the order these sliders are in and someone will wonder. Wrapped at the
+            spaces between functions: `break-all` split "identity" as "ident / ity". */}
+        {filter ? (
+          <p
+            className="mt-2 font-mono text-[10px] leading-relaxed break-words text-ink-2"
+            title="The filter the compositor applies, in its order"
+          >
+            {filter}
+          </p>
+        ) : (
+          <p className="mt-2 text-[10px] text-ink-2">No filter — the clip draws untouched.</p>
+        )}
+      </Section>
+
+      {blend && <BlendSection items={items} timeline={timeline} />}
+    </>
+  )
+}
+
+/** Whether any clip has an adjustment off its identity — the Effects tab's badge and the reset. */
+export function adjustmentsTouched(items: Item[]): boolean {
+  return items.some((item) => adjustmentFilter(item.adjustments) !== NO_FILTER)
+}
+
+/**
+ * How a clip combines with the tracks beneath it — Resolve's Composite group. `title` is
+ * "Composite" in the inspector's Video tab; standalone it is "Blend".
+ */
+export function BlendSection({
+  items,
+  timeline,
+  title = 'Blend'
+}: {
+  items: Item[]
+  timeline: Timeline
+  title?: string
+}): ReactNode {
+  const patchItem = useEditor((state) => state.patchItem)
+  const transact = useEditor((state) => state.transact)
+  const first = items[0]
+  if (!first) return null
 
   // Later tracks render on top, so the first video track is the bottom of the stack and has
   // nothing beneath it to blend with.
@@ -146,62 +229,24 @@ export function AdjustmentsSection({
     : 'normal'
 
   return (
-    <>
-      <Section
-        id="inspector.adjustments"
-        title="Adjustments"
-        collapsible
-        defaultOpen={false}
-        // Not "Colour": a grade is what this explicitly is not, and the label is the promise.
-        actions={<SectionReset show={touched} label="Reset adjustments" onReset={reset} />}
-      >
-        <div className="space-y-0.5">
-          {CONTROLS.map((control) => {
-            const { value, mixed } = read(control.key)
-            return (
-              <SliderField
-                key={control.key}
-                label={control.label}
-                value={mixed ? control.min : value}
-                mixed={mixed}
-                min={control.min}
-                max={control.max}
-                step={control.step}
-                format={(v) => formatAdjustment(v, control)}
-                onCommit={(next) => set(control.key, next)}
-              />
-            )
-          })}
-        </div>
-
-        {/* The filter the compositor will actually use, in the order it will apply it. Blur is
-            last because it should act on the corrected colour — worth showing, because the
-            order is not the order these sliders are in and someone will wonder. */}
-        <p className="mt-2 font-mono text-[10px] leading-relaxed break-all text-ink-2">
-          {filter ?? 'No filter — every value is at its identity, so the clip draws untouched.'}
-        </p>
-        <p className="mt-1 text-[10px] leading-relaxed text-ink-2">
-          A quick look drawn over the picture — after the grade, where a clip has one.
-        </p>
-      </Section>
-
-      <Section
-        id="inspector.blend"
-        title="Blend"
-        collapsible
-        defaultOpen={false}
-        actions={
-          <SectionReset
-            show={items.some((item) => (item.blendMode ?? 'normal') !== 'normal')}
-            label="Reset blend mode to normal"
-            onReset={() =>
-              transact(() => {
-                for (const item of items) patchItem(item.id, { blendMode: 'normal' })
-              })
-            }
-          />
-        }
-      >
+    <Section
+      id="inspector.blend"
+      title={title}
+      collapsible
+      hint="How this clip combines with the tracks beneath it. Multiply darkens, screen lightens."
+      actions={
+        <SectionReset
+          show={items.some((item) => (item.blendMode ?? 'normal') !== 'normal')}
+          label="Reset blend mode to normal"
+          onReset={() =>
+            transact(() => {
+              for (const item of items) patchItem(item.id, { blendMode: 'normal' })
+            })
+          }
+        />
+      }
+    >
+      <Field label="Mode">
         <Select<BlendMode>
           label="Blend mode"
           value={blendValue}
@@ -213,22 +258,18 @@ export function AdjustmentsSection({
           }}
           disabled={onBottom}
         />
-        {/* Disabled with the reason, not hidden. A mode that silently does nothing is the dead
-            control this codebase keeps finding; an absent one is a feature nobody knows exists. */}
-        {onBottom ? (
-          <p className="mt-1.5 flex items-start gap-1.5 text-[10px] leading-relaxed text-ink-2">
-            <AlertTriangle aria-hidden="true" className="mt-px size-3 shrink-0" />
-            <span>
-              Nothing is underneath this clip — it is on the lowest video track, where every
-              blend mode looks the same. Move it to a higher track to blend with what is below.
-            </span>
-          </p>
-        ) : (
-          <p className="mt-1.5 text-[10px] leading-relaxed text-ink-2">
-            How this clip combines with the tracks beneath it. Multiply darkens, screen lightens.
-          </p>
-        )}
-      </Section>
-    </>
+      </Field>
+      {/* Disabled with the reason, not hidden. A mode that silently does nothing is the dead
+          control this codebase keeps finding; an absent one is a feature nobody knows exists. */}
+      {onBottom && (
+        <p
+          className="mt-1.5 flex items-start gap-1.5 text-[10px] leading-relaxed text-ink-2"
+          title="Every blend mode looks the same with nothing underneath. Move the clip to a higher track to blend with what is below."
+        >
+          <AlertTriangle aria-hidden="true" className="mt-px size-3 shrink-0" />
+          <span>On the lowest video track — nothing underneath to blend with.</span>
+        </p>
+      )}
+    </Section>
   )
 }

@@ -87,6 +87,7 @@ export const useEditor = create<EditorStore>((set, get) => {
       }
     })(),
     settingsOpen: false,
+    settingsPage: null,
     // Opt-in: a speech model is 75 MB–3 GB fetched from Hugging Face, and nothing reaches the
     // network unasked. Only an explicit '1' (the switch in Settings) turns it on.
     autoDownloadModels: remembered('bay.autoDownloadModels') === '1',

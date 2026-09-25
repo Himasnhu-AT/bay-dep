@@ -127,6 +127,11 @@ export interface EditorState {
   /** The Settings dialog. Opened from the top bar, the projects screen, or ⌘,. */
   settingsOpen: boolean
   /**
+   * The Preferences page to show when it next opens (`'providers'`, `'agent'`…), or null for
+   * wherever it was left. Set by `setSettingsOpen(true, page)`; the dialog reads and clears it.
+   */
+  settingsPage: string | null
+  /**
    * Let a transcription fetch a whisper model when this Mac has none. On by default: the user
    * asked for captions, and a download they can watch and cancel beats an error telling them to
    * go and find a file. Main reaches the network for it only when this says yes.
@@ -558,7 +563,7 @@ export interface EditorActions {
   setRegionHidden(region: RegionId, hidden: boolean): void
   toggleRegion(region: RegionId): void
   toggleDebugMode(): void
-  setSettingsOpen(open: boolean): void
+  setSettingsOpen(open: boolean, page?: string): void
   setAutoDownloadModels(on: boolean): void
   setWhisperModel(file: string | null): void
   setWhisperDownload(download: WhisperDownload | null): void

@@ -71,8 +71,8 @@ export function KeyframesSection({ items }: { items: Item[] }): ReactNode {
         actions={<SectionReset show label={`Remove every key from ${animated.length} clips`} onReset={clearAll} />}
       >
         <p className="text-[11px] leading-relaxed text-ink-2">
-          {animated.length} of {items.length} selected clips are animated. Keys belong to one clip’s
-          own frames, so they are added and edited one clip at a time — select a single clip.
+          {animated.length} of {items.length} selected clips are animated. Select one clip to edit
+          its keys.
         </p>
       </Section>
     )
@@ -99,6 +99,7 @@ export function KeyframesSection({ items }: { items: Item[] }): ReactNode {
       id="inspector.keyframes"
       title="Keyframes"
       collapsible
+      hint="Select a key to move it or change how it eases into the next. The ease shapes the stretch from a key to the one after it."
       actions={<SectionReset show label="Remove every key from this clip" onReset={clearAll} />}
     >
       <ul className="-mx-1 flex flex-col" aria-label="Keys on this clip">
@@ -177,10 +178,7 @@ export function KeyframesSection({ items }: { items: Item[] }): ReactNode {
           </div>
         </div>
       ) : (
-        <p className="mt-1.5 text-[10px] leading-relaxed text-ink-2">
-          Select a key to move it or change how it eases into the next. The ease shapes the stretch
-          from a key to the one after it.
-        </p>
+        <p className="mt-1.5 text-[10px] text-ink-2">Select a key to move it or change its ease.</p>
       )}
     </Section>
   )

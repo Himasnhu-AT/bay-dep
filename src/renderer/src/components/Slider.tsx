@@ -15,10 +15,14 @@ export interface SliderProps {
   disabled?: boolean
   className?: string
   /**
-   * Where the fill starts: `min` by default. A bipolar control (pan) fills from its centre, so
-   * the bar shows which way and how far rather than a level that is not there.
+   * Where the fill starts: `min` by default. A control with a neutral value inside its range
+   * (pan at 0, brightness at 1, temperature at 0) fills from that value, so the bar shows which
+   * way and how far rather than a level that is not there — filled from the left, every neutral
+   * temperature and lift read as "half on". A tick marks the neutral point.
    */
   origin?: number
+  /** Shorthand for `origin` at the middle of the range, for a symmetric control (-1…1). */
+  bipolar?: boolean
 }
 
 /**
@@ -38,8 +42,10 @@ export function Slider({
   step = 0.01,
   disabled = false,
   className,
-  origin
+  origin: originProp,
+  bipolar = false
 }: SliderProps): ReactNode {
+  const origin = originProp ?? (bipolar ? (min + max) / 2 : undefined)
   const trackRef = useRef<HTMLDivElement>(null)
   const [draft, setDraft] = useState<number | null>(null)
   const current = draft ?? value
@@ -118,6 +124,13 @@ export function Slider({
       )}
     >
       <div className="relative h-[3px] w-full rounded-full bg-surface-3">
+        {origin !== undefined && originFraction > 0 && originFraction < 1 && (
+          <div
+            aria-hidden="true"
+            className="absolute top-1/2 h-[9px] w-px -translate-x-1/2 -translate-y-1/2 bg-line-hover"
+            style={{ left: `${originFraction * 100}%` }}
+          />
+        )}
         <div
           className="absolute inset-y-0 rounded-full bg-accent/85"
           style={{ left: `${fillFrom * 100}%`, width: `${(fillTo - fillFrom) * 100}%` }}
