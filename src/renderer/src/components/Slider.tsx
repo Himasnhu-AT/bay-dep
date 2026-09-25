@@ -26,6 +26,29 @@ export interface SliderProps {
 }
 
 /**
+ * The track range for a control with a neutral value: `neutral` sits `reach` from each end, so an
+ * untouched control's thumb rests on the neutral tick. A control whose stored range is lopsided
+ * around its neutral (Gamma −0.9…4 at 0, Brightness 0…3 at 1) otherwise put its thumb at a fifth
+ * or a third of the track, where it read as "turned down". The range stretches to include `value`,
+ * so a value set past it (by the agent, whose range is wider) is shown where it is and an arrow key
+ * moves it by a step instead of snapping it back to the end; `limit` keeps the track inside what
+ * the field accepts.
+ */
+export function centredRange(
+  neutral: number,
+  reach: number,
+  value: number,
+  limit: { min: number; max: number } = { min: -Infinity, max: Infinity }
+): { min: number; max: number; origin: number } {
+  const shown = Number.isFinite(value) ? value : neutral
+  return {
+    min: Math.max(limit.min, Math.min(neutral - reach, shown)),
+    max: Math.min(limit.max, Math.max(neutral + reach, shown)),
+    origin: neutral
+  }
+}
+
+/**
  * Drag-to-set, and the whole track is the target — a 10px thumb you have to hit first is
  * the difference between adjusting a fade and hunting for a handle.
  *

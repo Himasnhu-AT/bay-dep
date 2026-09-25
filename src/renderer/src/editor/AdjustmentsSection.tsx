@@ -9,6 +9,7 @@ import {
   type Timeline
 } from '@shared/project'
 import { Field, Section, SectionReset, Select, SliderField } from '@/components'
+import { centredRange } from '@/components/Slider'
 import { adjustmentFilter, NO_FILTER } from '../engine/looks'
 import { useEditor } from '@/store/editor'
 
@@ -164,10 +165,17 @@ export function AdjustmentsSection({
                 label={control.label}
                 value={mixed ? control.identity : value}
                 mixed={mixed}
-                min={control.min}
-                max={control.max}
+                // Brightness, Contrast and Saturate are 0…3 at 1: the track centres the identity
+                // (0…2) and stretches for a value set higher. The rest start or centre on theirs.
+                {...centredRange(
+                  control.identity,
+                  control.identity === control.min
+                    ? control.max - control.min
+                    : Math.min(control.identity - control.min, control.max - control.identity),
+                  mixed ? control.identity : value,
+                  control
+                )}
                 step={control.step}
-                origin={control.identity}
                 format={(v) => formatAdjustment(v, control)}
                 onCommit={(next) => set(control.key, next)}
               />
