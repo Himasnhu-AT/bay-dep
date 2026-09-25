@@ -24,14 +24,13 @@
 
 import { execFileSync } from 'node:child_process'
 import { mkdtempSync, mkdirSync, existsSync, rmSync } from 'node:fs'
-import { createRequire } from 'node:module'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { attach, runProbe, PreconditionError } from './cdp.mjs'
+import { FFMPEG, H264 } from './ffmpeg.mjs'
 import { animatedLayoutAt, animatedVolumeAt } from '../../src/shared/keyframes.ts'
 
-const require_ = createRequire(import.meta.url)
-const FFMPEG = require_('ffmpeg-ffprobe-static').ffmpegPath
+// bay's own ffmpeg (vendor/ffmpeg), the binary the app spawns; the npm build this used is gone.
 const RATE = 48_000
 const FPS = 30
 const W = 640
@@ -43,7 +42,7 @@ const make = (name, args) => {
   execFileSync(FFMPEG, ['-v', 'error', '-y', ...args, path])
   return path
 }
-const boxClip = make('box.mp4', ['-f', 'lavfi', '-i', `color=c=black:s=${W}x${H}:r=${FPS}:d=8,drawbox=x=160:y=90:w=320:h=180:color=white:t=fill`, '-c:v', 'libx264', '-pix_fmt', 'yuv420p'])
+const boxClip = make('box.mp4', ['-f', 'lavfi', '-i', `color=c=black:s=${W}x${H}:r=${FPS}:d=8,drawbox=x=160:y=90:w=320:h=180:color=white:t=fill`, ...H264, '-pix_fmt', 'yuv420p'])
 const music = make('music.wav', ['-f', 'lavfi', '-i', `aevalsrc=0.6*sin(2*PI*600*t):s=${RATE}:d=10`, '-ac', '2'])
 
 const moviesDir = join(homedir(), 'Movies', 'bay')

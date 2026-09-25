@@ -53,6 +53,13 @@ await runProbe(async () => {
 for (let i = 0; i < 20 && !(await evaluate(`!!document.querySelector('footer')`)); i++) {
   await new Promise((r) => setTimeout(r, 250))
 }
+// The status bar belongs to the editor. bay launches on its projects screen, which has none, so
+// "no warning in the bar" there is a bar that does not exist — not a verdict either way.
+if (!(await evaluate(`!!document.querySelector('footer')`))) {
+  ws.close()
+  throw new PreconditionError('the editor\'s status bar is not on screen',
+    'bay is on its projects screen; open or create a project in this instance (New Project), then run again')
+}
 
 const status = await evaluate('window.bay.app.storageReady()')
 const warnings = await evaluate(`JSON.stringify([...document.querySelectorAll('footer span')]

@@ -22,7 +22,7 @@
 import { attach, PreconditionError, runProbe } from './cdp.mjs'
 
 const CLIP = process.env.CLIP ?? 'assets/podcast-cut/output/goodall-transcript-cut.mp4'
-const ABSOLUTE = `${process.cwd()}/${CLIP}`
+const ABSOLUTE = CLIP.startsWith('/') ? CLIP : `${process.cwd()}/${CLIP}`
 const SIZES = (process.env.SIZES ?? '10,50,200').split(',').map(Number)
 const { evaluate, close } = await attach()
 

@@ -1,11 +1,27 @@
 import { attach, CANVAS_PROFILE } from './cdp.mjs'
-const CLIP = '/Users/himanshu/codes/synthai/vii/assets/podcast-cut/output/goodall-transcript-cut.mp4'
+const CLIP = process.env.CLIP ?? `${process.cwd()}/assets/podcast-cut/output/goodall-transcript-cut.mp4`
 
 const { send: cdpSend, evaluate: ev, close: cdpClose } = await attach()
+const filePath = await ev(`window.bayEngine.store.getState().project.filePath`)
+
+// bay reloads onto its projects screen, where there is no engine: reopen the project `attach()`
+// had open (through `open_project`, as `attach()` does), then empty its timeline, so the engine is
+// mounted and drawing an empty timeline before the clip arrives — the shape a late arrival needs.
+const reopenAfterReload = async (ev, filePath) => ev(`(async()=>{
+  for(let i=0;i<120&&!window.bayMcp&&!window.bayEngine;i++)await new Promise(r=>setTimeout(r,250))
+  if(!window.bayEngine){
+    const o=await window.bayMcp.execute({id:'reopen',tool:'open_project',args:{filePath:${JSON.stringify(filePath)}}})
+    if(!o.ok)throw new Error(o.error)
+    for(let i=0;i<120&&!window.bayEngine;i++)await new Promise(r=>setTimeout(r,250))
+  }
+  if(!window.bayEngine)throw new Error('no engine after reload')
+  const{store}=window.bayEngine;const st=store.getState()
+  store.getState().setProject({...st.project,timelines:st.project.timelines.map(t=>({...t,tracks:t.tracks.map(k=>({...k,items:[]}))}))})
+  return true})()`, 45_000)
 
 const asset = await ev(`(async()=>{const i=await window.bay.media.importPaths([${JSON.stringify(CLIP)}]);return i[0].asset})()`)
 await cdpSend('Page.reload',{}); await new Promise(r=>setTimeout(r,2500))
-await ev(`(async()=>{for(let i=0;i<120;i++){if(window.bayEngine)return true;await new Promise(r=>setTimeout(r,250))}throw new Error('no engine')})()`)
+await reopenAfterReload(ev, filePath)
 
 // Late arrival, exactly as project.initial() does it.
 await ev(`(()=>{const{store}=window.bayEngine;const st=store.getState();const asset=${JSON.stringify(asset)};

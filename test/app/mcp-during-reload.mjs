@@ -10,14 +10,27 @@
 import { connect } from 'node:net'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { attach, runProbe } from './cdp.mjs'
+import { attach, runProbe, PreconditionError } from './cdp.mjs'
+
+/**
+ * The profile whose socket to call: the one the instance on PORT was launched with. It used to be
+ * the default profile always, so pointed at an isolated instance (PORT=9372, its own
+ * --user-data-dir) the calls went to whatever bay owned the default socket — reloading one app
+ * while calling another, or someone else's. The default is kept for the default port only.
+ */
+const PORT = process.env.PORT ?? '9222'
+if (!process.env.USER_DATA && PORT !== '9222') {
+  throw new PreconditionError(`set USER_DATA to the --user-data-dir of the app on port ${PORT}`,
+    'the default profile\'s socket belongs to a different instance')
+}
+const USER_DATA = process.env.USER_DATA ?? join(homedir(), 'Library', 'Application Support', 'bay')
 
 const { send, evaluate, close } = await attach()
 
 /** A call over the app's socket directly, connection opened *before* the reload so no spawn
  * latency decides where in the reload the call lands. */
 async function preparedCall() {
-  const socket = connect(join(homedir(), 'Library', 'Application Support', 'bay', 'bay-mcp.sock'))
+  const socket = connect(join(USER_DATA, 'bay-mcp.sock'))
   await new Promise((resolve, reject) => { socket.once('connect', resolve); socket.once('error', reject) })
   return (tool) => new Promise((resolve) => {
     const t0 = Date.now()
@@ -35,7 +48,29 @@ async function preparedCall() {
   })
 }
 
+/**
+ * A reload now lands on bay's projects screen, so the project is reopened after each one (the way
+ * `attach()` opens it) — every offset then starts from the same state as the first.
+ */
+const filePath = await evaluate(`window.bayEngine.store.getState().project.filePath`)
+const reopen = () => evaluate(`(async () => {
+  for (let i = 0; i < 80 && !window.bayMcp && !window.bayEngine; i++) await new Promise((r) => setTimeout(r, 100))
+  if (!window.bayEngine) {
+    const o = await window.bayMcp.execute({ id: 'reopen', tool: 'open_project', args: { filePath: ${JSON.stringify(filePath)} } })
+    if (!o.ok) throw new Error(o.error)
+    for (let i = 0; i < 80 && !window.bayEngine; i++) await new Promise((r) => setTimeout(r, 100))
+  }
+  return !!window.bayEngine
+})()`, 45_000)
+/**
+ * The refusal the projects screen gives a project tool is an answer, in time, and it is the right
+ * one: the page that answered has no project open. What this probe guards is a call that is
+ * *stranded* — answered by nothing until the timeout — or failed by the transport.
+ */
+const PROJECTS_SCREEN = /^No project is open in bay/
+
 await runProbe(async () => {
+  if (!filePath) throw new PreconditionError('the open project has no file', 'the probe reopens it after each reload')
   // Browser-initiated, the way Cmd+R and devtools reload, with the call fired at a spread of
   // offsets so some land in the gap between the old page's teardown and the new one mounting.
   // A single offset proved nothing: at 0ms the old page answered before the reload began.
@@ -45,11 +80,13 @@ await runProbe(async () => {
     void send('Page.reload', {})
     await new Promise((r) => setTimeout(r, offset))
     const answer = await call('read_project')
-    const bad = answer.isError || answer.seconds >= 15
+    const home = answer.isError && PROJECTS_SCREEN.test(answer.text)
+    const bad = (answer.isError && !home) || answer.seconds >= 15
     if (bad) lost++
-    console.log(`  reload +${String(offset).padStart(3)}ms  answered in ${answer.seconds.toFixed(1)}s  ${bad ? 'LOST: ' + answer.text.slice(0, 80) : 'ok'}`)
-    await evaluate(`(async () => { for (let i = 0; i < 80 && !window.bayEngine; i++) await new Promise((r) => setTimeout(r, 100)); return true })()`)
-    await new Promise((r) => setTimeout(r, 1500))
+    console.log(`  reload +${String(offset).padStart(3)}ms  answered in ${answer.seconds.toFixed(1)}s  ${bad ? 'LOST: ' + answer.text.slice(0, 80) : home ? 'ok (answered by the reloaded page: no project open)' : 'ok'}`)
+    await new Promise((r) => setTimeout(r, 500))
+    await reopen()
+    await new Promise((r) => setTimeout(r, 1000))
   }
   let ok = lost === 0
   console.log(ok ? 'PASS  every call during a reload was answered'
@@ -59,6 +96,7 @@ await runProbe(async () => {
   // was the bug the first version of the wait had: every call after it waited 45s and failed.
   await evaluate(`(() => { setTimeout(() => location.reload(), 0); return true })()`)
   await new Promise((r) => setTimeout(r, 1500))
+  await reopen()
   const after = await (await preparedCall())('read_project')
   console.log(`after a cancelled navigation: ${after.seconds.toFixed(1)}s, isError=${after.isError}`)
   const ok2 = !after.isError && after.seconds < 15

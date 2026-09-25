@@ -133,7 +133,9 @@ await runProbe(async () => {
       const clips = (tl?.tracks ?? []).flatMap((t) => t.items.map(name))
       return ['Time range…', ...[...clips, ...p.assets.map((a) => a.name)].slice(0, 12)]
     })()`)
-    check('the project has something to pin (else this proves nothing)', pinExpected.length, (n) => n > 1)
+    // An empty project is a state this cannot measure in, not a fault: exit 2, not 1.
+    if (!(pinExpected.length > 1)) throw new PreconditionError('the project has something to pin (else this proves nothing)', 'open a project with at least one clip or asset')
+    check('the project has something to pin', pinExpected.length, (n) => n > 1)
     check(`it lists ${JSON.stringify(pinExpected)}`, JSON.stringify(m.options), JSON.stringify(pinExpected))
 
     await key('Escape', 27)

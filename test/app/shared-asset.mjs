@@ -43,7 +43,7 @@ await runProbe(async () => {
   // Import once. `importPaths` dedupes by path, so both items get the same asset id —
   // which is the entire condition under test.
   const asset = await evaluate(`(async () => {
-    const im = await window.bay.media.importPaths([${JSON.stringify(process.cwd() + '/' + CLIP)}])
+    const im = await window.bay.media.importPaths([${JSON.stringify((CLIP.startsWith('/') ? CLIP : process.cwd() + '/' + CLIP))}])
     if (!im.length) throw new Error('import returned nothing')
     return im[0].asset
   })()`, 60_000)

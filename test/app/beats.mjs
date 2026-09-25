@@ -64,6 +64,10 @@ await runProbe(async () => {
 
   console.log('\n── add_marker with the suggested markers')
   const past = await evaluate(`${S}.past.length`)
+  // No downbeat was clear enough to suggest: the music given has no bar phase to find, which is
+  // the caller's fixture, not a fault — there is nothing to place.
+  if (!v.markers?.length) throw new PreconditionError('detect_beats suggested no downbeat markers for this music',
+    `downbeat confidence ${v.downbeatConfidence}; set BEATS_AUDIO to music whose bar is clear`)
   const marked = await call('add_marker', { markers: v.markers })
   check('add_marker answers ok', marked.ok, true)
   check(`${v.markers.length} markers on the timeline`, await evaluate(`${S}.project.timelines[0].markers?.length ?? 0`), v.markers.length)
@@ -102,7 +106,9 @@ await runProbe(async () => {
       const x0 = box.left + 10, y = box.top + box.height / 2
       const dx = (${target + offset} - item.from) * st.getState().pixelsPerFrame
       const opts = (x, extra) => ({ bubbles: true, cancelable: true, composed: true, pointerId: 1, pointerType: 'mouse', isPrimary: true, button: 0, buttons: 1, clientX: x, clientY: y, metaKey: ${meta}, ...extra })
-      el.dispatchEvent(new PointerEvent('pointerdown', opts(x0)))
+      // Cmd is pressed after the grab, as a person does it: held at pointerdown it is ⌘-click,
+      // which toggles the clip in the selection and starts no drag (Timeline's clickMode).
+      el.dispatchEvent(new PointerEvent('pointerdown', opts(x0, { metaKey: false })))
       for (let i = 1; i <= 10; i++) {
         el.dispatchEvent(new PointerEvent('pointermove', opts(x0 + (dx * i) / 10)))
         await new Promise((r) => requestAnimationFrame(r))
