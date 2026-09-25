@@ -96,6 +96,24 @@ export function exportBlocker(
 }
 
 /**
+ * What the export form reads from the session — the settings, the range, the destination and
+ * whether a job is running — and nothing that changes while frames are written. `progress` and
+ * `history` change on every frame; a form subscribed to them redrew the whole Deliver settings
+ * column per frame. Compared shallowly (`useShallow`), so a frame's progress leaves it equal.
+ */
+export function exportFormFields(state: ExportSession) {
+  return {
+    settings: state.settings,
+    rangeKind: state.rangeKind,
+    customStart: state.customStart,
+    customEnd: state.customEnd,
+    outputPath: state.outputPath,
+    starting: state.starting,
+    running: state.progress !== null && !TERMINAL.includes(state.progress.stage)
+  }
+}
+
+/**
  * Starts listening for export progress, once per window. The render queue calls it on mount so
  * the agent's exports show up even before this form has run one.
  */

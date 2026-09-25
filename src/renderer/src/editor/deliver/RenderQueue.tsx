@@ -1,10 +1,11 @@
 import { useEffect, type ReactNode } from 'react'
 import { AlertTriangle, Bot, Check, Loader2, X } from 'lucide-react'
+import { useShallow } from 'zustand/react/shallow'
 import { Badge, Button, EmptyState, Panel, ProgressBar, ScrollArea } from '@/components'
 import { cn } from '@/lib/cn'
 import { DoneActions, StartButton, useExportForm } from '../ExportDialog'
 import { useExportSession, watchExports } from '../export-session'
-import { fileName, isRunning, recordStatus, type RecordTone, type RenderRecord } from './queue'
+import { fileName, isRunning, recordStatus, type RecordTone } from './queue'
 
 export interface RenderQueueProps {
   className?: string
@@ -36,34 +37,36 @@ function ToneIcon({ tone }: { tone: RecordTone }): ReactNode {
  * queuing a second behind it.
  */
 export function RenderQueue({ className }: RenderQueueProps): ReactNode {
-  const history = useExportSession((state) => state.history)
+  // The job ids and how many are running, not the records: a record changes on every exported
+  // frame, and only its own row needs to redraw for that (`JobRow` reads it by id).
+  const jobIds = useExportSession(useShallow((state) => state.history.map((record) => record.jobId)))
+  const running = useExportSession((state) => state.history.filter(isRunning).length)
   const form = useExportForm()
   useEffect(() => watchExports(), [])
-  const running = history.filter(isRunning).length
   return (
     <Panel
       title="Render Queue"
       className={cn('h-full', className)}
       bodyClassName="flex flex-col"
       actions={
-        history.length > 0 ? (
+        jobIds.length > 0 ? (
           <span className="text-[11px] text-ink-2 tabular-nums">
             {running > 0 ? `${running} rendering · ` : ''}
-            {history.length} {history.length === 1 ? 'job' : 'jobs'}
+            {jobIds.length} {jobIds.length === 1 ? 'job' : 'jobs'}
           </span>
         ) : null
       }
     >
       <ScrollArea className="flex-1">
-        {history.length === 0 ? (
+        {jobIds.length === 0 ? (
           <EmptyState
             title="No renders yet"
             hint="Choose a preset in Render Settings, then press Render. Exports made with ⌘E or by the agent appear here too."
           />
         ) : (
           <ol aria-label="Render jobs" className="divide-y divide-line">
-            {history.map((record, index) => (
-              <JobRow key={record.jobId} record={record} number={history.length - index} />
+            {jobIds.map((jobId, index) => (
+              <JobRow key={jobId} jobId={jobId} number={jobIds.length - index} />
             ))}
           </ol>
         )}
@@ -100,10 +103,12 @@ function RenderButton(): ReactNode {
   )
 }
 
-function JobRow({ record, number }: { record: RenderRecord; number: number }): ReactNode {
-  const status = recordStatus(record)
+function JobRow({ jobId, number }: { jobId: string; number: number }): ReactNode {
+  const record = useExportSession((state) => state.history.find((candidate) => candidate.jobId === jobId))
   const cancel = useExportSession((state) => state.cancel)
-  const current = useExportSession((state) => state.progress?.jobId === record.jobId)
+  const current = useExportSession((state) => state.progress?.jobId === jobId)
+  if (!record) return null
+  const status = recordStatus(record)
   const percent = record.progress.progress === null ? null : record.progress.progress
   const name = fileName(record.outputPath) ?? (record.origin === 'agent' ? 'Agent export' : 'Export')
   const done = record.progress.stage === 'done' && record.outputPath
