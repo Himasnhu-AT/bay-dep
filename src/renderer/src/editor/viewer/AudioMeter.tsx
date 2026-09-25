@@ -3,6 +3,7 @@ import { Tooltip } from '@/components'
 import { cn } from '@/lib/cn'
 import { useViewer } from '@/lib/viewer'
 import { useEditor } from '@/store/editor'
+import { frameLevels } from '../audio/frameLevels'
 import { emptyChannel, formatDb, heldPeakText, meterPosition, meterTicks, stepChannel, type ChannelMeter } from './meter'
 
 /** The full width of the transport's meter; the transport narrows it by CSS (`className`). */
@@ -155,8 +156,10 @@ export function AudioMeter({
       return
     }
 
-    const read = (): Level[] => {
-      if (trackId) return [engine.levels()[trackId] ?? SILENT]
+    // A track strip reads the frame's shared levels: every strip calling `levels()` itself was
+    // one walk of every track's analyser per strip per frame.
+    const read = (now: number): Level[] => {
+      if (trackId) return [frameLevels(engine, now)[trackId] ?? SILENT]
       const levels = engine.masterLevels()
       return [levels?.left ?? SILENT, levels?.right ?? SILENT]
     }
@@ -170,7 +173,7 @@ export function AudioMeter({
       // Reduced motion: a level that updates a few times a second, with no falling bars.
       if (!ballistics && now - lastSample < 250) return
       lastSample = now
-      const levels = read()
+      const levels = read(now)
       const dt = now - last
       last = now
       const before = channels.current
