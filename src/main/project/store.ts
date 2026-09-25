@@ -115,6 +115,24 @@ export async function repairStorage(): Promise<StorageRepair> {
   return { ready: true, error: null, movedAside: result.movedAside.map((m) => m.to), recents: handle?.listRecent(200).length ?? 0 }
 }
 
+const MCP_CLIENTS_KEY = 'mcpClients'
+
+/**
+ * Whether clients other than the in-app agent may drive bay over its MCP socket (a terminal
+ * agent, another app). Off unless the user turned it on in Preferences › Agent; `BAY_MCP_CLIENTS=1`
+ * turns it on for a run (the probes and `./run.sh` use it). Kept in main's database rather than
+ * the renderer's storage because main opens the socket before any window exists. A database that
+ * will not open reads as off — the safe answer for a door into the user's projects.
+ */
+export function mcpClientsEnabled(): boolean {
+  if (process.env['BAY_MCP_CLIENTS'] === '1') return true
+  return database()?.getState(MCP_CLIENTS_KEY) === '1'
+}
+
+export function setMcpClientsEnabled(on: boolean): void {
+  database()?.setState(MCP_CLIENTS_KEY, on ? '1' : '0')
+}
+
 /** For the UI's degraded-state indicator, beside the ffmpeg warning. */
 export function storageStatus(): StorageStatus {
   database()

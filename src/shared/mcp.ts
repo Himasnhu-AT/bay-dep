@@ -46,6 +46,13 @@ export interface McpToolCall {
   id: string
   tool: string
   args: Record<string, unknown>
+  /**
+   * Which door the call came through: the in-app agent's socket (`'in-app'`), or a client on
+   * bay's MCP socket (`'socket'` — a terminal, another app). Only the in-app agent's edits are
+   * the agent turn's; a client's are marked as its own, and are not gated by the turn's
+   * approvals. Absent means in-app (bay's own callers).
+   */
+  origin?: 'in-app' | 'socket'
 }
 
 export type McpToolResult =
@@ -74,6 +81,8 @@ export type { ToolCategory, ToolSpec } from './tools/spec'
  * because both ends need it and neither may import the other.
  */
 export interface AgentSurfaceStatus {
+  /** MCP clients are allowed (Preferences › Agent). Off is a choice, not a failure. */
+  enabled: boolean
   ready: boolean
   error: string | null
   socketPath: string | null
@@ -97,6 +106,7 @@ export interface AgentSurfaceStatus {
  * the process boundary.
  */
 export function summariseAgentSurface(status: AgentSurfaceStatus): string {
+  if (!status.enabled) return 'MCP clients are off — turn them on in Preferences › Agent to drive bay from a terminal or another app'
   if (!status.ready) return `Agent control unavailable — ${status.error ?? 'unknown reason'}`
   if (status.connectionsSeen === 0)
     return `Agent control ready — no agent has connected yet (${status.socketPath ?? 'no socket path'})`

@@ -18,7 +18,7 @@ import { bay } from '@/lib/bay'
 import { checkApproval } from '@shared/agent'
 import { store, ToolError } from './helpers'
 import { HANDLERS } from './registry'
-import { asAgent, setAgentFileWriter } from '@/store/editor'
+import { asAgent, asClient, setAgentFileWriter } from '@/store/editor'
 import { validateArgs } from '@shared/validate'
 import { AsyncDryRunError, dryRun } from '@/store/dry-run'
 
@@ -122,10 +122,15 @@ export async function executeToolCall(call: McpToolCall): Promise<McpToolResult>
   // A dry run reaches the gate with its flag still on, because the flag is what the gate reads
   // to let it through unapproved; an ordinary call reaches it with `validateOnly: false`
   // removed, so an approval proposed without the flag still matches.
+  //
+  // Only the in-app agent's calls are its turn's to gate. A client on bay's MCP socket (a
+  // terminal, another app) is a separate caller the user runs themselves: its calls are not held
+  // to the agent's approvals, and its edits are marked as its own (`asClient`), not the agent's.
+  const fromClient = call.origin === 'socket'
   const verdict = checkApproval(
     tool.name,
     request.mode === 'dry' ? args : request.args,
-    store().agentGate
+    fromClient ? null : store().agentGate
   )
   if (!verdict.allowed) {
     return { id: call.id, ok: false, error: verdict.refusal ?? 'That edit is not approved.' }
@@ -140,7 +145,7 @@ export async function executeToolCall(call: McpToolCall): Promise<McpToolResult>
     }
     // Edits made inside a tool call are the agent's; anything else during a turn is the user's,
     // which the turn's change card has to own up to (see `asAgent`).
-    const value = await asAgent(() => handler(request.args))
+    const value = await (fromClient ? asClient : asAgent)(() => handler(request.args))
     if (verdict.index !== undefined) store().consumeApproval(verdict.index)
     return { id: call.id, ok: true, value }
   } catch (error) {

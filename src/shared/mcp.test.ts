@@ -29,11 +29,19 @@ import {
 import { validateArgs } from './validate'
 
 const status = (patch: Partial<AgentSurfaceStatus>): AgentSurfaceStatus => ({
+  enabled: true,
   ready: true,
   error: null,
   socketPath: '/Users/x/Library/Application Support/bay/bay-mcp.sock',
   connectionsSeen: 0,
   ...patch
+})
+
+test('clients turned off reads as a choice with where to change it, never as a failure', () => {
+  const line = summariseAgentSurface(status({ enabled: false, ready: false, error: null, socketPath: null }))
+  assert.match(line, /off/)
+  assert.match(line, /Preferences › Agent/)
+  assert.doesNotMatch(line, /unavailable|unknown/, 'off is not broken')
 })
 
 test('a socket that did not open names the reason, so the line is actionable', () => {

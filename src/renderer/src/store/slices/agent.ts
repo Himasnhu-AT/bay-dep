@@ -140,7 +140,8 @@ export function agentSlice({ set, get, restoreFiles }: StoreKit): Actions {
                   agentTurnBase: state.project,
                   agentTurnFiles: {},
                   agentTurnEdited: false,
-                  agentTurnUserEdited: false
+                  agentTurnUserEdited: false,
+                  agentTurnClientEdited: false
                 }
 
           case 'thinking-start':
@@ -237,9 +238,17 @@ export function agentSlice({ set, get, restoreFiles }: StoreKit): Actions {
               lines.push(file.before === null ? { kind: 'added', text: `Created “${name}”` } : { kind: 'changed', text: `Rewrote “${name}”` })
             }
             const changeId = newId('chg')
-            const note = state.agentTurnUserEdited
-              ? 'Includes edits you made while the agent was working — reverting takes those too.'
-              : undefined
+            // Who else changed the project during the turn: the user, and an MCP client on bay's
+            // socket, each said separately — the revert takes theirs too (it restores one whole
+            // project), so the card must not pass them off as the agent's.
+            const others = [
+              state.agentTurnUserEdited ? 'edits you made' : null,
+              state.agentTurnClientEdited ? 'edits an MCP client made through bay\'s socket' : null
+            ].filter((part): part is string => part !== null)
+            const note =
+              others.length > 0
+                ? `Includes ${others.join(' and ')} while the agent was working — reverting takes those too.`
+                : undefined
             let checkpoints = state.agentCheckpoints
             let entries: AgentEntry[] = log
             if (lines.length > 0 && base) {
@@ -262,6 +271,7 @@ export function agentSlice({ set, get, restoreFiles }: StoreKit): Actions {
               agentTurnFiles: {},
               agentTurnEdited: false,
               agentTurnUserEdited: false,
+              agentTurnClientEdited: false,
               agentCheckpoints: checkpoints,
               agentLog:
                 event.reason === 'complete'

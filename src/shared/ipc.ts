@@ -374,11 +374,14 @@ export interface BayApi {
      * what a user pastes into an MCP client's config, so a status line can offer it.
      */
     mcpReady(): Promise<{
+      enabled: boolean
       ready: boolean
       error: string | null
       socketPath: string | null
       connectionsSeen: number
     }>
+    /** Allow or stop MCP clients other than the in-app agent; remembered. Answers the new status. */
+    setMcpClients(on: boolean): ReturnType<BayApi['app']['mcpReady']>
     /**
      * Menu and document-open commands. Returns an unsubscribe function.
      *
@@ -800,6 +803,7 @@ export const IPC = {
   appMediaToolsReady: 'app:media-tools-ready',
   appStorageReady: 'app:storage-ready',
   appRepairStorage: 'app:repair-storage',
+  appSetMcpClients: 'app:set-mcp-clients',
   appMcpReady: 'app:mcp-ready',
   appMenuCommand: 'app:menu-command',
   appMetrics: 'app:metrics',

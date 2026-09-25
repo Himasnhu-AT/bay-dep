@@ -193,6 +193,7 @@ export function viewSlice({ set, get, currentTimeline }: StoreKit): Actions {
         agentTurnFiles: {},
         agentTurnEdited: false,
         agentTurnUserEdited: false,
+        agentTurnClientEdited: false,
         agentCheckpoints: {},
         agentReverts: []
       })

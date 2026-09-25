@@ -37,6 +37,7 @@ export { emptyProject, newId } from './factory'
 export {
   MAX_AGENT_CHECKPOINTS,
   asAgent,
+  asClient,
   revertImpact,
   setAgentFileWriter,
   type AgentCheckpoint,
@@ -114,6 +115,7 @@ export const useEditor = create<EditorStore>((set, get) => {
     agentTurnFiles: {},
     agentTurnEdited: false,
     agentTurnUserEdited: false,
+    agentTurnClientEdited: false,
     agentCheckpoints: {},
     agentReverts: [],
     compositionEpochs: {},

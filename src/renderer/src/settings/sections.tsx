@@ -378,7 +378,20 @@ export function AgentSection(): ReactNode {
   const provider = useAgentProvider((state) => state.provider)
   const setProvider = useAgentProvider((state) => state.setProvider)
   const { answer: statuses } = useAsked(() => bay()?.agent.providers())
-  const { answer: socket, asked: socketAsked } = useAsked(() => bay()?.app.mcpReady())
+  const { answer: firstSocket, asked: socketAsked } = useAsked(() => bay()?.app.mcpReady())
+  // The switch answers with the new status; until it is used, the first ask stands.
+  const [changed, setChanged] = useState<typeof firstSocket>(null)
+  const socket = changed ?? firstSocket
+  const [switching, setSwitching] = useState(false)
+  const setClients = (on: boolean): void => {
+    const api = bay()
+    if (!api) return
+    setSwitching(true)
+    void api.app
+      .setMcpClients(on)
+      .then(setChanged)
+      .finally(() => setSwitching(false))
+  }
   const status = statuses?.find((entry) => entry.provider === provider)
   return (
     <Section title="Agent" description="The agent in the side dock, and how terminal agents reach bay.">
@@ -401,6 +414,13 @@ export function AgentSection(): ReactNode {
         />
       </Group>
       <Group title="Terminal agents">
+        <SwitchRow
+          label="Allow MCP clients"
+          description="Off by default. On: a terminal agent or another app can drive bay through its MCP socket. Their edits are their own — never counted as the in-app agent's, and not held to its approvals. The in-app agent does not need this."
+          checked={socket?.enabled ?? false}
+          disabled={!socketAsked || switching}
+          onChange={setClients}
+        />
         <Row
           label="MCP socket"
           hint={
@@ -414,6 +434,8 @@ export function AgentSection(): ReactNode {
             <Checking />
           ) : socket === null ? (
             <Unknown />
+          ) : !socket.enabled ? (
+            <Badge tone="neutral">Off</Badge>
           ) : socket.ready ? (
             <Badge tone="success">Listening</Badge>
           ) : (

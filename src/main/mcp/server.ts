@@ -40,6 +40,8 @@ interface Pending {
   targetId: number
   tool: string
   args: Record<string, unknown>
+  /** Which door it came through; a resend after a reload keeps it. */
+  origin: CallOrigin
 }
 
 const pending = new Map<string, Pending>()
@@ -86,7 +88,7 @@ function rescueStranded(targetId: number): void {
       waiting.resolve({ id: callId, ok: false, error: verdict.error })
       continue
     }
-    void callRenderer(waiting.tool, waiting.args).then((result) =>
+    void callRenderer(waiting.tool, waiting.args, waiting.origin).then((result) =>
       waiting.resolve({ ...result, id: callId })
     )
   }
@@ -135,7 +137,8 @@ function executorWebContents(): WebContents | null {
  */
 async function callRenderer(
   tool: string,
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  origin: CallOrigin
 ): Promise<McpToolResult> {
   const target = executorWebContents()
   const id = randomUUID()
@@ -181,8 +184,8 @@ async function callRenderer(
       })
     }, timeoutMs)
 
-    pending.set(id, { resolve, timer, targetId: target.id, tool, args })
-    const call: McpToolCall = { id, tool, args }
+    pending.set(id, { resolve, timer, targetId: target.id, tool, args, origin })
+    const call: McpToolCall = { id, tool, args, origin }
     target.send(IPC.mcpToolCall, call)
   })
 }
@@ -212,7 +215,7 @@ export async function runTool(
     return { ok: false, value: error instanceof Error ? error.message : String(error) }
   }
 
-  const result = await callRenderer(tool, resolved)
+  const result = await callRenderer(tool, resolved, origin)
   return result.ok ? { ok: true, value: result.value } : { ok: false, value: result.error }
 }
 
@@ -230,18 +233,38 @@ let running: RunningSocket | null = null
  * an internal frame. The degradation the comment promised did not happen. It does now, and
  * `socket-server.test.ts` holds it rather than the comment doing so.
  */
-export async function startMcpServer(): Promise<SocketStatus> {
-  if (running) return running.status
-  // Both doors are gated on access: a locked bay answers every tool call with how to unlock it
-  // and never reaches the renderer (`auth/gate.ts`). The guides stay readable — they are the
-  // product's documentation, not the user's data.
-  const locked = (message: string): ToolOutcome => ({ ok: false, value: message })
-  const started = await startSocketServer(
-    () => socketPathIn(app.getPath('userData')),
-    gateToolRunner((tool, args) => runTool(tool, args), accessStatus, locked),
-    resourceBody
-  )
-  running = started
+// Both doors are gated on access: a locked bay answers every tool call with how to unlock it
+// and never reaches the renderer (`auth/gate.ts`). The guides stay readable — they are the
+// product's documentation, not the user's data.
+const locked = (message: string): ToolOutcome => ({ ok: false, value: message })
+
+/** Whether the clients' socket is meant to be open: off until the user turns it on. */
+let clientsEnabled = false
+
+/**
+ * Opens or closes the socket other MCP clients use (a terminal agent, another app). Off by
+ * default: it is a door into the user's projects, and the in-app agent does not need it — it has
+ * its own socket. The caller persists the choice (`store.setMcpClientsEnabled`).
+ */
+export async function setMcpClients(on: boolean): Promise<McpSurfaceStatus> {
+  clientsEnabled = on
+  if (on && !running) {
+    running = await startSocketServer(
+      () => socketPathIn(app.getPath('userData')),
+      gateToolRunner((tool, args) => runTool(tool, args), accessStatus, locked),
+      resourceBody
+    )
+  } else if (!on && running) {
+    const current = running
+    running = null
+    await current.close()
+  }
+  return mcpStatus()
+}
+
+export async function startMcpServer(options: { clients: boolean }): Promise<SocketStatus> {
+  if (runningAgent) return running?.status ?? { ready: false, path: null, error: null }
+  await setMcpClients(options.clients)
   // The in-app agent's own door: the same tools, under the in-app policy. Its status is not the
   // one the UI reports — the panel says for itself whether it could start.
   runningAgent = await startSocketServer(
@@ -250,7 +273,7 @@ export async function startMcpServer(): Promise<SocketStatus> {
     resourceBody
   )
   if (!runningAgent.status.ready) console.warn(`[bay] agent socket did not open: ${runningAgent.status.error}`)
-  return started.status
+  return running?.status ?? { ready: false, path: null, error: null }
 }
 
 let runningAgent: RunningSocket | null = null
@@ -306,6 +329,8 @@ function policyEnv(): PolicyEnv {
 }
 
 export interface McpSurfaceStatus {
+  /** The user allowed MCP clients (Preferences › Agent). Off is not a failure. */
+  enabled: boolean
   ready: boolean
   error: string | null
   /** The socket to point an MCP client at, or null when there is not one. */
@@ -316,8 +341,10 @@ export interface McpSurfaceStatus {
 
 /** For the status surface. Opening has not been attempted until `startMcpServer` runs. */
 export function mcpStatus(): McpSurfaceStatus {
+  if (!clientsEnabled) return { enabled: false, ready: false, error: null, socketPath: null, connectionsSeen: 0 }
   if (!running) {
     return {
+      enabled: true,
       ready: false,
       error: 'The agent socket has not been started yet.',
       socketPath: null,
@@ -325,6 +352,7 @@ export function mcpStatus(): McpSurfaceStatus {
     }
   }
   return {
+    enabled: true,
     ready: running.status.ready,
     error: running.status.error,
     socketPath: running.status.path,

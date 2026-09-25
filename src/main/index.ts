@@ -17,6 +17,7 @@ import { registerIpcHandlers } from './ipc'
 import {
   clearRecentMenu,
   closeStore,
+  mcpClientsEnabled,
   onRecentsChanged,
   readWindowBounds,
   recentForMenu,
@@ -286,8 +287,12 @@ void app.whenReady().then(() => {
   // The agent surface. Non-fatal by construction now rather than by comment: `startMcpServer`
   // returns a status instead of throwing, and the `.catch()` is here because its absence is
   // what turned a degradation into an unhandled rejection last time.
-  void startMcpServer()
+  // Clients other than the in-app agent (a terminal, another app) only when the user allowed
+  // them in Preferences › Agent; the in-app agent's own socket opens either way.
+  const clients = mcpClientsEnabled()
+  void startMcpServer({ clients })
     .then((status) => {
+      if (!clients) return console.log('[bay] MCP clients are off (Preferences › Agent); the in-app agent has its own socket')
       const problem = describeSocket(status)
       if (problem) console.error(`[bay] ${problem}`)
       else console.log(`[bay] MCP socket listening at ${status.path}`)

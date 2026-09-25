@@ -172,7 +172,7 @@ export function StatusBar({ saving = false }: { saving?: boolean }): ReactNode {
       {/* Not a `Stat`: the failing case is an accusation and the healthy case is a count, and
           a row that reads "agent 0" would say nothing about which of the two it is. The
           sentence comes from `@shared/mcp` so main and the bar cannot word it differently. */}
-      {agent && !agent.ready && (
+      {agent && agent.enabled && !agent.ready && (
         <Tooltip
           side="top"
           label={summariseAgentSurface(agent)}

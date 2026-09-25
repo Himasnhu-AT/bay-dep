@@ -72,6 +72,26 @@ export async function asAgent<T>(work: () => Promise<T> | T): Promise<T> {
   }
 }
 
+/**
+ * Depth of tool calls currently running for an MCP client on bay's socket — a terminal or another
+ * app, not the in-app agent. An edit made while this is non-zero during a turn is the client's:
+ * neither the agent's nor the user's, and the turn's card says so separately.
+ */
+let clientActing = 0
+export async function asClient<T>(work: () => Promise<T> | T): Promise<T> {
+  clientActing += 1
+  try {
+    return await work()
+  } finally {
+    clientActing -= 1
+  }
+}
+
+/** How many MCP-client tool calls are running right now. */
+export function clientActingDepth(): number {
+  return clientActing
+}
+
 /** The registered file writer, for the store's revert path. */
 export function agentFileWriterNow(): FileWriter | null {
   return agentFileWriter

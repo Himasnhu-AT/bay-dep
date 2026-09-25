@@ -16,7 +16,7 @@
 import { useEditor } from '@/store/editor'
 import type { EditorStore } from '@/store/types'
 
-type Restored = Pick<EditorStore, 'project' | 'dirty' | 'selection' | 'agentTurnEdited' | 'agentTurnUserEdited'>
+type Restored = Pick<EditorStore, 'project' | 'dirty' | 'selection' | 'agentTurnEdited' | 'agentTurnUserEdited' | 'agentTurnClientEdited'>
 
 /**
  * Runs `work` as one undo step. `work` returns a reason to refuse, or null when it did its edit;
@@ -29,7 +29,8 @@ export function refusableEdit(work: () => string | null): string | null {
     dirty: state.dirty,
     selection: state.selection,
     agentTurnEdited: state.agentTurnEdited,
-    agentTurnUserEdited: state.agentTurnUserEdited
+    agentTurnUserEdited: state.agentTurnUserEdited,
+    agentTurnClientEdited: state.agentTurnClientEdited
   }
   let refused: string | null = null
   state.transact(() => {

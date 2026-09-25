@@ -49,7 +49,7 @@ import { checkSearchRequest, checkVisionAssets } from './vision/requests'
 import { downloadsDir } from './paths'
 import * as store from './project/store'
 import * as encode from './export/encode'
-import { mcpStatus, setExecutorReady, settleToolCall } from './mcp/server'
+import { mcpStatus, setExecutorReady, setMcpClients, settleToolCall } from './mcp/server'
 import { writeGenerated, writeTemplate } from './html/templates'
 import * as access from './auth/access'
 import * as update from './update/updater'
@@ -80,6 +80,7 @@ interface ChannelApi {
   appMediaToolsReady: BayApi['app']['mediaToolsReady']
   appStorageReady: BayApi['app']['storageReady']
   appRepairStorage: BayApi['app']['repairStorage']
+  appSetMcpClients: BayApi['app']['setMcpClients']
   appMcpReady: BayApi['app']['mcpReady']
 
   mediaImportDialog: BayApi['media']['importDialog']
@@ -256,6 +257,11 @@ const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
   },
   appMcpReady: async () => mcpStatus(),
   appRepairStorage: () => store.repairStorage(),
+  appSetMcpClients: async (_event, on) => {
+    const enabled = on === true
+    store.setMcpClientsEnabled(enabled)
+    return setMcpClients(enabled)
+  },
   appStorageReady: async () => {
     // Opens the database on first ask if it is not open yet, so the status is the real one
     // rather than a guess made before anything tried.

@@ -195,6 +195,8 @@ export interface EditorState {
   agentTurnEdited: boolean
   /** Whether any of those changes came from the user rather than the agent's tool calls. */
   agentTurnUserEdited: boolean
+  /** An MCP client on bay's socket (not the agent, not the user) edited during this turn. */
+  agentTurnClientEdited: boolean
   /** What each `changes` entry can restore, by its id. Capped at `MAX_AGENT_CHECKPOINTS`. */
   agentCheckpoints: Record<string, AgentCheckpoint>
   /** Every revert still reachable by undo/redo, so the cards follow the project back and forth. */

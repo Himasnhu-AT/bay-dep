@@ -43,19 +43,14 @@ const api: BayApi = {
         ffmpeg: string | null
         ffprobe: string | null
       }>,
+    setMcpClients: (on: boolean) => ipcRenderer.invoke(IPC.appSetMcpClients, on) as ReturnType<BayApi['app']['setMcpClients']>,
     repairStorage: () => ipcRenderer.invoke(IPC.appRepairStorage) as ReturnType<BayApi['app']['repairStorage']>,
     storageReady: () =>
       ipcRenderer.invoke(IPC.appStorageReady) as Promise<{
         ready: boolean
         error: string | null
       }>,
-    mcpReady: () =>
-      ipcRenderer.invoke(IPC.appMcpReady) as Promise<{
-        ready: boolean
-        error: string | null
-        socketPath: string | null
-        connectionsSeen: number
-      }>,
+    mcpReady: () => ipcRenderer.invoke(IPC.appMcpReady) as ReturnType<BayApi['app']['mcpReady']>,
     onMenuCommand: (listener: (command: MenuCommand) => void) => {
       // The wrapper is held for the same reason as `onProgress`: `removeListener` matches by
       // identity, so building a fresh arrow inside the unsubscribe would remove nothing.
