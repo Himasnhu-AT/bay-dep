@@ -1,4 +1,4 @@
-import { useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
 import {
   Bot,
   Captions,
@@ -118,8 +118,11 @@ let lastPage: PreferencesPage = DEFAULT_PAGE
  * ("the model is missing" → Transcription) rather than leaving the user at the last page used.
  */
 export function openPreferences(page?: PreferencesPage): void {
-  if (page) lastPage = page
-  useEditor.getState().setSettingsOpen(true)
+  useEditor.getState().setSettingsOpen(true, page)
+}
+
+function isPage(id: string | null): id is PreferencesPage {
+  return id !== null && GROUPS.some((group) => group.pages.some((page) => page.id === id))
 }
 
 function PreferencesBody(): ReactNode {
@@ -130,9 +133,21 @@ function PreferencesBody(): ReactNode {
     pages: group.pages.filter((page) => page.id !== 'account' || access?.state === 'entitled')
   }))
   const pages = groups.flatMap((group) => group.pages)
-  const [current, setCurrent] = useState<PreferencesPage>(() =>
-    pages.some((page) => page.id === lastPage) ? lastPage : DEFAULT_PAGE
-  )
+  // A page asked for by the opener (`setSettingsOpen(true, 'providers')`) wins over the last one
+  // used; read once, when the body mounts for this opening.
+  const asked = useEditor((state) => state.settingsPage)
+  const [current, setCurrent] = useState<PreferencesPage>(() => {
+    const start = isPage(asked) ? asked : lastPage
+    return pages.some((page) => page.id === start) ? start : DEFAULT_PAGE
+  })
+  // Asked for another page while already open (a second link clicked behind the dialog).
+  useEffect(() => {
+    if (isPage(asked) && pages.some((page) => page.id === asked)) {
+      lastPage = asked
+      setCurrent(asked)
+    }
+    // `pages` is derived each render; the ask is what matters.
+  }, [asked])
   const tabs = useRef(new Map<PreferencesPage, HTMLButtonElement>())
   const page = pages.find((candidate) => candidate.id === current) ?? pages[0]!
 
