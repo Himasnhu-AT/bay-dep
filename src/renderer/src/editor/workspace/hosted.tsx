@@ -14,6 +14,10 @@
  * is the same node throughout — so nothing remounts, and a 2D canvas keeps its bitmap across a
  * reparent. When no page claims a node (the Media page has no timeline) it waits in a hidden
  * parking box, still mounted.
+ *
+ * The one thing a move does lose is scroll: Chromium drops the offsets of the scrollers inside a
+ * moved subtree, so the timeline came back from another page scrolled to the start. Each node
+ * remembers them (`ScrollMemory`) and its slot puts them back after the move.
  */
 
 import {
@@ -27,31 +31,40 @@ import {
 } from 'react'
 import { createPortal } from 'react-dom'
 import { cn } from '@/lib/cn'
+import { ScrollMemory } from './scrollMemory'
 
 export type HostedName = 'viewer' | 'timeline'
 
 interface Host {
   nodes: Record<HostedName, HTMLDivElement>
+  scrolls: Record<HostedName, ScrollMemory<Element>>
   parking: RefObject<HTMLDivElement | null>
 }
 
 const HostContext = createContext<Host | null>(null)
 
-function makeNode(name: HostedName): HTMLDivElement {
+function makeNode(name: HostedName, scrolls: ScrollMemory<Element>): HTMLDivElement {
   const node = document.createElement('div')
   node.dataset.hosted = name
   node.className = 'flex h-full min-h-0 min-w-0 flex-col'
+  // `scroll` does not bubble; capture sees every scroller inside.
+  node.addEventListener('scroll', (event) => {
+    if (event.target instanceof Element) scrolls.record(event.target)
+  }, { capture: true, passive: true })
   return node
 }
 
 /** The workspace's hosted nodes, created once for its lifetime. */
 export function useHost(): Host {
   const parking = useRef<HTMLDivElement>(null)
-  const [nodes] = useState<Record<HostedName, HTMLDivElement>>(() => ({
-    viewer: makeNode('viewer'),
-    timeline: makeNode('timeline')
-  }))
-  return { nodes, parking }
+  // One object for the workspace's life: slots depend on it, and a new one each render would
+  // re-run every slot's move.
+  const [host] = useState<Host>(() => {
+    const scrolls = { viewer: new ScrollMemory<Element>(), timeline: new ScrollMemory<Element>() }
+    const nodes = { viewer: makeNode('viewer', scrolls.viewer), timeline: makeNode('timeline', scrolls.timeline) }
+    return { nodes, scrolls, parking }
+  })
+  return host
 }
 
 export function HostProvider({ host, children }: { host: Host; children: ReactNode }): ReactNode {
@@ -90,6 +103,7 @@ export function Slot({ name, className }: { name: HostedName; className?: string
     const node = host?.nodes[name]
     if (!slot || !node || !host) return
     slot.appendChild(node)
+    host.scrolls[name].restore((element) => node.contains(element))
     return () => {
       // Only if it is still here: the next page's slot may already have taken it.
       if (node.parentNode === slot) host.parking.current?.appendChild(node)
