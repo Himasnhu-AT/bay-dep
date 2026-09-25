@@ -34,6 +34,7 @@ export const GUIDE_ROUTES: readonly GuideRoute[] = [
   { when: 'a motion graphic, title, lower third, chart or kinetic type', uri: 'bay://guide/brf' },
   { when: 'a graphic that needs a real web page', uri: 'bay://guide/composition/contract' },
   { when: 'many clips at once: reorder, retrim, a paper edit', uri: 'bay://guide/script' },
+  { when: 'finding a shot by what is in the picture ("the bit with the car"), in long or many videos', uri: 'bay://guide/footage-search' },
   { when: 'before you say an edit or export is done', uri: 'bay://guide/review' }
 ]
 

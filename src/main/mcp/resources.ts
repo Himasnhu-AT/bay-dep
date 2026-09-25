@@ -18,6 +18,7 @@ import { TEMPLATE_BODIES } from '../templates'
 import editing from './docs/editing.md?raw'
 import script from './docs/script.md?raw'
 import review from './docs/review.md?raw'
+import footageSearch from './docs/footage-search.md?raw'
 import brf from './docs/brf.md?raw'
 import generation from './docs/generation.md?raw'
 import formatTalkingHead from './docs/format-talking-head.md?raw'
@@ -44,6 +45,7 @@ const BODIES: Record<string, string> = {
   // Rendered from the kits themselves, so the guide and fill_prompt_kit cannot disagree.
   'bay://guide/prompt-kits': promptKitsGuide(),
   'bay://guide/script': script,
+  'bay://guide/footage-search': footageSearch,
   'bay://guide/review': review,
   'bay://guide/brf': brf,
   'bay://guide/generation': generation,

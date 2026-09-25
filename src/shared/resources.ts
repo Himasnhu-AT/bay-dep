@@ -59,6 +59,15 @@ export const RESOURCES: readonly ResourceSpec[] = [
     mimeType: 'text/markdown'
   },
   {
+    uri: 'bay://guide/footage-search',
+    name: 'Finding a shot by what it shows',
+    description:
+      'Read when the user names a shot by its picture and you do not know where it is. Index ' +
+      'once with index_footage, search in caption-like words with search_footage, then turn the ' +
+      'hit (a moment) into the shot with detect_cuts, check it with frame_grid, and place it.',
+    mimeType: 'text/markdown'
+  },
+  {
     uri: 'bay://guide/review',
     name: 'Reviewing your own edit',
     description:
