@@ -78,6 +78,16 @@ test('a short-GOP clip is sampled from keyframes, every two seconds, with the ri
   assert.ok(b3 > 200 && r3 < 60, `frame at 6 s is blue: ${rgbAt(frames[3]!)}`)
 })
 
+test('when keyframes suffice, the frames are the keyframes — the cheap pass really ran', { skip: SKIP, timeout: 60_000 }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bay-sampler-'))
+  // A keyframe every 1.5 s: close enough to use, and off the 2 s grid, so the two passes differ.
+  const path = makeClip(dir, 'gop-15.mp4', 15)
+  const expected = keptKeyframes(await keyframeTimesUs(TOOLS!.ffprobe, path))
+  assert.notDeepEqual(expected, [0, 2_000_000, 4_000_000, 6_000_000, 8_000_000], 'the specimen must tell the passes apart')
+  const frames = await collect(path, 'video', 9_000_000)
+  assert.deepEqual(frames.map((f) => f.us), expected)
+})
+
 test('a long-GOP clip is decoded in full, so it is still sampled every two seconds', { skip: SKIP, timeout: 60_000 }, async () => {
   const dir = mkdtempSync(join(tmpdir(), 'bay-sampler-'))
   const path = makeClip(dir, 'long-gop.mp4', 1000)

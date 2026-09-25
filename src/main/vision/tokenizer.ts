@@ -13,7 +13,7 @@
  *   punctuation before SentencePiece sees the text; the exported `tokenizer.json` (and so
  *   transformers.js) does neither. The checkpoint was trained on canonical text, never a capital
  *   letter, so "A Dog" and "a dog" must be the same ids.
- * - **Pad to exactly 64 with `</s>` (id 1).** The text tower reads the hidden state at the *last*
+ * - **Pad to exactly 64 with `</s>` (id 1), which is also the end marker.** The text tower reads the hidden state at the *last*
  *   position; a different length reads a different position, and the embedding is quietly wrong
  *   rather than obviously broken (measured in the Rust engine, `rust-engine-final`).
  *
@@ -21,8 +21,8 @@
  */
 
 export const TEXT_TOKENS = 64
+/** `</s>`, which is also SigLIP's pad token (`tokenizer_config.json`: `"pad_token": "</s>"`). */
 export const EOS_ID = 1
-export const PAD_ID = 1
 const UNK_PENALTY = 10
 
 /**
@@ -125,9 +125,10 @@ export function loadTokenizer(json: string | TokenizerJson): Tokenizer {
   return {
     pieces: (text) => tokens(text).map((t) => t.piece),
     encode(text) {
-      const body = tokens(text).map((t) => t.id).slice(0, TEXT_TOKENS - 1)
-      const ids = [...body, EOS_ID]
-      while (ids.length < TEXT_TOKENS) ids.push(PAD_ID)
+      // At most 63 pieces, then </s> to the end: the end marker and the padding are the same
+      // token, so one fill writes both, and a cut text still ends with </s>.
+      const ids = tokens(text).map((t) => t.id).slice(0, TEXT_TOKENS - 1)
+      while (ids.length < TEXT_TOKENS) ids.push(EOS_ID)
       return ids
     }
   }

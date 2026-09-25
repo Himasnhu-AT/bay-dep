@@ -6,7 +6,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { canonicalize, EOS_ID, loadTokenizer, PAD_ID, TEXT_TOKENS } from './tokenizer'
+import { canonicalize, EOS_ID, loadTokenizer, TEXT_TOKENS } from './tokenizer'
 
 test('canonicalize: lowercase, punctuation dropped without a space, whitespace collapsed', () => {
   // The Rust engine's cases, which were checked against the Python SiglipTokenizer.
@@ -54,8 +54,8 @@ test('ids end with </s> and pad to exactly 64 with </s>', () => {
   const ids = tok.encode('a dog')
   assert.equal(ids.length, TEXT_TOKENS)
   assert.deepEqual(ids.slice(0, 4), [3, 4, 5, EOS_ID])
-  assert.ok(ids.slice(4).every((id) => id === PAD_ID))
-  assert.deepEqual(tok.encode('').slice(0, 2), [EOS_ID, PAD_ID])
+  assert.ok(ids.slice(4).every((id) => id === EOS_ID))
+  assert.deepEqual(tok.encode('').slice(0, 2), [EOS_ID, EOS_ID])
 })
 
 test('a text past 63 pieces is cut, and still ends with </s>', () => {
