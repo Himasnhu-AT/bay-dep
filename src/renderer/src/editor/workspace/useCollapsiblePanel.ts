@@ -25,7 +25,9 @@ export interface CollapsiblePanel {
 export function useCollapsiblePanel(
   hidden: boolean,
   setHidden: (hidden: boolean) => void,
-  restoreTo: string
+  restoreTo: string,
+  /** What the panel is called in the notice when it cannot open ("inspector"). */
+  name?: string
 ): CollapsiblePanel {
   const panelRef = usePanelRef()
   const sizeBeforeHide = useRef<number | null>(null)
@@ -41,8 +43,18 @@ export function useCollapsiblePanel(
       panel.expand()
       const before = sizeBeforeHide.current
       panel.resize(before ? `${Math.round(before)}px` : restoreTo)
+      // The group had no room for it (every neighbour at its minimum). Say so, and put the state
+      // back: a toggle that reads "shown" over a panel nobody can see is the worse answer.
+      if (panel.isCollapsed()) {
+        setHidden(true)
+        if (name) {
+          useEditor
+            .getState()
+            .notify(`There is no room for the ${name}. Hide another panel or widen the window.`)
+        }
+      }
     }
-  }, [hidden, panelRef, restoreTo])
+  }, [hidden, panelRef, restoreTo, setHidden, name])
 
   const onResize = useCallback((): void => {
     const collapsed = panelRef.current?.isCollapsed()
@@ -53,9 +65,11 @@ export function useCollapsiblePanel(
 }
 
 /** A workspace region (library, inspector, timeline) shown and hidden through the store. */
+const REGION_NAMES: Record<RegionId, string> = { side: 'library', inspector: 'inspector', timeline: 'timeline' }
+
 export function useRegionPanel(region: RegionId, restoreTo: string): CollapsiblePanel {
   const hidden = useEditor((state) => state.hiddenRegions[region])
   const setRegionHidden = useEditor((state) => state.setRegionHidden)
   const setHidden = useCallback((next: boolean) => setRegionHidden(region, next), [region, setRegionHidden])
-  return useCollapsiblePanel(hidden, setHidden, restoreTo)
+  return useCollapsiblePanel(hidden, setHidden, restoreTo, REGION_NAMES[region])
 }

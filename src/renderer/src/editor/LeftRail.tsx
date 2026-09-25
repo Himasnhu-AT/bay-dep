@@ -60,7 +60,7 @@ export function LeftRail(): ReactNode {
   return (
     <nav
       aria-label="Libraries"
-      className="flex w-[60px] shrink-0 flex-col items-stretch gap-0.5 border-r border-line bg-chrome px-1 py-1.5"
+      className="flex w-[68px] shrink-0 flex-col items-stretch gap-0.5 border-r border-line bg-chrome px-1 py-1.5"
     >
       {PAGES.map((page) => {
         const on = current === page.id && !sideHidden

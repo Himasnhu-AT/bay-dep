@@ -6,7 +6,7 @@ export interface RegionHeaderProps {
   title?: ReactNode
   /** Controls at the left, after the title. */
   leading?: ReactNode
-  /** Centred on the strip, not on the space left over, so it does not drift as the sides change. */
+  /** Centred between the sides, and truncated before it can run into them. */
   centre?: ReactNode
   /** Controls at the right. */
   actions?: ReactNode
@@ -23,21 +23,19 @@ export function RegionHeader({ title, leading, centre, actions, className }: Reg
   return (
     <header
       className={cn(
-        'relative flex h-7 min-w-0 shrink-0 items-center gap-2 border-b border-line bg-chrome-raised px-2',
+        'grid h-7 min-w-0 shrink-0 items-center gap-2 border-b border-line bg-chrome-raised px-2',
+        centre ? 'grid-cols-[auto_minmax(0,1fr)_auto]' : 'grid-cols-[minmax(0,1fr)_auto]',
         className
       )}
     >
-      {title && (
-        <h2 className="shrink-0 truncate text-[11px] font-semibold text-ink-0 select-none">{title}</h2>
-      )}
-      {leading && <div className="flex min-w-0 shrink-0 items-center gap-1">{leading}</div>}
-      {centre && (
-        <div className="pointer-events-none absolute inset-x-0 flex justify-center">
-          <div className="pointer-events-auto max-w-[50%] min-w-0 truncate">{centre}</div>
-        </div>
-      )}
-      <div className="flex-1" />
-      {actions && <div className="relative flex shrink-0 items-center gap-1">{actions}</div>}
+      <div className="flex min-w-0 items-center gap-2">
+        {title && (
+          <h2 className="shrink-0 truncate text-[11px] font-semibold text-ink-0 select-none">{title}</h2>
+        )}
+        {leading}
+      </div>
+      {centre && <div className="min-w-0 truncate text-center">{centre}</div>}
+      <div className="flex min-w-0 items-center justify-end gap-1">{actions}</div>
     </header>
   )
 }

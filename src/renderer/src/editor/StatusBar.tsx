@@ -81,7 +81,7 @@ export function StatusBar({ saving = false }: { saving?: boolean }): ReactNode {
   }, [])
 
   return (
-    <footer className="flex h-6 shrink-0 items-center gap-3 border-t border-line bg-chrome px-3 text-[11px]">
+    <footer className="flex h-6 shrink-0 items-center gap-3 overflow-hidden border-t border-line bg-chrome px-3 text-[11px] whitespace-nowrap">
       {/* The programme's format, as Resolve's bottom bar reads it, and a way to change it:
           both open Project Settings. `formatFps`, not `fps`: the stored rate is a quotient, so
           this read `fps 29.97002997002997` the moment a project could be NTSC. */}

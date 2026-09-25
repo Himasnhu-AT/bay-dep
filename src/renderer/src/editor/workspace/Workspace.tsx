@@ -15,7 +15,7 @@
  * The page's own panels (library, inspector, …) remount; they hold nothing that matters.
  */
 
-import type { ReactNode } from 'react'
+import { useCallback, type ReactNode } from 'react'
 import { useDefaultLayout } from 'react-resizable-panels'
 import { ErrorBoundary } from '@/components'
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable'
@@ -38,7 +38,7 @@ export interface WorkspaceProps {
   saving: boolean
 }
 
-const AGENT_WIDTH = '380px'
+const AGENT_WIDTH = '360px'
 
 export function Workspace({ onHome, onExport, saving }: WorkspaceProps): ReactNode {
   const host = useHost()
@@ -48,7 +48,8 @@ export function Workspace({ onHome, onExport, saving }: WorkspaceProps): ReactNo
   const dockLayout = useDefaultLayout({ id: 'bay.layout.dock', storage: layoutStorage })
   const agentDocked = useEditor((state) => state.agentDocked)
   const setAgentDocked = useEditor((state) => state.setAgentDocked)
-  const agent = useCollapsiblePanel(!agentDocked, (hidden) => setAgentDocked(!hidden), AGENT_WIDTH)
+  const setAgentHidden = useCallback((hidden: boolean) => setAgentDocked(!hidden), [setAgentDocked])
+  const agent = useCollapsiblePanel(!agentDocked, setAgentHidden, AGENT_WIDTH, 'agent panel')
 
   return (
     <HostProvider host={host}>

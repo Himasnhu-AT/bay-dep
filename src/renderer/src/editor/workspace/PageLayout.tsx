@@ -51,7 +51,8 @@ export const PAGE_FRAMES: Record<WorkspacePage, Frame> = {
     right: INSPECTOR,
     timeline: { defaultSize: '260px', minSize: '150px' },
     beside: BESIDE,
-    viewerMin: '320px',
+    // Room for library + viewer + inspector + the agent dock at 1280px.
+    viewerMin: '280px',
     workMin: '45%'
   },
   media: {
