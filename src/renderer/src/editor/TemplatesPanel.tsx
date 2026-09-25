@@ -32,8 +32,6 @@ function firstSentence(text: string): string {
 export function TemplatesPanel(): ReactNode {
   const width = useEditor((state) => selectTimeline(state)?.width)
   const height = useEditor((state) => selectTimeline(state)?.height)
-  const [open, setOpen] = useState<string | null>(null)
-
   return (
     <Panel
       title="Templates"
@@ -51,16 +49,7 @@ export function TemplatesPanel(): ReactNode {
       }
     >
       <ScrollArea className="flex-1">
-        <ul className="flex flex-col">
-          {TEMPLATES.map((spec) => (
-            <TemplateRow
-              key={spec.id}
-              spec={spec}
-              open={open === spec.id}
-              onToggle={() => setOpen((current) => (current === spec.id ? null : spec.id))}
-            />
-          ))}
-        </ul>
+        <TemplateList specs={TEMPLATES} />
         <div className="m-3 flex items-start gap-2 rounded-sm border border-line bg-surface-2 p-2.5">
           <LayoutTemplate aria-hidden="true" className="mt-px size-3.5 shrink-0 text-ink-2" />
           <p className="text-[11px] leading-relaxed text-ink-2">
@@ -70,6 +59,27 @@ export function TemplatesPanel(): ReactNode {
         </div>
       </ScrollArea>
     </Panel>
+  )
+}
+
+/**
+ * Templates as a list of rows, each with a still of the template at this canvas's shape; one row
+ * opens at a time to show its fields and Add. Shared by the Templates page and the Effects
+ * Library's Titles and Generators.
+ */
+export function TemplateList({ specs }: { specs: readonly TemplateSpec[] }): ReactNode {
+  const [open, setOpen] = useState<string | null>(null)
+  return (
+    <ul className="flex flex-col">
+      {specs.map((spec) => (
+        <TemplateRow
+          key={spec.id}
+          spec={spec}
+          open={open === spec.id}
+          onToggle={() => setOpen((current) => (current === spec.id ? null : spec.id))}
+        />
+      ))}
+    </ul>
   )
 }
 
@@ -134,6 +144,18 @@ function TemplateRow({
           aria-hidden="true"
           className={cn('mt-0.5 size-3.5 shrink-0 text-ink-2 t-fast', open && 'rotate-90')}
         />
+        {!open && (
+          // A still of the template with its defaults, so the list shows what each one looks
+          // like rather than only naming it.
+          <span className="w-16 shrink-0 overflow-hidden rounded-xs">
+            <TemplatePreview
+              spec={spec}
+              values={Object.fromEntries(spec.variables.map((v) => [v.id, v.default]))}
+              width={width}
+              height={height}
+            />
+          </span>
+        )}
         <span className="min-w-0 flex-1">
           <span className="flex items-baseline justify-between gap-2">
             <span className="truncate text-[12px] font-medium text-ink-0">{spec.name}</span>

@@ -19,6 +19,7 @@ import { IconButton, TextField, Tooltip } from '@/components'
 import { formatSourceDuration } from '@/lib/bay'
 import { cn } from '@/lib/cn'
 import { usePoster } from '@/lib/useMediaCache'
+import { placeable } from './library/assetActions'
 
 /** The drag payload a media card writes and a timeline lane reads. */
 export const ASSET_DRAG_TYPE = 'application/x-bay-asset'
@@ -60,7 +61,7 @@ const KIND_NOTE: Record<AssetKind, string> = {
 }
 
 /** A font or LUT is applied from elsewhere, never placed: it gets no + and no double-click. */
-export const placeable = (asset: Asset): boolean => !asset.error && asset.kind !== 'font' && asset.kind !== 'lut'
+export { placeable }
 
 export interface AssetTileProps {
   asset: Asset
