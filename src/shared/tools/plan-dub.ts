@@ -13,7 +13,8 @@ export const tool: ToolSpec = {
     'read-only; it transcribes on this Mac first when the clip has no transcript this session. ' +
     'You are the translator: translate every cue using the ' + DUB_CONTEXT_CUES + ' cues either side ' +
     'as context, check each line fits its slot (estimate_speech), rewrite over-long ones shorter, ' +
-    'then pass { cueId, text } for each to apply_dub with the same itemId, language and range. ' +
+    'then pass { cueId, text } for each to apply_dub with the same itemId, language and range, and the planId it returns. ' +
+    'Cue ids name where each cue starts (c@<frame>), so they stay the same when the range changes. ' +
     'bay speeds a line up to ' + TEMPO_ACCEPT + '× to fit. The `dub` skill walks the whole job.',
   category: 'read',
   readOnly: true,

@@ -8,16 +8,111 @@ import assert from 'node:assert/strict'
 import {
   cleanForSpeech,
   dubCues,
+  dubPlanId,
   fitTempo,
+  noRoomRefusal,
   overLongRefusal,
+  separateLines,
   speechBudget,
   suggestedCut,
   DUB_GAP_SECONDS,
+  DUB_MUTE_DB,
   TEMPO_ACCEPT,
   TEMPO_WARN
 } from './dub'
+import { MAX_DUCK_DB } from './audio-gain'
 
 const FPS = 30
+
+test('a cue keeps its id when the cues around it change; a position-numbered id would not', () => {
+  const all = dubCues(
+    [
+      { fromFrame: 0, toFrame: 30, text: 'First.' },
+      { fromFrame: 60, toFrame: 90, text: 'Second.' },
+      { fromFrame: 120, toFrame: 150, text: 'Third.' }
+    ],
+    300,
+    FPS
+  )
+  // The same clip read from frame 50 on (a narrower range): "Second." is the first cue now.
+  const later = dubCues(
+    [
+      { fromFrame: 60, toFrame: 90, text: 'Second.' },
+      { fromFrame: 120, toFrame: 150, text: 'Third.' }
+    ],
+    300,
+    FPS
+  )
+  const idOf = (list: typeof all, text: string): string | undefined => list.find((c) => c.text === text)?.id
+  assert.equal(idOf(later, 'Second.'), idOf(all, 'Second.'))
+  assert.equal(idOf(later, 'Third.'), idOf(all, 'Third.'))
+  assert.deepEqual(all.map((c) => c.id), ['c@0', 'c@60', 'c@120'])
+  // No id of the narrower list names a different sentence in the wider one.
+  for (const cue of later) assert.equal(all.find((c) => c.id === cue.id)?.text, cue.text)
+})
+
+test('two cues on one frame get distinct ids, and the first has no room', () => {
+  const cues = dubCues(
+    [
+      { fromFrame: 30, toFrame: 60, text: 'One.' },
+      { fromFrame: 30, toFrame: 90, text: 'Two.' }
+    ],
+    300,
+    FPS
+  )
+  assert.deepEqual(cues.map((c) => [c.id, c.slotFrames]), [['c@30', 0], ['c@30.2', 60 + Math.round(DUB_GAP_SECONDS * FPS)]])
+  // A translation for the cue with no room is refused by name; leaving it out is not.
+  assert.match(String(noRoomRefusal(cues, new Set(['c@30', 'c@30.2']))), /^c@30 has no room: it starts where the next cue or the range ends/)
+  assert.equal(noRoomRefusal(cues, new Set(['c@30.2'])), null)
+})
+
+test('a slot never runs past the next cue or the range, even when the cue itself does', () => {
+  const cues = dubCues(
+    [
+      // whisper timed this sentence past the start of the next one.
+      { fromFrame: 0, toFrame: 100, text: 'Overlapping.' },
+      { fromFrame: 80, toFrame: 120, text: 'Next.' },
+      // And this one past the end of the dubbed range.
+      { fromFrame: 200, toFrame: 260, text: 'Last.' }
+    ],
+    230,
+    FPS
+  )
+  assert.deepEqual(cues.map((c) => [c.id, c.slotFrames]), [['c@0', 80], ['c@80', 120 - 80 + Math.round(DUB_GAP_SECONDS * FPS)], ['c@200', 30]])
+  // Positive control: a cue that ends before the next one keeps its gap tolerance.
+  const apart = dubCues([{ fromFrame: 0, toFrame: 30, text: 'A.' }, { fromFrame: 200, toFrame: 230, text: 'B.' }], 300, FPS)
+  assert.equal(apart[0]!.slotFrames, 30 + Math.round(DUB_GAP_SECONDS * FPS))
+})
+
+test('a plan id names the reading: the same clip reads the same, any change reads differently', () => {
+  const cues = dubCues([{ fromFrame: 0, toFrame: 30, text: 'Hi.' }], 100, FPS)
+  const id = dubPlanId('clip', { from: 0, to: 100 }, cues)
+  assert.match(id, /^plan-[0-9a-f]{16}$/)
+  assert.equal(dubPlanId('clip', { from: 0, to: 100 }, dubCues([{ fromFrame: 0, toFrame: 30, text: 'Hi.' }], 100, FPS)), id)
+  assert.notEqual(dubPlanId('clip', { from: 0, to: 90 }, cues), id)
+  assert.notEqual(dubPlanId('clip', { from: 0, to: 100 }, dubCues([{ fromFrame: 0, toFrame: 30, text: 'Hey.' }], 100, FPS)), id)
+  assert.notEqual(dubPlanId('other', { from: 0, to: 100 }, cues), id)
+})
+
+test('lines placed together never overlap: the earlier ends at the later, one with no frames left is dropped', () => {
+  const out = separateLines([
+    { cueId: 'b', from: 50, durationInFrames: 30 },
+    { cueId: 'a', from: 0, durationInFrames: 70 },
+    { cueId: 'c', from: 100, durationInFrames: 10 },
+    { cueId: 'd', from: 100, durationInFrames: 20 }
+  ])
+  assert.deepEqual(out.kept.map((l) => [l.cueId, l.from, l.durationInFrames]), [['a', 0, 50], ['b', 50, 30], ['d', 100, 20]])
+  assert.deepEqual(out.trimmed, ['a'])
+  assert.deepEqual(out.dropped, ['c'])
+  // Positive control: lines that already fit are passed through untouched.
+  const clean = [{ cueId: 'x', from: 0, durationInFrames: 10 }, { cueId: 'y', from: 10, durationInFrames: 10 }]
+  assert.deepEqual(separateLines(clean), { kept: clean, trimmed: [], dropped: [] })
+})
+
+test('a mute is the deepest duck there is', () => {
+  assert.equal(DUB_MUTE_DB, MAX_DUCK_DB)
+  assert.equal(DUB_MUTE_DB, 40)
+})
 
 test('sound tags and symbols are cleaned from a line; the words are kept', () => {
   assert.equal(cleanForSpeech('(music) Welcome back [Applause] to the show™'), 'Welcome back to the show')
@@ -42,14 +137,14 @@ test('a slot runs to the next cue, capped at the gap tolerance past its own end,
   assert.deepEqual(
     cues.map((c) => [c.id, c.slotFrames, c.slotSeconds]),
     [
-      ['c1', 75, 2.5],
-      ['c2', 75 + gap, (75 + gap) / FPS],
-      ['c3', 70, 2.33]
+      ['c@0', 75, 2.5],
+      ['c@75', 75 + gap, (75 + gap) / FPS],
+      ['c@400', 70, 2.33]
     ]
   )
 })
 
-test('a cue that is only a sound tag is dropped, and the ids stay a plain sequence', () => {
+test('a cue that is only a sound tag is dropped, and the others keep their ids, which name where they start', () => {
   const cues = dubCues(
     [
       { fromFrame: 0, toFrame: 30, text: '[Music]' },
@@ -58,7 +153,7 @@ test('a cue that is only a sound tag is dropped, and the ids stay a plain sequen
     100,
     FPS
   )
-  assert.deepEqual(cues.map((c) => [c.id, c.text, c.fromFrame]), [['c1', 'Hello.', 40]])
+  assert.deepEqual(cues.map((c) => [c.id, c.text, c.fromFrame]), [['c@40', 'Hello.', 40]])
 })
 
 test('tempo: never slowed, quiet up to the accepted tempo, a warning up to the limit, refused beyond', () => {

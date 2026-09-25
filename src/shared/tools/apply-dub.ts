@@ -34,6 +34,11 @@ export const tool: ToolSpec = {
       sourceLanguage: { type: 'string', description: 'As given to plan_dub.' },
       fromFrame: frames('As given to plan_dub.'),
       toFrame: frames('As given to plan_dub.'),
+      planId: {
+        type: 'string',
+        description:
+          'The planId plan_dub returned. Checked: if the clip no longer reads as that plan did (moved, retranscribed, another range), the call is refused with the current cues, so no translation is voiced over the wrong line.'
+      },
       translations: {
         type: 'array',
         description:

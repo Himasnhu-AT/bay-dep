@@ -406,6 +406,7 @@ test('the spend guard refuses a call past the session budget, naming spent, limi
       /This call \(~\$0\.06\) would take generation spending this session past its limit: \$0\.06 spent of \$0\.10\. Nothing was sent\. .*Settings › Providers/
     )
     assert.equal(stub.requests.length, 1, 'the refused call reached no provider')
+    assert.equal(second.ok ? null : second.reason, 'budget')
     // Positive control: a cheaper call that fits is still taken.
     const cheap = await jobs.start(req({ model: 'gpt-image-1', prompt: 'three', quality: 'low' }, 'image'))
     assert.equal(cheap.ok, true)
@@ -458,6 +459,7 @@ test('the spend guard caps jobs at once, and two calls racing for the last place
     assert.deepEqual([b.ok, c.ok].sort(), [false, true])
     const refused = b.ok ? c : b
     assert.match(refused.ok ? '' : refused.error, /2 generation jobs are already running, and the limit is 2 at once\. Nothing was sent\..*Settings › Providers/)
+    assert.equal(refused.ok ? null : refused.reason, 'room', 'a caller can tell a full room (wait) from a spent budget (stop)')
     assert.equal(stub.requests.filter((r) => r.url.endsWith(':predictLongRunning')).length, 2)
     assert.equal(jobs.spending().active, 2)
     jobs.stop()
@@ -491,6 +493,73 @@ test('a reference path that walks out of an allowed folder with .. is judged as 
     const started = await jobs.start(req({ model: 'gpt-image-1', prompt: 'x', referencePath: join(media, 'ok.png') }, 'image'))
     assert.equal(started.ok, true)
     await jobs.flush()
+  } finally {
+    await stub.close()
+  }
+})
+
+test('a reservation holds budget for work that starts later: others cannot take it, its own starts draw on it', { timeout: 10000 }, async () => {
+  const stub = await startStub((_r, response) => json(response, 200, { data: [{ b64_json: PNG.toString('base64') }] }))
+  try {
+    // A dub of two gpt-image-1 lines is held whole under a $0.20 budget.
+    const { deps } = await setup(stub, { limits: () => ({ budgetUsd: 0.2, maxActive: 3 }) })
+    const jobs = new GenerationJobs(deps)
+    const line = (prompt: string): GenerationRequest => req({ model: 'gpt-image-1', prompt }, 'image')
+    const priced = validateGeneration({ model: 'gpt-image-1', prompt: 'x' }, 'image')
+    assert.ok(priced.ok)
+    const cost = priced.estimatedCostUsd
+    // The specimen: three fit the budget, four do not — so one other job fits beside a two-line
+    // hold, a second does not, and without the hold two others would.
+    assert.ok(3 * cost <= 0.2 + 1e-9 && 4 * cost > 0.2, `cost ${cost}`)
+    const held = await jobs.reserve(2 * cost)
+    assert.ok(held.ok, held.ok ? '' : held.error)
+    assert.equal(jobs.spending().reservedUsd, Math.round(2 * cost * 10000) / 10000)
+
+    // Something else starts meanwhile: one fits beside the hold, a second does not.
+    const other = await jobs.start(line('other one'))
+    assert.ok(other.ok)
+    const squeezed = await jobs.start(line('other two'))
+    assert.equal(squeezed.ok, false)
+    assert.equal(squeezed.ok ? null : squeezed.reason, 'budget')
+    assert.match(squeezed.ok ? '' : squeezed.error, /spent and \$[\d.]+ held for a dub still generating of \$0\.20/)
+
+    // The dub's own lines start against the hold, although the free budget alone could not take them.
+    const first = await jobs.start(line('dub one'), { reservationId: held.reservationId })
+    assert.ok(first.ok, first.ok ? '' : first.error)
+    const second = await jobs.start(line('dub two'), { reservationId: held.reservationId })
+    assert.ok(second.ok, second.ok ? '' : second.error)
+    assert.equal(jobs.spending().reservedUsd, undefined, 'the hold is used up')
+    assert.equal(jobs.spending().spentUsd, Math.round(3 * cost * 100) / 100)
+
+    // A start naming a reservation that is gone is judged like any other start.
+    const stale = await jobs.start(line('dub three'), { reservationId: held.reservationId })
+    assert.equal(stale.ok, false)
+    assert.equal(stale.ok ? null : stale.reason, 'budget')
+    for (const id of [other, first, second].map((s) => (s.ok ? s.job.id : ''))) await until(jobs, id, ['done', 'failed'])
+    await jobs.flush()
+  } finally {
+    await stub.close()
+  }
+})
+
+test('two reservations racing for budget only one fits under get one between them; a release frees it', async () => {
+  const stub = await startStub((_r, response) => json(response, 200, {}))
+  try {
+    const { deps } = await setup(stub, { limits: () => ({ budgetUsd: 1, maxActive: 3 }) })
+    const jobs = new GenerationJobs(deps)
+    const [a, b] = await Promise.all([jobs.reserve(0.6), jobs.reserve(0.6)])
+    assert.deepEqual([a.ok, b.ok].sort(), [false, true])
+    const refused = a.ok ? b : a
+    assert.equal(refused.ok ? null : refused.reason, 'budget')
+    const kept = a.ok ? a : b
+    assert.ok(kept.ok)
+    jobs.release(kept.reservationId)
+    assert.equal(jobs.spending().reservedUsd, undefined)
+    const again = await jobs.reserve(0.6)
+    assert.equal(again.ok, true, 'released budget can be held again')
+    assert.equal((await jobs.reserve(-1)).ok, false)
+    assert.equal((await jobs.reserve(Number.NaN)).ok, false)
+    assert.equal(stub.requests.length, 0, 'a reservation sends nothing')
   } finally {
     await stub.close()
   }

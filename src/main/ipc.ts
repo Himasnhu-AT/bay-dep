@@ -53,12 +53,16 @@ import * as update from './update/updater'
 import { refuseChannel } from './auth/gate'
 import {
   clearGenerationKey,
+  generationDubs,
   generationJob,
   generationJobs,
   generationKeys,
   generationSpending,
   setGenerationKey,
   setGenerationLimits,
+  releaseGeneration,
+  reserveGeneration,
+  saveGenerationDub,
   startGenerationJob
 } from './generate/service'
 
@@ -121,6 +125,10 @@ interface ChannelApi {
   generationJobs: BayApi['generation']['jobs']
   generationSpending: BayApi['generation']['spending']
   generationSetLimits: BayApi['generation']['setLimits']
+  generationReserve: BayApi['generation']['reserve']
+  generationRelease: BayApi['generation']['release']
+  generationDubs: BayApi['generation']['dubs']
+  generationSaveDub: BayApi['generation']['saveDub']
 
   compositionInspect: BayApi['composition']['inspect']
   compositionWrite: BayApi['composition']['write']
@@ -192,11 +200,15 @@ const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
   generationKeys: () => generationKeys(),
   generationSetKey: (_event, provider, fields) => setGenerationKey(provider, fields),
   generationClearKey: (_event, provider) => clearGenerationKey(provider),
-  generationStart: (_event, request) => startGenerationJob(request),
+  generationStart: (_event, request, options) => startGenerationJob(request, options),
   generationJob: (_event, id) => generationJob(id),
   generationJobs: () => generationJobs(),
   generationSpending: () => generationSpending(),
   generationSetLimits: (_event, limits) => setGenerationLimits(limits),
+  generationReserve: (_event, totalUsd) => reserveGeneration(totalUsd),
+  generationRelease: (_event, reservationId) => releaseGeneration(reservationId),
+  generationDubs: () => generationDubs(),
+  generationSaveDub: (_event, record) => saveGenerationDub(record),
 
   compositionInspect: async (_event, path, includeHtml) => inspectComposition(path, includeHtml),
   compositionWrite: async (_event, path, html) => {

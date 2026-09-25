@@ -23,6 +23,9 @@
  * as what a person reads and what the speech estimator speaks in.
  */
 
+import { MAX_DUCK_DB } from './audio-gain'
+import type { GenerationRequest } from './generation'
+import type { Asset } from './project'
 import { estimateSpeech, type SpeechPace } from './speech-duration'
 import type { TimelineCue } from './transcribe'
 
@@ -43,7 +46,13 @@ export type OriginalAudio = 'duck' | 'mute' | 'keep'
 
 /** One line to dub, in timeline frames. */
 export interface DubCue {
-  /** `c1`, `c2`, … in timeline order. What a translation names. */
+  /**
+   * `c@<fromFrame>` — named by where the cue starts on the timeline, not by its position in the
+   * list. A position (`c1`, `c2`) names a different sentence the moment the list changes (a
+   * narrower range, a re-transcription that splits one sentence in two), and a translation sent
+   * for the old `c2` would be spoken over the new one without a word of complaint. A start frame
+   * names the same moment or nothing. Two cues starting on one frame are `c@F` and `c@F.2`.
+   */
   id: string
   fromFrame: number
   toFrame: number
@@ -83,12 +92,19 @@ export function dubCues(cues: readonly TimelineCue[], endFrame: number, fps: num
   const kept = cues
     .map((cue) => ({ ...cue, text: cleanForSpeech(cue.text) }))
     .filter((cue) => cue.text !== '' && cue.toFrame > cue.fromFrame)
+  const seen = new Map<number, number>()
   return kept.map((cue, i) => {
     const next = kept[i + 1]
-    const limit = Math.min(next ? next.fromFrame : endFrame, cue.toFrame + gap)
-    const slotFrames = Math.max(cue.toFrame, limit) - cue.fromFrame
+    // The slot ends at the next cue's start and at the dubbed range's end, whatever the cue's own
+    // end says: a sentence whisper timed past the next one's start still may not be spoken over
+    // it. Only the gap tolerance is measured from the cue's own end. Zero is possible (two cues
+    // on one frame, a cue at the range's end); apply_dub refuses such a line by name.
+    const slotEnd = Math.min(next ? next.fromFrame : endFrame, endFrame, cue.toFrame + gap)
+    const slotFrames = Math.max(0, slotEnd - cue.fromFrame)
+    const count = (seen.get(cue.fromFrame) ?? 0) + 1
+    seen.set(cue.fromFrame, count)
     return {
-      id: `c${i + 1}`,
+      id: count === 1 ? `c@${cue.fromFrame}` : `c@${cue.fromFrame}.${count}`,
       fromFrame: cue.fromFrame,
       toFrame: cue.toFrame,
       slotFrames,
@@ -96,6 +112,71 @@ export function dubCues(cues: readonly TimelineCue[], endFrame: number, fps: num
       text: cue.text
     }
   })
+}
+
+/**
+ * A short fingerprint of a plan: the clip, the range and every cue's id, span, slot and words.
+ * `plan_dub` returns it and `apply_dub` checks it when it is passed back, so translations written
+ * against one reading of the clip are never voiced against another (FNV-1a, 2×32 bits: an
+ * identity check against accidents, not a secret).
+ */
+export function dubPlanId(itemId: string, range: { from: number; to: number }, cues: readonly DubCue[]): string {
+  const text = JSON.stringify([itemId, range.from, range.to, cues.map((c) => [c.id, c.fromFrame, c.toFrame, c.slotFrames, c.text])])
+  let a = 0x811c9dc5
+  let b = 0x01000193 ^ text.length
+  for (let i = 0; i < text.length; i += 1) {
+    const code = text.charCodeAt(i)
+    a = Math.imul(a ^ code, 0x01000193) >>> 0
+    b = Math.imul(b ^ code ^ (i & 0xff), 0x01000193) >>> 0
+  }
+  return `plan-${a.toString(16).padStart(8, '0')}${b.toString(16).padStart(8, '0')}`
+}
+
+/**
+ * The refusal for translated cues whose slot has no frames — a cue starting where the next one
+ * or the range does — or null when every translated cue has room. Through `plan_dub` today cues
+ * abut (`segmentsToCues` never lets one start before the previous ends), so this fires only for a
+ * cue list from elsewhere; `dubCues` accepts any list, so the one voicing it checks.
+ */
+export function noRoomRefusal(cues: readonly DubCue[], translated: ReadonlySet<string>): string | null {
+  const none = cues.filter((cue) => translated.has(cue.id) && cue.slotFrames < 1).map((cue) => cue.id)
+  if (none.length === 0) return null
+  return (
+    `${none.join(', ')} ${none.length === 1 ? 'has' : 'have'} no room: ${none.length === 1 ? 'it starts' : 'each starts'} where the next cue or the range ends, so no line can play there. ` +
+    'Leave them out (with partial: true), or fold their words into the cue before.'
+  )
+}
+
+/** One generated line as it is about to be placed. */
+export interface PlacedLine {
+  cueId: string
+  from: number
+  durationInFrames: number
+}
+
+/**
+ * Lines placed in one go never overlap each other: each ends at the next one's start at the
+ * latest, and a line left with no frames is dropped. Slots already stop at the next cue, so this
+ * only changes anything when two lines share a start — but it is the placement's own rule, not a
+ * hope about its input. Returns the lines kept (trimmed where needed) and the ids trimmed or dropped.
+ */
+export function separateLines<L extends PlacedLine>(lines: readonly L[]): { kept: L[]; trimmed: string[]; dropped: string[] } {
+  const sorted = [...lines].sort((a, b) => a.from - b.from)
+  const kept: L[] = []
+  const trimmed: string[] = []
+  const dropped: string[] = []
+  for (const [i, line] of sorted.entries()) {
+    const next = sorted[i + 1]
+    const end = next ? Math.min(line.from + line.durationInFrames, next.from) : line.from + line.durationInFrames
+    const frames = end - line.from
+    if (frames < 1) {
+      dropped.push(line.cueId)
+      continue
+    }
+    if (frames < line.durationInFrames) trimmed.push(line.cueId)
+    kept.push(frames === line.durationInFrames ? line : { ...line, durationInFrames: frames })
+  }
+  return { kept, trimmed, dropped }
 }
 
 /**
@@ -184,6 +265,76 @@ export function dubInstructions(language: string): string[] {
     `Each cue has a budget: its slotSeconds, and about how many syllables or characters fit (budget). Check a line with estimate_speech { text, language: "${language}", targetSeconds: slotSeconds }. If it runs over, rewrite it as one shorter, more natural spoken line that keeps the core meaning, adds no new facts, and reads naturally within slotSeconds. bay speeds a line up to ${TEMPO_ACCEPT}× to fit, so small overruns are fine; larger ones are refused by apply_dub.`
   ]
 }
+
+export type DubLineStatus = 'queued' | 'running' | 'done' | 'failed'
+
+/** One line of a dub as it is kept between polls, and across a reload (main keeps the record). */
+export interface DubLineData {
+  cue: DubCue
+  text: string
+  request: GenerationRequest
+  estimatedSeconds: number
+  costUsd: number
+  status: DubLineStatus
+  jobId?: string
+  error?: string
+  /** The imported line, once it landed — kept so placing again after an undo imports and pays nothing. */
+  asset?: Asset
+  measuredSeconds?: number
+}
+
+/** A dub in flight or done: what `apply_dub` started and `track_dub` follows. Plain data. */
+export interface DubRecordData {
+  id: string
+  itemId: string
+  language: string
+  fps: number
+  trackName: string
+  original: { mode: OriginalAudio; amountDb: number }
+  lines: DubLineData[]
+  totalEstimatedCostUsd: number
+  createdAt: number
+  /** `dubPlanId` of the plan the lines were checked against. */
+  planId: string
+  /**
+   * Order among dubs on the same track: a dub applied later has a higher number. A line of an
+   * older dub is never placed over a line a newer one already placed.
+   */
+  generation: number
+  /** Main's hold on the budget for lines not started yet; dropped once none is left to start. */
+  reservationId?: string
+  /** The items the last placement made, to tell a placement undone from one still standing. */
+  placedItemIds?: string[]
+  /** Set once placed (or once nothing was left to place): what every later poll returns. */
+  result?: Record<string, unknown>
+}
+
+/** A record read back from main, or null when it is not one this build can resume. */
+export function readDubRecord(value: unknown): DubRecordData | null {
+  if (!value || typeof value !== 'object') return null
+  const r = value as Partial<DubRecordData>
+  const ok =
+    typeof r.id === 'string' &&
+    typeof r.itemId === 'string' &&
+    typeof r.language === 'string' &&
+    typeof r.fps === 'number' &&
+    typeof r.trackName === 'string' &&
+    typeof r.createdAt === 'number' &&
+    typeof r.planId === 'string' &&
+    typeof r.generation === 'number' &&
+    !!r.original &&
+    Array.isArray(r.lines) &&
+    r.lines.every((line) => !!line && typeof line === 'object' && !!line.cue && typeof line.cue.id === 'string' && typeof line.status === 'string' && !!line.request)
+  return ok ? (r as DubRecordData) : null
+}
+
+/**
+ * The original dialogue under `original: "mute"`: a duck at the deepest the duck allows, keyed
+ * to the dub track — so it is silent exactly where a dubbed line plays and nowhere else, and it
+ * multiplies after volume keyframes (`itemAudioGainAt`), which `item.volume = 0` did not: a clip
+ * with volume keys ignores its static volume, so the "muted" original played on.
+ */
+export const DUB_MUTE_DB = MAX_DUCK_DB
 
 /** The audio track a dub in `language` is placed on. Found by this name, so dubbing again replaces lines rather than stacking. */
 export function dubTrackName(language: string): string {

@@ -29,10 +29,12 @@ import {
   DEFAULT_GENERATION_LIMITS,
   PROVIDERS,
   REFERENCE_IMAGE_TYPES,
+  MAX_GENERATION_BUDGET_USD,
   REFERENCE_MAX_BYTES,
   findingsFor,
-  spendRefusal,
+  spendRefusalOf,
   validateGeneration,
+  type StartRefused,
   type GenerationJob,
   type GenerationLimits,
   type GenerationProvider,
@@ -96,6 +98,12 @@ export class GenerationJobs {
   #loading: Promise<void> | null = null
   /** Estimated USD of every job this process has sent. Resumed jobs were paid for by an earlier run. */
   #spentUsd = 0
+  /**
+   * Budget held for work agreed but not started — a dub's lines, reserved whole when it is
+   * applied so a generation started meanwhile cannot strand it half-done. Each start that names
+   * a reservation moves its cost from here to `#spentUsd`; `release` drops what is left.
+   */
+  readonly #reservations = new Map<string, { remainingUsd: number }>()
   #stopped = false
 
   constructor(deps: JobDeps) {
@@ -152,12 +160,39 @@ export class GenerationJobs {
     const limits = this.#deps.limits?.() ?? DEFAULT_GENERATION_LIMITS
     let active = 0
     for (const job of this.#jobs.values()) if (job.status === 'queued' || job.status === 'running') active++
+    let reserved = 0
+    for (const reservation of this.#reservations.values()) reserved += reservation.remainingUsd
     return {
       spentUsd: Math.round(this.#spentUsd * 100) / 100,
       budgetUsd: limits.budgetUsd,
       active,
-      maxActive: limits.maxActive
+      maxActive: limits.maxActive,
+      ...(reserved > 0 ? { reservedUsd: Math.round(reserved * 10000) / 10000 } : {})
     }
+  }
+
+  /**
+   * Holds `totalUsd` of the session budget for work that will start over time (a dub's lines).
+   * Checked against the budget the way a start is — spent plus everything already held plus this
+   * — and held in the same synchronous step, so two reservations racing cannot both fit under a
+   * budget only one fits under. Jobs at once are not checked: the held work starts as room frees.
+   */
+  async reserve(totalUsd: number): Promise<{ ok: true; reservationId: string; spending: GenerationSpending } | StartRefused> {
+    await this.load()
+    if (typeof totalUsd !== 'number' || !Number.isFinite(totalUsd) || totalUsd < 0 || totalUsd > MAX_GENERATION_BUDGET_USD) {
+      return { ok: false, error: `A reservation must be between $0 and $${MAX_GENERATION_BUDGET_USD}; got ${String(totalUsd)}.`, reason: 'other' }
+    }
+    const refused = spendRefusalOf({ ...this.spending(), active: 0 }, totalUsd)
+    if (refused) return { ok: false, error: refused.error, reason: refused.reason }
+    const reservationId = randomUUID()
+    this.#reservations.set(reservationId, { remainingUsd: totalUsd })
+    return { ok: true, reservationId, spending: this.spending() }
+  }
+
+  /** Drops what is left of a reservation: the work finished, failed or was abandoned. Unknown ids are ignored. */
+  release(reservationId: string): GenerationSpending {
+    this.#reservations.delete(String(reservationId))
+    return this.spending()
   }
 
   get(id: string): GenerationJob | null {
@@ -183,32 +218,41 @@ export class GenerationJobs {
    * whichever is first — so a refused key comes back in the same call, and a slow image does
    * not hold the tool call open.
    */
-  async start(input: GenerationRequest): Promise<{ ok: true; job: GenerationJob; spending: GenerationSpending } | { ok: false; error: string }> {
+  async start(
+    input: GenerationRequest,
+    options: { reservationId?: string } = {}
+  ): Promise<{ ok: true; job: GenerationJob; spending: GenerationSpending } | StartRefused> {
     await this.load()
     const checked =
       input?.kind === 'speech' ? validateSpeech({ ...input }) : validateGeneration({ ...input }, input?.kind === 'video' ? 'video' : 'image')
-    if (!checked.ok) return { ok: false, error: checked.errors.join(' ') }
+    if (!checked.ok) return { ok: false, error: checked.errors.join(' '), reason: 'other' }
     const request = checked.request
     const provider = request.provider
     const credentials = this.#deps.credentials(provider)
     if (!credentials) {
       return {
         ok: false,
-        error: `No ${PROVIDERS[provider].label} key is set. Ask the user to add one in Settings › Providers — never ask for a key in chat.`
+        error: `No ${PROVIDERS[provider].label} key is set. Ask the user to add one in Settings › Providers — never ask for a key in chat.`,
+        reason: 'other'
       }
     }
 
     let reference: Reference | null = null
     if (request.referencePath) {
       const loaded = await this.#reference(request.referencePath)
-      if ('error' in loaded) return { ok: false, error: loaded.error }
+      if ('error' in loaded) return { ok: false, error: loaded.error, reason: 'other' }
       reference = loaded
     }
 
     // The guard's check and the reservation below are one synchronous step (no await between
     // them), so two calls racing each other cannot both fit under a limit only one fits under.
-    const refusal = spendRefusal(this.spending(), checked.estimatedCostUsd)
-    if (refusal) return { ok: false, error: refusal }
+    // A job started against a reservation draws its cost from what is held for it first; only
+    // what the reservation cannot cover is judged against the rest of the budget.
+    const held = options.reservationId !== undefined ? this.#reservations.get(String(options.reservationId)) : undefined
+    const covered = held ? Math.min(held.remainingUsd, checked.estimatedCostUsd) : 0
+    const refusal = spendRefusalOf(this.spending(), checked.estimatedCostUsd - covered)
+    if (refusal) return { ok: false, error: refusal.error, reason: refusal.reason }
+    if (held) held.remainingUsd -= covered
 
     const now = this.#now()
     const job: GenerationJob = {
@@ -232,11 +276,13 @@ export class GenerationJobs {
     } catch (error) {
       this.#jobs.delete(job.id)
       this.#spentUsd -= checked.estimatedCostUsd
+      if (held) held.remainingUsd += covered
       return {
         ok: false,
         error:
           `bay could not record this request before sending it (${messageOf(error)}), so it was not sent and nothing was charged. ` +
-          'Tell the user bay cannot write to its data folder (disk full or permissions); retrying fails the same way until that is fixed.'
+          'Tell the user bay cannot write to its data folder (disk full or permissions); retrying fails the same way until that is fixed.',
+        reason: 'other'
       }
     }
 

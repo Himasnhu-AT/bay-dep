@@ -50,9 +50,11 @@ export interface DubPlaced {
   itemIds: string[]
   /** Lines already on the track that a new one replaced. */
   replaced: number
-  /** Items whose sound was ducked or muted. */
+  /** Items whose sound was ducked or muted (a mute is the deepest duck, keyed to the dub track). */
   ducked: string[]
   muted: string[]
+  /** Ducks the originals already had that the dub's replaced: the item and the track it ducked under. */
+  replacedDucks: { itemId: string; keyTrackId: string; keyTrackName: string }[]
   /** Original items left alone because their track is locked. */
   lockedOriginals: string[]
 }
