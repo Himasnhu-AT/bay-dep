@@ -31,6 +31,7 @@ import { geminiImage } from './gemini-image'
 import { providerHttp, policyFor, type Fetch } from './http'
 import { GenerationJobs } from './jobs'
 import { KeyRing, type KeyStorage } from './keys'
+import { localGenerationBase } from './local-base'
 import { kling } from './kling'
 import { GenerationLimitsStore } from './limits'
 import { openaiImage } from './openai-image'
@@ -101,6 +102,10 @@ function whenReady(): Promise<void> {
 
 function table(): GenerationJobs {
   if (!jobs) {
+    // A checkout run against bay's stub (`BAY_GENERATION_BASE`); see `local-base.ts`.
+    const local = localGenerationBase(app.isPackaged, process.env)
+    if (local.kind === 'ignored') console.error(`[bay] generation: ${local.reason}`)
+    if (local.kind === 'local') console.log(`[bay] generation: every provider is the local stub ${local.baseUrl} (BAY_GENERATION_BASE)`)
     jobs = new GenerationJobs({
       file: join(app.getPath('userData'), 'generation-jobs.json'),
       outDir: generatedDir(),
@@ -110,8 +115,8 @@ function table(): GenerationJobs {
         kling,
         elevenlabs: withSpeech(null, elevenlabsSpeech)
       },
-      http: (provider) => providerHttp(nodeFetch, policyFor(provider), PROVIDERS[provider].label),
-      baseUrl: (provider) => `https://${PROVIDERS[provider].apiHosts[0]}`,
+      http: (provider) => providerHttp(nodeFetch, local.kind === 'local' ? local.policy : policyFor(provider), PROVIDERS[provider].label),
+      baseUrl: (provider) => (local.kind === 'local' ? local.baseUrl : `https://${PROVIDERS[provider].apiHosts[0]}`),
       credentials: (provider) => ring().get(provider),
       probe: (path) => probe(path),
       // Only a file already admitted to `bay://` — an imported asset — may be sent as a reference.
