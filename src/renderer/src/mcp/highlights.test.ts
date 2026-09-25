@@ -17,6 +17,8 @@ import { forgetTranscripts } from './transcribe'
 beforeEach(() => forgetTranscripts())
 
 const transcribed: string[] = []
+/** What the stubbed whisper returns; a test may swap it for silence and must put it back. */
+let whisperSays: TranscriptSegment[] = []
 const SEGMENTS: TranscriptSegment[] = [
   { startSeconds: 0, endSeconds: 1.5, text: ' Before the clip.' },
   { startSeconds: 1.8, endSeconds: 3, text: ' Straddles the in-point.' },
@@ -26,13 +28,14 @@ const SEGMENTS: TranscriptSegment[] = [
   { startSeconds: 8.5, endSeconds: 11.5, text: ' Third one.' },
   { startSeconds: 11.8, endSeconds: 13, text: ' Straddles the out-point.' }
 ]
+whisperSays = SEGMENTS
 
 ;(globalThis as { window?: unknown }).window = {
   bay: {
     media: {
       transcribe: async (path: string) => {
         transcribed.push(path)
-        return { ok: true, segments: SEGMENTS, model: 'ggml-base.en.bin', language: 'en' }
+        return { ok: true, segments: whisperSays, model: 'ggml-base.en.bin', language: 'en' }
       }
     }
   }
@@ -206,4 +209,24 @@ test('good picks become ranked start and end markers in one step', async () => {
   seed()
   assert.ok((await call('mark_highlights', { ends: false, highlights: [{ title: 'Only starts', fromFrame: 120, toFrame: 180 }] })).ok)
   assert.deepEqual(markers().map((m) => m.frame), [120])
+})
+
+test('a clip with no speech says so, as transcribe would; a clip with speech carries no finding', async () => {
+  seed()
+  const spoken = (await call('find_highlights', { itemId: 'clip_talk' })) as { ok: boolean; value?: Record<string, unknown> }
+  assert.ok(spoken.ok)
+  assert.equal(spoken.value?.findings, undefined, 'positive control: speech yields no finding')
+
+  forgetTranscripts()
+  whisperSays = []
+  try {
+    const silent = await call('find_highlights', { itemId: 'clip_talk' })
+    assert.ok(silent.ok, silent.ok ? '' : silent.error)
+    const value = silent.value as { findings?: { severity: string; message: string }[]; next: string }
+    assert.equal(value.findings?.[0]?.severity, 'blocking')
+    assert.match(value.next, /No speech was found/)
+  } finally {
+    whisperSays = SEGMENTS
+    forgetTranscripts()
+  }
 })

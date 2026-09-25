@@ -112,3 +112,16 @@ test('credits name an https source; the guide lists every kit and credit', () =>
   }
   assert.ok(PROMPT_KITS.filter((k) => k.credit).length >= 3)
 })
+
+test('a sentence about the reference picture is in the prompt only when a reference is sent', () => {
+  const kit = PROMPT_KITS.find((k) => k.id === 'product-hero-still')
+  assert.ok(kit?.referenceText, 'specimen: the kit must carry a reference sentence')
+  const without = fillPromptKit('product-hero-still', { product: 'a soda can', elements: 'ice shards' })
+  const withRef = fillPromptKit('product-hero-still', { product: 'a soda can', elements: 'ice shards' }, { withReference: true })
+  assert.ok(without.ok && withRef.ok)
+  assert.doesNotMatch(without.ok ? without.request.prompt : '', /as in the reference/)
+  assert.match(withRef.ok ? withRef.request.prompt : '', /exactly as in the reference/)
+  for (const k of PROMPT_KITS) {
+    assert.doesNotMatch(k.template, /as in the reference/, `${k.id}: a reference sentence belongs in referenceText`)
+  }
+})

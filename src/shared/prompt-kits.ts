@@ -45,6 +45,11 @@ export interface PromptKit {
    * its frame from that picture and refuses an `aspectRatio`, which the filled request says.
    */
   reference?: string
+  /**
+   * A sentence about the reference picture, added to the prompt only with `withReference` — a
+   * prompt that tells the model to match a picture it was never sent asks for something it cannot do.
+   */
+  referenceText?: string
   credit?: { basedOn: string; author: string; url: string }
 }
 
@@ -207,8 +212,8 @@ export const PROMPT_KITS: readonly PromptKit[] = [
     template:
       '[product] turns slowly on a hidden turntable against [backdrop], completing about half a ' +
       'turn. Studio lighting with a soft key light and a crisp rim that traces its edges; clean ' +
-      'reflections on the surface below. The camera does not move. Keep the product\'s shape, ' +
-      'colours, materials and label placement exactly as in the reference.',
+      'reflections on the surface below. The camera does not move.',
+    referenceText: 'Keep the product\'s shape, colours, materials and label placement exactly as in the reference.',
     slots: [
       { id: 'product', description: 'The product, as you would describe it to a photographer.' },
       { id: 'backdrop', description: 'The background.', default: 'a seamless mid-grey backdrop' }
@@ -291,8 +296,8 @@ export const PROMPT_KITS: readonly PromptKit[] = [
       'A bright, high-energy product key visual. [product] stands in the centre, sharp and ' +
       'perfectly lit, with [elements] bursting outwards around it. Behind it, a clean [color] ' +
       'background with one large simple shape in the same family of colours. Vivid studio light, ' +
-      'crisp reflections, saturated colour. The finished design fills the whole canvas. Keep the ' +
-      'product\'s shape, colours and label placement exactly as in the reference.',
+      'crisp reflections, saturated colour. The finished design fills the whole canvas.',
+    referenceText: 'Keep the product\'s shape, colours and label placement exactly as in the reference.',
     slots: [
       { id: 'product', description: 'The product.' },
       { id: 'elements', description: 'What flies around it ("ice shards and water droplets", "fresh citrus slices").' },
@@ -432,7 +437,8 @@ export function fillPromptKit(
     const given = values[slot]
     return typeof given === 'string' ? given.trim() : (kit.slots.find((s) => s.id === slot)?.default ?? '')
   }
-  const body = kit.template.replace(SLOT, (_match, slot: string) => valueOf(slot))
+  const filledTemplate = kit.template.replace(SLOT, (_match, slot: string) => valueOf(slot))
+  const body = options.withReference === true && kit.referenceText ? `${filledTemplate} ${kit.referenceText}` : filledTemplate
   const avoid = kit.avoid.join('; ')
   // A model with a negative-prompt field gets the exclusions there; one without gets them in words.
   const model = MODELS.find((m) => m.id === kit.model)

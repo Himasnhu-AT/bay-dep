@@ -218,7 +218,8 @@ export function resolveId(
   return {
     ok: false,
     error:
-      `No id starting with "${needle}" exists here. Ids are not guessable — call read_project ` +
-      `and copy one from its output.`
+      `No id starting with "${needle}" exists here. Ids are not guessable — copy one from the ` +
+      `output of the tool that lists them (read_project for items and tracks, browse_assets for ` +
+      `assets, read_feedback for comments).`
   }
 }

@@ -18,7 +18,7 @@ export function fillKit(args: Record<string, unknown>): Record<string, unknown> 
     ...rest,
     next:
       `Call ${filled.tool} with this request and validateOnly: true to check it and see the price` +
-      (filled.reference ? `, adding referenceAssetId — ${filled.reference}` : '') +
+      (filled.reference ? `, adding referenceAssetId — ${filled.reference.replace(/\.$/, '')}` : '') +
       '. Match aspectRatio to the timeline the result will go on.'
   }
 }

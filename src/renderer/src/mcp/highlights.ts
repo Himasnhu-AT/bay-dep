@@ -20,6 +20,7 @@ import {
   type Item
 } from '@shared/project'
 import { segmentsToCues } from '@shared/transcribe'
+import { transcriptFindings, type Finding } from '@shared/findings'
 import {
   checkPicks,
   CRITERIA,
@@ -100,14 +101,18 @@ async function sentencesOnTimeline(
   items: Item[],
   language: string | undefined,
   range: { from: number; to: number }
-): Promise<{ sentences: TimelineSentence[]; droppedAtEdges: number }> {
+): Promise<{ sentences: TimelineSentence[]; droppedAtEdges: number; findings: Finding[] }> {
   const fps = timeline().fps
   const out: Omit<TimelineSentence, 'i'>[] = []
   let droppedAtEdges = 0
+  const findings: Finding[] = []
   for (const item of items) {
     const asset = speechAsset(item)
     if (typeof asset === 'string') fail(`${asset}, so there is nothing to find highlights in.`)
     const transcript = await transcribeSource(asset.path!, language)
+    // What transcribe itself would say about this file (no speech, no words), so a highlight search
+    // over silence says why rather than only that it found no sentence.
+    findings.push(...transcriptFindings(transcript.segments))
     // Only sentences the clip plays whole: a clip cut on half a sentence starts mid-thought,
     // which is the one thing a highlight must not do.
     const speed = effectiveSpeed(item.speed)
@@ -130,7 +135,7 @@ async function sentencesOnTimeline(
     }
   }
   out.sort((a, b) => a.fromFrame - b.fromFrame)
-  return { sentences: out.map((s, i) => ({ i, ...s })), droppedAtEdges }
+  return { sentences: out.map((s, i) => ({ i, ...s })), droppedAtEdges, findings }
 }
 
 function rubric(args: Record<string, unknown>): Record<string, unknown> {
@@ -170,6 +175,7 @@ export async function findHighlights(args: Record<string, unknown>): Promise<Rec
     if (!asset.path) fail(`"${asset.name}" has no media file, so it has no speech.`)
     if (!asset.hasAudio) fail(`"${asset.name}" has no audio track, so there is nothing to find highlights in.`)
     const transcript = await transcribeSource(asset.path, language)
+    const findings = transcriptFindings(transcript.segments)
     const sentences = sentencesOf(transcript.segments).map((s, i) => ({
       i,
       startSeconds: round(s.startSeconds),
@@ -184,10 +190,11 @@ export async function findHighlights(args: Record<string, unknown>): Promise<Rec
       bounds: { startSeconds: 0, endSeconds: round(asset.durationUs / US_PER_SECOND) },
       sentenceCount: sentences.length,
       sentences,
+      ...(findings.length > 0 ? { findings } : {}),
       rubric: scaffold,
       next:
         sentences.length === 0
-          ? 'No speech was found in this file.'
+          ? (findings[0]?.message ?? 'No speech was found in this file.')
           : 'These times are seconds in the file, not the timeline. To mark picks, place the file (place_asset) and call ' +
             'find_highlights with its itemId, so the sentences come back in timeline frames for mark_highlights.'
     }
@@ -211,7 +218,7 @@ export async function findHighlights(args: Record<string, unknown>): Promise<Rec
     fromFrame: Math.max(from, Math.min(...items.map((i) => i.from))),
     toFrame: Math.min(to, Math.max(...items.map((i) => i.from + i.durationInFrames)))
   }
-  const { sentences, droppedAtEdges } = await sentencesOnTimeline(items, language, { from: bounds.fromFrame, to: bounds.toFrame })
+  const { sentences, droppedAtEdges, findings } = await sentencesOnTimeline(items, language, { from: bounds.fromFrame, to: bounds.toFrame })
   const fps = timeline().fps
   return {
     units: 'timeline frames (toFrame half-open)',
@@ -223,10 +230,11 @@ export async function findHighlights(args: Record<string, unknown>): Promise<Rec
       ? { droppedAtEdges, droppedNote: `${droppedAtEdges} sentence(s) cut by a clip edge were left out, because a highlight must not start or end mid-sentence.` }
       : {}),
     sentences,
+    ...(findings.length > 0 ? { findings } : {}),
     rubric: scaffold,
     next:
       sentences.length === 0
-        ? 'No whole sentence was found in this range.'
+        ? (findings.find((f) => f.severity === 'blocking')?.message ?? 'No whole sentence was found in this range.')
         : 'Read the sentences, choose and score clips by the rubric (each from a sentence\'s fromFrame to the same or a ' +
           'later sentence\'s toFrame), then call mark_highlights with { highlights: [{ title, fromFrame, toFrame, scores, reason }], ' +
           `focus: "${focusOf(args.focus)}", minSeconds, maxSeconds }. It refuses overlaps and out-of-range picks, naming each.`
