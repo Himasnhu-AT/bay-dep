@@ -129,3 +129,29 @@ test('head room is the footage before the in-point, not limited by frame 0', () 
   assert.equal(rippleHeadRoom({ sourceStartUs: 2_000_000, speed: 2 }, 30, true), 30)
   assert.equal(rippleHeadRoom({ sourceStartUs: 0, speed: 1 }, 30, false), Number.POSITIVE_INFINITY)
 })
+
+test('a refused head grow leaves no undo step and no unsaved mark; a legal one leaves exactly one', () => {
+  // `a` starts at the head of its footage, so it has no frames to grow into: the plan moves `a`,
+  // `b` and `c` ten frames later to make room, and then the store refuses the trim.
+  const ids = load()
+  const before = useEditor.getState()
+  assert.equal(before.dirty, false, 'the specimen starts saved, or "stays saved" proves nothing')
+  const past = before.past.length
+  const project = before.project
+  assert.ok(planRippleTrim(selectTimeline(before)!, ids.a, 'start', -10, false).ok, 'the plan must move clips first, or this tests nothing')
+  const error = applyRippleTrim(ids.a, 'start', -10)
+  assert.match(error ?? '', /refused/)
+  const after = useEditor.getState()
+  assert.equal(after.past.length, past, 'no undo step for a trim that did not happen')
+  assert.equal(after.dirty, false, 'a refused trim does not mark the project unsaved')
+  assert.equal(after.project, project, 'the project is the one it started as, not an equal copy')
+  assert.deepEqual(span(ids.a), [0, 60])
+  assert.deepEqual(span(ids.b), [60, 120])
+  assert.deepEqual(span(ids.c), [150, 180])
+
+  // The positive control: `b` has two seconds of footage before its in-point, so it may grow.
+  assert.equal(applyRippleTrim(ids.b, 'start', 50), null)
+  assert.deepEqual(span(ids.b), [60, 130])
+  assert.equal(useEditor.getState().past.length, past + 1, 'a legal grow is one undo step')
+  assert.equal(useEditor.getState().dirty, true)
+})

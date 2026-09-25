@@ -16,6 +16,7 @@ import { effectiveSpeed, findItem, itemEnd, usToFrames, type Frames, type Item, 
 import { linkedPartners, withLinked } from '@shared/links'
 import type { TrackMove } from '@shared/track-move'
 import { selectTimeline, useEditor } from '@/store/editor'
+import { refusableEdit } from './refusable'
 
 export type RippleTrimPlan =
   | {
@@ -121,37 +122,26 @@ export function applyRippleTrim(itemId: string, edge: 'start' | 'end', toFrame: 
     const before = findItem(timeline, itemId)?.item
     if (before && (edge === 'end' ? itemEnd(before) : before.from) === plan.trim.toFrame) return null
   }
-  let error: string | null = null
-  store.transact(() => {
+  // A refusal found partway — room made, then the trim refused — leaves the project as it was,
+  // the same object, so no undo step and no unsaved mark (`refusableEdit`).
+  let warning: string | null = null
+  const refused = refusableEdit(() => {
     if (plan.before.length > 0) {
       const moved = useEditor.getState().moveItemsToTracks(plan.before)
-      if ('error' in moved) {
-        error = `Could not make room: ${moved.error}`
-        return
-      }
+      if ('error' in moved) return `Could not make room: ${moved.error}`
     }
     const was = findItem(selectTimeline(useEditor.getState())!, itemId)?.item
     useEditor.getState().trimItem(itemId, edge, plan.trim.toFrame, { linked: store.linkedSelection })
     const now = findItem(selectTimeline(useEditor.getState())!, itemId)?.item
     const trimmed = was && now && (now.from !== was.from || now.durationInFrames !== was.durationInFrames)
     if (!trimmed) {
-      error = 'The trim was refused: it would run past the footage, or into a linked clip’s neighbour on another track.'
-      // Put back what was moved to make room, so a refused ripple leaves the timeline as it was.
-      if (plan.before.length > 0) {
-        const current = selectTimeline(useEditor.getState())!
-        const undo = plan.before.flatMap((move) => {
-          const original = findItem(timeline, move.itemId)
-          const trackId = findItem(current, move.itemId)?.track.id
-          return original && trackId ? [{ itemId: move.itemId, trackId, from: original.item.from }] : []
-        })
-        useEditor.getState().moveItemsToTracks(undo)
-      }
-      return
+      return 'The trim was refused: it would run past the footage, or into a linked clip’s neighbour on another track.'
     }
     if (plan.after.length > 0) {
       const moved = useEditor.getState().moveItemsToTracks(plan.after)
-      if ('error' in moved) error = `Trimmed, but the gap was left open: ${moved.error}`
+      if ('error' in moved) warning = `Trimmed, but the gap was left open: ${moved.error}`
     }
+    return null
   })
-  return error
+  return refused ?? warning
 }
