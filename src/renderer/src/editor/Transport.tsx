@@ -1,89 +1,193 @@
-import type { ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import {
+  Bookmark,
   ChevronFirst,
   ChevronLast,
+  ChevronLeft,
+  ChevronRight,
+  FastForward,
+  MoreHorizontal,
   Pause,
   Play,
-  Scissors,
+  Repeat,
+  Rewind,
   SkipBack,
   SkipForward,
-  ZoomIn,
-  ZoomOut
+  Square
 } from 'lucide-react'
-import { IconButton, Slider } from '@/components'
-import { shortcutOf } from '@/lib/commands'
+import { IconButton, Menu, useFloatingTrigger, type MenuEntry } from '@/components'
+import { cn } from '@/lib/cn'
+import { runCommand, shortcutOf, type CommandId } from '@/lib/commands'
 import { selectDuration, useEditor } from '@/store/editor'
 import { AudioMeter } from './viewer/AudioMeter'
 import { TimecodeField } from './viewer/TimecodeField'
 import { ViewerControls } from './viewer/ViewerControls'
 
-const MIN_PPF = 0.05
-const MAX_PPF = 60
-
-/** Zoom is geometric, so the slider works in log space — otherwise the useful range
- * (0.05–4 px per frame) is crushed into the first 6% of the track. */
-function ppfToSlider(ppf: number): number {
-  return (Math.log(ppf) - Math.log(MIN_PPF)) / (Math.log(MAX_PPF) - Math.log(MIN_PPF))
+/** A transport button: one command, its key in the tooltip, and a row for the overflow menu. */
+interface Control {
+  id: CommandId
+  label: string
+  icon: ReactNode
+  /** Kept on the row longest when lowest; see `SLOTS`. */
+  slot: number
+  disabled?: boolean
+  active?: boolean
 }
 
-function sliderToPpf(value: number): number {
-  return Math.exp(Math.log(MIN_PPF) + value * (Math.log(MAX_PPF) - Math.log(MIN_PPF)))
+/**
+ * What the row shows at its measured width, and in what order things leave it. The row sits under
+ * the viewer, which at a 1280px window with the library, inspector and agent dock open is barely
+ * 330px, and at 1440 with nothing docked over 800px — so it is measured (ResizeObserver) and each
+ * slot needs this many pixels of row before it shows. What does not fit goes into the ⋯ menu,
+ * never off the edge. The timecode and meter cannot be menu rows; the viewer's header shows the
+ * playhead's timecode anyway.
+ *
+ *   always     play/pause, previous/next frame, the viewer options and ⋯
+ *   1          go to start / end
+ *   2          the timecode field (click to type a time)
+ *   3          In and Out
+ *   4          J and L: play backwards / forwards, faster each press
+ *   5          Loop
+ *   6          previous / next edit
+ *   7          the master meter
+ *   8          previous / next marker
+ *   9          Stop (K)
+ *   10         the timeline length after the timecode
+ */
+const SLOT_WIDTH: Record<number, number> = {
+  1: 250,
+  2: 360,
+  3: 430,
+  4: 490,
+  5: 530,
+  6: 590,
+  7: 660,
+  8: 730,
+  9: 770,
+  10: 860
 }
 
-/*
- * The row is a container, and it gives up controls from the least needed as it narrows, so it
- * never overflows (it did at 826 px, the preview column of a 1440 px window: the column scrolled
- * sideways and Zoom In was cut off). Measured against the row's content width, in the order
- * they go:
- *
- *   1. < 56rem  the timeline zoom slider: the timeline's own toolbar has the same slider.
- *   2. < 48rem  the timeline length after the timecode (the status bar shows it), and the master
- *               meter narrows from 88 to 48 px.
- *   3. < 42rem  Crop and Full-screen as buttons: both stay in the Viewer options menu (and the
- *               View menu, and their shortcuts).
- *   4. < 36rem  the master meter.
- *   5. < 32rem  timeline Zoom out / Zoom in: the timeline toolbar and their shortcuts keep them.
- *
- * The meter used to go first, below 56rem — which is every default window: at 1440 px the row is
- * 826–874 px, so the one thing that tells you the mix is clipping was never on screen. It reports
- * something nothing else in the window does; the slider and the length are duplicated elsewhere.
- *
- * What never goes: go to start/end, frame step, play, split, the timecode, viewer zoom and the
- * Viewer options menu, which are how you drive the transport. They fit in about 26rem. Below
- * that the row clips rather than scrolls (`overflow-x-clip`); nothing in bay makes the column
- * that narrow. Each breakpoint has slack over the widths it was set from, because a timecode
- * gets wider at 100 fps and above.
+function useRowWidth(ref: React.RefObject<HTMLElement | null>): number {
+  const [width, setWidth] = useState(0)
+  useEffect(() => {
+    const element = ref.current
+    if (!element) return
+    setWidth(element.clientWidth)
+    const observer = new ResizeObserver(() => setWidth(element.clientWidth))
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [ref])
+  return width
+}
+
+function Separator(): ReactNode {
+  return <span aria-hidden="true" className="mx-0.5 h-4 w-px shrink-0 bg-line-strong" />
+}
+
+/**
+ * The transport under the viewer, in Resolve's groups: navigation and JKL play, Loop, In/Out,
+ * markers; then the timecode, the meter and the viewer's options. Every button runs the registry
+ * command its key runs. Timeline zoom is not here — it is the timeline toolbar's.
  */
 export function Transport(): ReactNode {
+  const row = useRef<HTMLDivElement>(null)
+  const width = useRowWidth(row)
+  // Before the first measure, show everything the default window has room for.
+  const fits = (slot: number): boolean => width === 0 || width >= (SLOT_WIDTH[slot] ?? 0)
   const playing = useEditor((state) => state.playing)
+  const loop = useEditor((state) => state.loop)
   const duration = useEditor(selectDuration)
-  const pixelsPerFrame = useEditor((state) => state.pixelsPerFrame)
   const togglePlay = useEditor((state) => state.togglePlay)
-  const setPlayhead = useEditor((state) => state.setPlayhead)
-  const nudgePlayhead = useEditor((state) => state.nudgePlayhead)
-  const zoomBy = useEditor((state) => state.zoomBy)
-  const setPixelsPerFrame = useEditor((state) => state.setPixelsPerFrame)
-  const splitAt = useEditor((state) => state.splitAt)
-
+  const overflow = useFloatingTrigger('menu')
   const empty = duration === 0
 
+  const control = (id: CommandId, label: string, icon: ReactNode, slot: number, extra: Partial<Control> = {}): Control => ({
+    id,
+    label,
+    icon,
+    slot,
+    ...extra
+  })
+  const toStart = control('playback.toStart', 'Go to start', <ChevronFirst className="size-4" />, 1)
+  const prevEdit = control('playback.prevEdit', 'Previous edit', <SkipBack className="size-3.5" />, 6)
+  const reverse = control('playback.shuttleReverse', 'Play backwards (faster each press)', <Rewind className="size-3.5" />, 4, {
+    disabled: empty
+  })
+  const stop = control('playback.shuttleStop', 'Stop', <Square className="size-3" />, 9, { disabled: empty })
+  const forward = control('playback.shuttleForward', 'Play forwards (faster each press)', <FastForward className="size-3.5" />, 4, {
+    disabled: empty
+  })
+  const nextEdit = control('playback.nextEdit', 'Next edit', <SkipForward className="size-3.5" />, 6)
+  const toEnd = control('playback.toEnd', 'Go to end', <ChevronLast className="size-4" />, 1)
+  const loopControl = control('playback.toggleLoop', loop ? 'Loop on' : 'Loop off', <Repeat className="size-3.5" />, 5, {
+    active: loop
+  })
+  const markIn = control('mark.setIn', 'Mark In', <span className="font-mono text-[13px] leading-none font-semibold">[</span>, 3)
+  const markOut = control('mark.setOut', 'Mark Out', <span className="font-mono text-[13px] leading-none font-semibold">]</span>, 3)
+  const prevMarker = control(
+    'playback.prevMarker',
+    'Previous marker',
+    <span className="flex items-center">
+      <ChevronLeft className="-mr-0.5 size-2.5" />
+      <Bookmark className="size-3" />
+    </span>,
+    8
+  )
+  const nextMarker = control(
+    'playback.nextMarker',
+    'Next marker',
+    <span className="flex items-center">
+      <Bookmark className="size-3" />
+      <ChevronRight className="-ml-0.5 size-2.5" />
+    </span>,
+    8
+  )
+
+  const all = [toStart, prevEdit, reverse, stop, forward, nextEdit, toEnd, loopControl, markIn, markOut, prevMarker, nextMarker]
+  const hidden = all.filter((c) => !fits(c.slot))
+
+  const button = (c: Control): ReactNode =>
+    fits(c.slot) ? (
+      <IconButton
+        key={c.id}
+        label={c.label}
+        shortcut={shortcutOf(c.id)}
+        tooltipSide="top"
+        active={c.active}
+        disabled={c.disabled}
+        icon={c.icon}
+        onClick={() => runCommand(c.id, 'ui')}
+      />
+    ) : null
+
+  const overflowItems: MenuEntry[] = hidden.map((c) => ({
+    label: c.label,
+    icon: c.icon,
+    disabled: c.disabled,
+    ...(c.active !== undefined ? { checked: c.active } : {}),
+    ...(shortcutOf(c.id) ? { shortcut: shortcutOf(c.id) } : {}),
+    onSelect: () => void runCommand(c.id, 'ui')
+  }))
+
   return (
-    <div className="@container flex h-9 min-w-0 shrink-0 items-center gap-2 overflow-x-clip border-y border-line bg-surface-1 px-2">
-      <div className="flex items-center gap-0.5">
-        <IconButton
-          label="Go to start"
-          shortcut={shortcutOf('playback.toStart')}
-          tooltipSide="top"
-          icon={<ChevronFirst className="size-4" />}
-          onClick={() => setPlayhead(0)}
-        />
+    <div
+      ref={row}
+      role="toolbar"
+      aria-label="Transport"
+      className="flex h-9 min-w-0 shrink-0 items-center gap-1 overflow-x-clip border-y border-line bg-chrome px-1.5"
+    >
+      <div role="group" aria-label="Play" className="flex shrink-0 items-center gap-0.5">
+        {button(toStart)}
+        {button(prevEdit)}
         <IconButton
           label="Previous frame"
           shortcut={shortcutOf('playback.stepBack')}
           tooltipSide="top"
-          icon={<SkipBack className="size-3.5" />}
-          onClick={() => nudgePlayhead(-1)}
+          icon={<ChevronLeft className="size-4" />}
+          onClick={() => runCommand('playback.stepBack', 'ui')}
         />
+        {button(reverse)}
+        {button(stop)}
         <IconButton
           label={playing ? 'Pause' : 'Play'}
           shortcut={shortcutOf('playback.toggle')}
@@ -94,75 +198,67 @@ export function Transport(): ReactNode {
           icon={playing ? <Pause className="size-4" /> : <Play className="size-4" />}
           onClick={togglePlay}
         />
+        {button(forward)}
         <IconButton
           label="Next frame"
           shortcut={shortcutOf('playback.stepForward')}
           tooltipSide="top"
-          icon={<SkipForward className="size-3.5" />}
-          onClick={() => nudgePlayhead(1)}
+          icon={<ChevronRight className="size-4" />}
+          onClick={() => runCommand('playback.stepForward', 'ui')}
         />
-        <IconButton
-          label="Go to end"
-          shortcut={shortcutOf('playback.toEnd')}
-          tooltipSide="top"
-          icon={<ChevronLast className="size-4" />}
-          onClick={() => setPlayhead(duration)}
-        />
+        {button(nextEdit)}
+        {button(toEnd)}
       </div>
 
-      <span aria-hidden="true" className="h-4 w-px bg-line" />
+      {fits(5) && (
+        <>
+          <Separator />
+          {button(loopControl)}
+        </>
+      )}
 
-      <IconButton
-        label="Split at playhead"
-        shortcut={shortcutOf('clip.split')}
-        tooltipSide="top"
-        icon={<Scissors className="size-3.5" />}
-        disabled={empty}
-        onClick={() => splitAt()}
-      />
+      {fits(3) && (
+        <>
+          <Separator />
+          <div role="group" aria-label="Mark" className="flex shrink-0 items-center gap-0.5">
+            {button(markIn)}
+            {button(markOut)}
+          </div>
+        </>
+      )}
 
-      <TimecodeField />
+      {fits(8) && (
+        <>
+          <Separator />
+          <div role="group" aria-label="Markers" className="flex shrink-0 items-center gap-0.5">
+            {button(prevMarker)}
+            {button(nextMarker)}
+          </div>
+        </>
+      )}
 
-      {/* Kept longer than anything that is duplicated elsewhere (see the list above Transport):
-          compact below 48rem, gone only below 36rem. */}
-      <div className="hidden @xl:flex">
-        <AudioMeter className="w-12 @3xl:w-[88px]" />
-      </div>
+      {fits(2) ? <TimecodeField showDuration={fits(10)} /> : <span className="flex-1" />}
 
-      <ViewerControls />
+      {fits(7) && (
+        <div className="flex shrink-0">
+          <AudioMeter className={cn(fits(10) ? 'w-[88px]' : 'w-12')} />
+        </div>
+      )}
 
-      <span aria-hidden="true" className="hidden h-4 w-px bg-line @lg:block" />
+      <ViewerControls roomy={fits(10)} />
 
-      {/* In a 1024px window the row runs out of room, and flex squeezed this group first,
-          leaving the zoom slider as a bare thumb with no track — a control that looked broken.
-          Now the slider goes below 56rem of row and the buttons below 32rem (see the list above
-          Transport); while the slider shows, the group keeps its width. */}
-      <div className="hidden shrink-0 items-center gap-1 @lg:flex @4xl:w-[168px]">
-        <IconButton
-          label="Zoom out"
-          shortcut={shortcutOf('timeline.zoomOut')}
-          tooltipSide="top"
-          icon={<ZoomOut className="size-3.5" />}
-          onClick={() => zoomBy(1 / 1.25)}
-        />
-        <Slider
-          label="Timeline zoom"
-          min={0}
-          max={1}
-          step={0.001}
-          value={ppfToSlider(pixelsPerFrame)}
-          onInput={(value) => setPixelsPerFrame(sliderToPpf(value))}
-          onCommit={(value) => setPixelsPerFrame(sliderToPpf(value))}
-          className="hidden flex-1 @4xl:flex"
-        />
-        <IconButton
-          label="Zoom in"
-          shortcut={shortcutOf('timeline.zoomIn')}
-          tooltipSide="top"
-          icon={<ZoomIn className="size-3.5" />}
-          onClick={() => zoomBy(1.25)}
-        />
-      </div>
+      {hidden.length > 0 && (
+        <>
+          <IconButton
+            {...overflow.triggerProps}
+            label="More transport controls"
+            tooltipSide="top"
+            active={overflow.open}
+            icon={<MoreHorizontal className="size-3.5" />}
+          />
+          <Menu {...overflow.surfaceProps} label="More transport controls" side="top" align="end" items={overflowItems} />
+        </>
+      )}
     </div>
   )
 }
