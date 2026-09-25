@@ -17,7 +17,8 @@
  * (CLAUDE.md, "The in-app agent's sandbox"). Codex has no `--tools` allow-list, so isolation is
  * three layers:
  *
- * - **Its own `CODEX_HOME`** (`<userData>/agent-codex`), holding a `config.toml` bay writes on
+ * - **Its own `CODEX_HOME`** (`<userData>/.agent-codex` — hidden, so the in-app agent's path
+ *   checks refuse it as they refuse any hidden folder), holding a `config.toml` bay writes on
  *   every start whose only MCP server is bay, and a link to the user's `auth.json` for the login
  *   — nothing else of `~/.codex`. The user's own MCP servers, plugins, rules, memories and
  *   AGENTS.md live in *their* `CODEX_HOME` and are never read.
@@ -33,21 +34,25 @@
  */
 
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import {
   existsSync,
   lstatSync,
   mkdirSync,
   readdirSync,
+  readFileSync,
+  readlinkSync,
+  renameSync,
   rmSync,
+  statSync,
   symlinkSync,
-  unlinkSync,
   writeFileSync
 } from 'node:fs'
 import { homedir, setPriority } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import type { AgentEvent } from '@shared/agent'
 import { TOOLS } from '@shared/mcp'
+import { typedText } from '@shared/pins'
 import { skillSegments, type BaySkill } from '@shared/skills'
 import { AGENT_NICENESS, bayMcpServer, childEnv, killTree, TURN_TIMEOUT_MS } from './cli'
 import { codexToAgentEvents, newCodexStreamState, parseCodexLine, type CodexStreamState } from './codex-stream'
@@ -65,9 +70,19 @@ export interface CodexOptions {
   systemPrompt: string
   /** bay's `CODEX_HOME` for the agent — never the user's. */
   codexHome: string
+  /**
+   * The user's own `CODEX_HOME`, whose `auth.json` bay's links to. When given, the link is
+   * checked after every turn and on stop (`reconcileCodexAuth`).
+   */
+  authSource?: string
+  /** How long a turn may run. `TURN_TIMEOUT_MS` unless a test needs to see one run out. */
+  turnTimeoutMs?: number
 }
 
-/** The user's own Codex home, where their login lives. Read from, never written to. */
+/**
+ * The user's own Codex home, where their login lives. Read from, and written to in exactly one
+ * case: handing back a login Codex refreshed through bay's link (`reconcileCodexAuth`).
+ */
 export function userCodexHome(env: NodeJS.ProcessEnv = process.env, home: string = homedir()): string {
   const set = env['CODEX_HOME']?.trim()
   return set ? set : join(home, '.codex')
@@ -183,20 +198,125 @@ export function codexArgs(threadId: string | null, cwd: string, images: readonly
  * The environment for Codex's process: the Claude runtimes' base (no `ELECTRON_RUN_AS_NODE`),
  * plus bay's `CODEX_HOME`, and a `HOME` inside it so `~/.agents/skills` is bay's empty folder
  * rather than the user's skills.
+ *
+ * Without `CODEX_API_KEY` and `OPENAI_API_KEY`: bay borrows the ChatGPT login, and a key left in
+ * the shell that launched bay would otherwise be what Codex spends — billing an API account the
+ * user never chose for this, with nothing on screen to say so.
  */
 export function codexEnv(codexHome: string, base: NodeJS.ProcessEnv = process.env): Record<string, string> {
   const env = childEnv(base)
+  delete env['CODEX_API_KEY']
+  delete env['OPENAI_API_KEY']
   env['CODEX_HOME'] = codexHome
   env['HOME'] = join(codexHome, 'home')
   return env
 }
 
+/** Where bay records the login it linked, so a later check can tell whose change a change is. */
+const AUTH_RECORD = 'bay-auth-link.json'
+
+/** A file's identity for "has it changed since": modification time to the nanosecond, and size. */
+function fileStamp(path: string): { mtimeNs: string; size: number } | null {
+  try {
+    const stat = statSync(path, { bigint: true })
+    return { mtimeNs: stat.mtimeNs.toString(), size: Number(stat.size) }
+  } catch {
+    return null
+  }
+}
+
+function readRecord(codexHome: string): { mtimeNs: string; size: number } | null {
+  try {
+    const value = JSON.parse(readFileSync(join(codexHome, AUTH_RECORD), 'utf8')) as { mtimeNs?: unknown; size?: unknown }
+    return typeof value.mtimeNs === 'string' && typeof value.size === 'number'
+      ? { mtimeNs: value.mtimeNs, size: value.size }
+      : null
+  } catch {
+    return null
+  }
+}
+
+/** Link `<codexHome>/auth.json` to the user's login and record what that login looked like. */
+function relink(codexHome: string, source: string): void {
+  const target = join(codexHome, 'auth.json')
+  rmSync(target, { force: true })
+  if (!existsSync(source)) {
+    rmSync(join(codexHome, AUTH_RECORD), { force: true })
+    return
+  }
+  symlinkSync(source, target)
+  writeFileSync(join(codexHome, AUTH_RECORD), JSON.stringify(fileStamp(source)))
+}
+
+export type AuthReconciled =
+  /** The link is intact; nothing to do beyond noting the login's current state. */
+  | 'linked'
+  /** Codex had replaced the link with a refreshed login, and the user's was as bay left it: handed back. */
+  | 'returned'
+  /** Codex had replaced the link, but the user's login changed meanwhile (or bay cannot prove it did not): theirs wins. */
+  | 'discarded'
+  /** There was no link, or it pointed elsewhere; it points at the user's login again. */
+  | 'relinked'
+
+/**
+ * Put bay's `auth.json` back to being a link to the user's, without losing a refreshed login.
+ *
+ * Codex writes its token by renaming a new file over `auth.json`. Through a link, that replaces
+ * the *link* with a regular file holding a newly rotated refresh token, while the user's own
+ * `~/.codex/auth.json` keeps the old one — which the server has since retired, so their terminal
+ * `codex` would fail to refresh and make them sign in again.
+ *
+ * So after every turn: if the link is now a file, and the user's login is exactly as it was when
+ * bay linked it (modification time and size, recorded at link time), the new login is written
+ * back over theirs — atomically, mode 0600 — and the link restored. If theirs changed meanwhile
+ * (they signed in again, or their own `codex` refreshed it), theirs is newer than anything bay
+ * holds: bay's copy is discarded. **This is the only write bay makes to the user's Codex home.**
+ */
+export function reconcileCodexAuth(codexHome: string, authSource: string): AuthReconciled {
+  const source = join(authSource, 'auth.json')
+  const target = join(codexHome, 'auth.json')
+  let kind: 'link' | 'file' | 'none' = 'none'
+  try {
+    const stat = lstatSync(target)
+    kind = stat.isSymbolicLink() ? 'link' : stat.isFile() ? 'file' : 'none'
+  } catch {
+    // Not there.
+  }
+
+  if (kind === 'link' && readlinkSync(target) === source) {
+    // Codex may also refresh *through* the link, which changes the user's file legitimately;
+    // noting its state now keeps that from reading as the user's own change next time.
+    const stamp = fileStamp(source)
+    if (stamp) writeFileSync(join(codexHome, AUTH_RECORD), JSON.stringify(stamp))
+    return 'linked'
+  }
+
+  if (kind === 'file') {
+    const record = readRecord(codexHome)
+    const now = fileStamp(source)
+    const unchanged = record !== null && now !== null && record.mtimeNs === now.mtimeNs && record.size === now.size
+    if (unchanged) {
+      const contents = readFileSync(target)
+      const temp = join(dirname(source), `.auth.json.bay-${randomBytes(6).toString('hex')}`)
+      writeFileSync(temp, contents, { mode: 0o600 })
+      renameSync(temp, source)
+      relink(codexHome, source)
+      return 'returned'
+    }
+    relink(codexHome, source)
+    return 'discarded'
+  }
+
+  relink(codexHome, source)
+  return 'relinked'
+}
+
 /**
  * Write the agent's `CODEX_HOME`: the config, and a link to the user's login.
  *
- * A **link**, not a copy. Codex refreshes its token in place; a copy would refresh on its own and
- * could leave the user's `~/.codex/auth.json` holding a refresh token that has since been rotated
- * out. Recreated on every start, so a link Codex replaced with a file is put back.
+ * A **link**, not a copy, so a login refreshed by the user's own `codex` reaches bay's at once.
+ * A refresh by bay's Codex that replaced the link with a file is handed back first
+ * (`reconcileCodexAuth`) — bay may have quit before the turn's own check ran.
  */
 export function prepareCodexHome(
   codexHome: string,
@@ -205,19 +325,13 @@ export function prepareCodexHome(
 ): { ok: true } | { ok: false; error: string } {
   mkdirSync(join(codexHome, 'home'), { recursive: true })
   writeFileSync(join(codexHome, 'config.toml'), config)
-  // Instructions are `developer_instructions`; an AGENTS.md here would be read alongside them.
+  // Instructions are `developer_instructions`; an AGENTS.md here — or the override Codex reads
+  // in its place — would be read alongside them.
   rmSync(join(codexHome, 'AGENTS.md'), { force: true })
+  rmSync(join(codexHome, 'AGENTS.override.md'), { force: true })
 
   const source = join(authSource, 'auth.json')
-  const target = join(codexHome, 'auth.json')
-  let present = false
-  try {
-    lstatSync(target)
-    present = true
-  } catch {
-    // Not there yet.
-  }
-  if (present) unlinkSync(target)
+  reconcileCodexAuth(codexHome, authSource)
   if (!existsSync(source)) {
     return {
       ok: false,
@@ -226,23 +340,63 @@ export function prepareCodexHome(
         `terminal once, then start the agent again.`
     }
   }
-  symlinkSync(source, target)
   return { ok: true }
 }
 
 /**
- * The message with the instructions of every bay skill it names (`/captions`, anywhere, several
- * at once) put in front of it, each in a `<bay-skill>` tag the system prompt tells the model about.
- * A message naming none is returned unchanged. Only bay's own skills count — `/etc/hosts` is prose.
+ * Move an agent home from the folder bay used to use (`<userData>/agent-codex`, visible, so the
+ * in-app agent's path checks did not refuse it) to the hidden one, then remove the old folder.
+ *
+ * It held only what bay writes on every start — the config, the login link — and Codex's
+ * `sessions/`, which are moved so an earlier conversation's transcript can still be exported. A
+ * refreshed login left there is handed back first, under the same rule as after a turn.
  */
-export function withSkills(text: string): string {
+export function migrateCodexHome(oldHome: string, newHome: string, authSource: string): void {
+  if (!existsSync(oldHome)) return
+  if (lstatSync(join(oldHome, 'auth.json'), { throwIfNoEntry: false })) reconcileCodexAuth(oldHome, authSource)
+  const sessions = join(oldHome, 'sessions')
+  if (existsSync(sessions)) moveInto(sessions, join(newHome, 'sessions'))
+  rmSync(oldHome, { recursive: true, force: true })
+}
+
+/** Move `from`'s contents into `to`, merging folders; a file already at the destination is kept. */
+function moveInto(from: string, to: string): void {
+  if (!existsSync(to)) {
+    mkdirSync(dirname(to), { recursive: true })
+    renameSync(from, to)
+    return
+  }
+  for (const entry of readdirSync(from, { withFileTypes: true })) {
+    const source = join(from, entry.name)
+    const target = join(to, entry.name)
+    if (entry.isDirectory()) moveInto(source, target)
+    else if (!existsSync(target)) renameSync(source, target)
+  }
+}
+
+/**
+ * The message with the instructions of every bay skill the *user typed* (`/captions`, anywhere,
+ * several at once) put in front of it, each in a `<bay-skill>` tag the system prompt tells the
+ * model about. A message naming none is returned unchanged but for the neutralising below. Only
+ * bay's own skills count — `/etc/hosts` is prose.
+ *
+ * Three things keep the tag bay's:
+ * - Skills are read from `typedText`, so a `/slug` inside a pinned asset's or clip's name — text
+ *   bay quotes, not text the user wrote — loads nothing.
+ * - Every `<bay-skill` or `</bay-skill` in the message itself becomes `‹bay-skill`, so a name, a
+ *   pasted transcript or the user's own text cannot open or close a block.
+ * - Real blocks carry `nonce`, random per message; the system prompt says only blocks at the top
+ *   carrying the first one's nonce count. Text written before this message cannot know it.
+ */
+export function withSkills(text: string, nonce: string = randomBytes(12).toString('hex')): string {
+  const safe = text.replace(/<(?=\s*\/?\s*bay-skill)/gi, '‹')
   const named: BaySkill[] = []
-  for (const part of skillSegments(text)) {
+  for (const part of skillSegments(typedText(text))) {
     if (part.skill && !named.includes(part.skill)) named.push(part.skill)
   }
-  if (named.length === 0) return text
-  const blocks = named.map((skill) => `<bay-skill name="${skill.slug}">\n${skill.body}\n</bay-skill>`)
-  return `${blocks.join('\n\n')}\n\n${text}`
+  if (named.length === 0) return safe
+  const blocks = named.map((skill) => `<bay-skill name="${skill.slug}" nonce="${nonce}">\n${skill.body}\n</bay-skill>`)
+  return `${blocks.join('\n\n')}\n\n${safe}`
 }
 
 /** The rollout file Codex wrote for a thread, found by id — never "the newest file". */
@@ -300,8 +454,12 @@ export class CodexAgentRuntime implements HostedAgentRuntime {
 
   send(text: string, images: readonly string[] = []): string {
     const runId = randomUUID()
-    // One turn at a time: a second send while one runs abandons the first, as the CLI's does.
-    if (this.#runId) this.stop()
+    // One turn at a time: a second send abandons the first, as the CLI's does — and kills its
+    // process whether or not a turn is still counted as running. Keyed on `#runId` alone, a turn
+    // that had already been failed (a timeout) left its codex running, and assigning the next
+    // one over `#child` dropped the only handle on it: a detached process calling bay's tools,
+    // outliving quit.
+    if (this.#runId || this.#child) this.stop()
     this.#runId = runId
     this.#stream = newCodexStreamState(this.#threadId)
     this.#emit({ type: 'started', runId })
@@ -343,6 +501,8 @@ export class CodexAgentRuntime implements HostedAgentRuntime {
     // line is the `turn.completed` that says the turn succeeded.
     child.on('close', (code) => {
       if (this.#child === child) this.#child = null
+      // After every turn, however it ended: a login Codex refreshed goes back to the user.
+      this.#reconcileAuth()
       // Exiting without `turn.completed`/`turn.failed` is a failure whatever the code says: the
       // panel is waiting for an answer that is never coming.
       if (this.#runId === runId) {
@@ -354,9 +514,12 @@ export class CodexAgentRuntime implements HostedAgentRuntime {
       }
     })
 
+    // Stopped means killed: failing the turn alone told the panel it had stopped while codex
+    // carried on calling tools against the timeline.
+    const timeout = this.#options.turnTimeoutMs ?? TURN_TIMEOUT_MS
     this.#timer = setTimeout(
-      () => this.#fail(`The turn ran past ${Math.round(TURN_TIMEOUT_MS / 60000)} minutes and was stopped.`),
-      TURN_TIMEOUT_MS
+      () => this.#abort(`The turn ran past ${Math.round(timeout / 60000)} minutes and was stopped.`),
+      timeout
     )
     child.stdin.on('error', () => {
       // The process died before reading its prompt; `exit` reports that.
@@ -393,11 +556,25 @@ export class CodexAgentRuntime implements HostedAgentRuntime {
     if (runId) this.#emit({ type: 'done', runId, reason: 'error', message })
   }
 
+  #reconcileAuth(): void {
+    if (!this.#options.authSource) return
+    try {
+      reconcileCodexAuth(this.#options.codexHome, this.#options.authSource)
+    } catch (error) {
+      console.warn(`[bay] could not check the Codex login link: ${(error as Error).message}`)
+    }
+  }
+
   stop(): void {
-    this.#fail('Stopped.')
+    this.#abort('Stopped.')
+  }
+
+  #abort(message: string): void {
+    this.#fail(message)
     killTree(this.#child?.pid)
     this.#child = null
     this.#buffer = ''
+    this.#reconcileAuth()
   }
 
   dispose(): void {
@@ -405,6 +582,7 @@ export class CodexAgentRuntime implements HostedAgentRuntime {
     this.#listeners.clear()
     killTree(this.#child?.pid)
     this.#child = null
+    this.#reconcileAuth()
   }
 }
 

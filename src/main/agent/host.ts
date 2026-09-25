@@ -16,7 +16,7 @@ import type { AgentEntry, AgentEvent, AgentProvider, AgentProviderStatus } from 
 import { claudeProjectFolder, transcriptFolderName, transcriptMarkdown } from '@shared/transcript'
 import { AGENT_SOCKET_NAME, socketPathIn } from '../mcp/socket-path'
 import { CliAgentRuntime } from './cli'
-import { CodexAgentRuntime, codexConfig, findCodexSession, prepareCodexHome, userCodexHome } from './codex'
+import { CodexAgentRuntime, codexConfig, findCodexSession, migrateCodexHome, prepareCodexHome, userCodexHome } from './codex'
 import { codexNotFoundMessage, findClaude, findCodex, notFoundMessage } from './locate'
 import { searchDirs } from '../search-dirs'
 import { agentSystemPrompt } from './prompt'
@@ -47,9 +47,25 @@ function workspacePath(): string {
   return join(app.getPath('userData'), 'agent-workspace')
 }
 
-/** The Codex runtime's own `CODEX_HOME` — bay's config and a link to the login, nothing else. */
+/**
+ * The Codex runtime's own `CODEX_HOME` — bay's config, a link to the login, and Codex's sessions.
+ *
+ * Hidden (`.agent-codex`), so the in-app agent's path checks (`mcp/policy.ts`) refuse it like any
+ * hidden folder: it is under home, and a visible name let a tool call write a composition or an
+ * export into the agent's own config. The folder it used to be is moved here once per launch.
+ */
+let codexHomeMigrated = false
 function codexHomePath(): string {
-  return join(app.getPath('userData'), 'agent-codex')
+  const home = join(app.getPath('userData'), '.agent-codex')
+  if (!codexHomeMigrated) {
+    codexHomeMigrated = true
+    try {
+      migrateCodexHome(join(app.getPath('userData'), 'agent-codex'), home, userCodexHome())
+    } catch (error) {
+      console.warn(`[bay] could not move the old Codex agent folder: ${(error as Error).message}`)
+    }
+  }
+  return home
 }
 
 function workspace(): string {
@@ -118,7 +134,7 @@ export async function startAgent(
       const codexHome = codexHomePath()
       const prepared = prepareCodexHome(codexHome, codexConfig(base), userCodexHome())
       if (!prepared.ok) return prepared
-      created = new CodexAgentRuntime({ ...base, binary: located.path, codexHome })
+      created = new CodexAgentRuntime({ ...base, binary: located.path, codexHome, authSource: userCodexHome() })
     } else {
       // The SDK runtime prefers the Claude Code binary the SDK ships, pinned to the version it
       // was built against. Only when there is none does it need the user's own.

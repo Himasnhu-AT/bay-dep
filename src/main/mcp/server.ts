@@ -21,7 +21,7 @@ import { pickExecutorWindow } from './executor-target'
 import { resourceBody } from './resources'
 import { substituteFileArgs } from './file-args'
 import { AGENT_SOCKET_NAME, socketPathIn } from './socket-path'
-import { checkCallPolicy, type CallOrigin, type PolicyEnv } from './policy'
+import { checkCallPolicy, realpathNearest, type CallOrigin, type PolicyEnv } from './policy'
 import { open, readFile } from 'node:fs/promises'
 import { realpathSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
@@ -255,9 +255,12 @@ export async function startMcpServer(): Promise<SocketStatus> {
 
 let runningAgent: RunningSocket | null = null
 
-/** Where the file checks look: home, and the temp folders by both their names. */
+/**
+ * Where the file checks look: home, and the temp folders, each by both their names — a path is
+ * judged by where it really leads too (`realpath`), so the real name of each root must count.
+ */
 function policyEnv(): PolicyEnv {
-  const temps = new Set(['/tmp', tmpdir()])
+  const temps = new Set(['/tmp', tmpdir(), homedir()])
   for (const path of [...temps]) {
     try {
       temps.add(realpathSync(path))
@@ -268,6 +271,7 @@ function policyEnv(): PolicyEnv {
   return {
     home: homedir(),
     roots: [...temps],
+    realpath: realpathNearest,
     confirm: async (message, detail) => {
       const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().find((w) => !isCompositionWindow(w))
       const options = {

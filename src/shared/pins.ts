@@ -51,6 +51,26 @@ export function pinLabel(pin: Pin, fps: number): string {
   }
 }
 
+/** The line a pinned block opens with. `typedText` finds the block by it. */
+export const PINNED_HEADER = 'I have pinned these for this request:'
+const RANGE_RULE_START = 'Work only inside the pinned time range'
+
+/**
+ * A name as it may appear in the pinned block: one line, and no angle brackets.
+ *
+ * Asset, clip and track names are not the user's words — a file someone sent, a clip an agent
+ * named — and the block quotes them into the message the model reads as the user's. A name
+ * holding `<bay-skill …>` would otherwise arrive looking like instructions bay attached, and one
+ * holding a newline could end the block and start text that reads as typed. The look-alikes
+ * (‹ ›) keep the name recognisable to a person without being markup to anyone.
+ */
+export function pinText(name: string): string {
+  return name
+    .replace(/</g, '‹')
+    .replace(/>/g, '›')
+    .replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, ' ')
+}
+
 /**
  * The message as the agent receives it: a context block, then what the user wrote.
  *
@@ -69,10 +89,10 @@ export function composeMessage(text: string, pins: readonly Pin[], fps: number):
   const lines = pins.map((pin) => {
     switch (pin.kind) {
       case 'asset':
-        return `- Asset "${pin.name}" (${pin.assetKind}, assetId ${pin.assetId}).`
+        return `- Asset "${pinText(pin.name)}" (${pinText(pin.assetKind)}, assetId ${pin.assetId}).`
       case 'clip':
         return (
-          `- Clip "${pin.name}" on ${pin.trackName} (itemId ${pin.itemId}), ` +
+          `- Clip "${pinText(pin.name)}" on ${pinText(pin.trackName)} (itemId ${pin.itemId}), ` +
           `${tc(pin.fromFrame)}–${tc(pin.toFrame)} (frames ${pin.fromFrame}–${pin.toFrame}).`
         )
       case 'range':
@@ -87,7 +107,7 @@ export function composeMessage(text: string, pins: readonly Pin[], fps: number):
     ranges.length > 0
       ? [
           '',
-          'Work only inside the pinned time range' +
+          RANGE_RULE_START +
             (ranges.length > 1 ? 's' : '') +
             '. Do not move, trim, delete or add anything outside ' +
             (ranges.length > 1 ? 'them' : 'it') +
@@ -96,7 +116,28 @@ export function composeMessage(text: string, pins: readonly Pin[], fps: number):
             'instead of doing it.'
         ]
       : []
-  return ['I have pinned these for this request:', ...lines, ...rule, '', text].join('\n')
+  return [PINNED_HEADER, ...lines, ...rule, '', text].join('\n')
+}
+
+/**
+ * What the user typed, out of a message `composeMessage` wrote: a leading `/skill`, and the text
+ * after the pinned block — never the block itself. A `/captions` inside a pinned clip's name is
+ * part of a name, not a request, so whatever acts on the skills a message names reads this.
+ *
+ * A message that opens with the header but not in the shape `composeMessage` writes yields only
+ * its leading skill: when the block cannot be told from the request, nothing in it is believed.
+ */
+export function typedText(message: string): string {
+  const skill = leadingSkill(message)
+  const lead = skill && skill.rest.startsWith(`${PINNED_HEADER}\n`) ? `/${skill.skill.slug} ` : ''
+  const rest = lead && skill ? skill.rest : message
+  if (!rest.startsWith(`${PINNED_HEADER}\n`)) return message
+  const lines = rest.split('\n')
+  let index = 1
+  while (index < lines.length && lines[index]!.startsWith('- ')) index++
+  if (lines[index] === '' && lines[index + 1]?.startsWith(RANGE_RULE_START)) index += 2
+  if (lines[index] !== '') return lead
+  return lead + lines.slice(index + 1).join('\n')
 }
 
 /** Something the `@` menu can offer. */

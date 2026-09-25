@@ -8,7 +8,10 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { checkCallPolicy, type PolicyEnv } from './policy'
+import { mkdirSync, mkdtempSync, realpathSync, symlinkSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { checkCallPolicy, realpathNearest, type PolicyEnv } from './policy'
 
 const files: Record<string, string> = {
   '/Users/me/Projects/launch/title.html': '<div data-composition-id="title"></div>',
@@ -66,6 +69,41 @@ test('an export never overwrites a file that is not media, from anyone; the pane
   )
   assert.match((await inApp('export_timeline', { outputPath: '/Volumes/Other/cut.mp4' })) ?? '', /outside your home folder/)
   assert.equal(await terminal('export_timeline', { outputPath: '/Volumes/Other/cut.mp4' }), null)
+})
+
+test('a visible path that really leads into a hidden folder is refused as the hidden folder', async () => {
+  // `~/cut` is a link to bay's own Codex home; `~/Movies` is an ordinary folder.
+  const links: Record<string, string> = {
+    '/Users/me/cut': '/Users/me/Library/Application Support/bay/.agent-codex',
+    '/Users/me/away': '/Volumes/Other'
+  }
+  const resolving: PolicyEnv = {
+    ...env,
+    realpath: async (path) => {
+      for (const [link, target] of Object.entries(links)) {
+        if (path === link || path.startsWith(`${link}/`)) return target + path.slice(link.length)
+      }
+      return path
+    }
+  }
+  const panel = (tool: string, args: Record<string, unknown>) => checkCallPolicy(tool, args, 'in-app', resolving)
+  assert.match((await panel('write_composition', { path: '/Users/me/cut/config.html' })) ?? '', /hidden file or folder/)
+  assert.match((await panel('export_timeline', { outputPath: '/Users/me/cut/x.mp4' })) ?? '', /hidden file or folder/)
+  assert.match((await panel('export_timeline', { outputPath: '/Users/me/away/x.mp4' })) ?? '', /outside your home folder/)
+  // Positive controls: an ordinary path still passes, and without a resolver the spelling decides.
+  assert.equal(await panel('export_timeline', { outputPath: '/Users/me/Movies/new.mp4' }), null)
+  assert.equal(await inApp('write_composition', { path: '/Users/me/cut/config.html' }), null)
+})
+
+test('realpathNearest follows a real link, including to a file that does not exist yet', async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'bay-policy-')))
+  mkdirSync(join(root, '.agent-codex'))
+  symlinkSync(join(root, '.agent-codex'), join(root, 'visible'))
+  const unwritten = join(root, 'visible', 'sub', 'new.html')
+  assert.ok(!unwritten.includes('/.'), 'specimen: the spelling alone looks ordinary')
+  assert.equal(await realpathNearest(unwritten), join(root, '.agent-codex', 'sub', 'new.html'))
+  // Positive control: a path with no link in it comes back as it went in.
+  assert.equal(await realpathNearest(join(root, 'plain', 'x.html')), join(root, 'plain', 'x.html'))
 })
 
 test('a download from the panel asks the person first, naming the host; a terminal client is not asked', async () => {
