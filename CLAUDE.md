@@ -75,6 +75,9 @@ SDK instead of the `claude` CLI (default), and `=codex` on OpenAI's `codex` CLI 
 the Preferences › Agent › Model choice; `BAY_MCP_MODE=gateway` makes the proxy list three tools
 (`get_active_project`, `get_guidelines`, `execute`) instead of the whole catalog. `BAY_ACCESS=dev` skips the
 invite-only access check — **unpackaged builds only** — and `./run.sh` sets it (`--gate` does not).
+`BAY_MCP_CLIENTS=1` opens `bay-mcp.sock` for the run even though MCP clients are off by default
+(Preferences › Agent); `./run.sh` sets it too, because the socket probes need it. `BAY_GENERATION_BASE`
+points generation at a loopback stub (unpackaged only; see the generation paragraph).
 
 ## Running and testing the app
 
@@ -156,6 +159,14 @@ codex-cli 0.149.1:
   let a shell *read* files, because with `shell_tool` and `unified_exec` off there is no shell to
   try it with; a Codex update that re-adds a shell path would change that, which is why the probe
   is a fixture (`fixtures/codex/sandbox-probe.jsonl`) and worth re-running on upgrade.
+- **bay's tools are approved by Codex and gated by bay.** `approval_policy = "never"` alone made
+  Codex *refuse* every MCP call it would otherwise have asked about — measured: `read_project` ran,
+  `add_track` came back "MCP tool call requires approval, but approval policy is never" and the
+  timeline did not change, so under Codex the agent could never edit. `default_tools_approval_mode
+  = "approve"` on `[mcp_servers.bay]` hands the decision to bay (`policy.ts`, and "Ask before
+  editing"); measured after: `add_track` landed, and `agent-panel.mjs` on Codex with the gate on is
+  12/12 with bay's refusal text intact. `codex.test.ts` only checked the config text, which is how
+  this shipped — a real turn is the test.
 - `developer_instructions` reaches the model verbatim as the first developer message;
   `project_doc_max_bytes = 0` keeps a workspace `AGENTS.md` out. Skills cannot be loaded by
   Codex here (it lists a `SKILL.md` but has nothing to open it with), so main inlines each named
@@ -294,6 +305,15 @@ loading face makes text *pending*, `brfFonts` clones variation faces from the im
 composition windows get the same bytes as a `data:` `@font-face` — only files from that folder,
 with descriptors checked, since a `.bay` may be someone else's.
 
+**A placed video's sound is its own clip on A1 by default, as in Resolve** (`placeAsset`,
+Preferences › Editing › "Put a video's sound on its own track", `bay.separateClipAudio`). The one
+placement path detaches the sound in the same edit (one undo step), so every video with sound
+arrives as a linked pair. What had to follow, and must keep following: Overwrite clears the same
+span of A1 (not when the picture's own track is locked and it goes to a new lane); Replace swaps
+the whole pair rather than refusing a linked clip; `place_asset` names the sound clip it made
+(`soundItemId`), or an agent finds an item it never asked for. A test that counts "clips of this
+asset" now counts two — count pictures when that is what it means.
+
 **Detached audio is a linked item, and the picture's element is shared where it can be**
 (`@shared/links`, `detach_audio`). The picture gets `audioDetached`, the sound an audio-track item
 with the same asset/in/span; items sharing a `linkId` and overlapping in time move, trim, slip,
@@ -409,6 +429,36 @@ guard that is correct can still be guarding the wrong gap. Stranded calls are no
 are reads and failed at once if they are writes (`strandedCall`); the decision is unit-tested,
 the rescue itself has not yet been caught firing, and the commit says so.
 
+**The editor is laid out as Resolve's pages, and the viewer and timeline exist once.** The bottom
+page bar switches Media ⇧2, Edit ⇧4, Color ⇧6, Audio ⇧7, Deliver ⇧8 (store `page`, commands
+`workspace.*`, Resolve's own keys; Cut and Fusion are left out on purpose). Each page is slots —
+`editor/workspace/pageContent.tsx` is the one file that says which panel goes where — and the
+`Preview` and `Timeline` are rendered **once** and moved between pages by portal
+(`workspace/hosted.tsx`), because unmounting `Preview` disposes the engine: never render a second
+one in a slot, and keep the viewer the first `<canvas>` in the document, which probes read. The
+agent is a dock on every page (`agentDocked`; `setPanel('agent')` docks it). The inspector is
+tabbed (`inspectorTab`), the library is tabbed (`libraryTab`: Media Pool, Effects, Index,
+Transcript), and Settings is **Preferences** (System/User) — a message naming a place says
+"Preferences › …", and `setSettingsOpen(true, 'providers')` opens it on a page. So a probe that
+reads the inspector or timeline sets the page and tab first (`showInspector` in
+`test/app/cdp.mjs`) and puts them back; `bay.workspace.page` persists, so the page a probe starts
+on is whatever the last session left.
+
+**Storage has a Repair, and it loses nothing** (`repairDatabase`, `repairStorage`). The database
+holds recents and a few remembered values — never a project. Repair reads out what the old file
+still yields, renames it (and `-wal`/`-shm`, or a directory at its name) aside with a timestamp —
+never deleted — opens a fresh one, writes the rows back, and lists every `.bay` in the projects
+folder again. The projects screen, the status bar and Preferences › Storage all offer it; the
+projects screen shows the warning too, because an empty list there looks the same broken or new.
+
+**A transition drags from the Effects Library onto a cut** (`lib/transitionDrag.ts`). The lane
+lights the cut nearest the pointer within 24 px and applies it there (`applyTransitionAt`, the
+click's own edit). Native drag-and-drop cannot be driven over CDP; dispatch `DragEvent`s with one
+shared `DataTransfer` from the page, and say that is what you tested.
+
+**Name a `/tmp` dir uniquely and check it is not there before you create it.** Two agents once
+picked the same name, and one's cleanup deleted the other's running profile.
+
 **Worktree agents start from `main`, not from your branch.** Every one spawned this way came up
 on an old commit without the files its task named. Tell it to `git merge --ff-only <branch>`
 first. Tools no longer share a hand-edited list: a tool is a file in `src/shared/tools/` and an
@@ -427,8 +477,13 @@ holds the compositions it rewrote, so Revert writes those back. Cards expire whe
 changes — a checkpoint of project A must never be restored into B's window, where ⌘S would write
 it over B — and after 20 turns. Edits the user makes during a turn are marked on the card
 (`asAgent` wraps tool calls; anything outside one is the user's), because a whole-project revert
-takes them too. "Ask before editing" in
-Settings turns the old gate back on: every write is refused until the user approves a
+takes them too. **A client on bay's MCP socket is neither**: the call carries its door
+(`McpToolCall.origin`), a socket call runs under `asClient`, is not held to the turn's approvals,
+and the card names it separately ("edits an MCP client made through bay's socket"). And the socket
+is **off by default**: `bay-mcp.sock` opens only when Preferences › Agent › Allow MCP clients is on
+(kept in main's database, read at launch, opened and closed live); the in-app agent has its own
+`bay-agent.sock` either way. "Ask before editing" in
+Preferences turns the old gate back on: every write is refused until the user approves a
 `propose_edit` plan, the approval is delivered as the model's next turn naming each call byte for
 byte, and each approved call runs once. Outside a session (a terminal client on the socket)
 nothing is gated. `validateOnly: true` on a dry-runnable tool passes the gate, because it changes
@@ -900,6 +955,12 @@ projects — indexing an array yields `T | undefined` and you must handle it.
   is a level rather than an envelope, so it multiplies. The rule lives in the shared function that
   resolves the gain, not in a comment on both sides, because a rule kept in two places is re-decided
   independently.
+- **Track faders and pan are in that function too.** `track.volume` (0..2, absent is unity)
+  multiplies in `itemAudioGainAt`; `track.pan` composes with the clip's pan per channel in
+  `routedPanGains`, which the preview's channel gains and export's `pan` filter (`panFilterFor`)
+  are both written from. Unity and centre are stored as absence, so a project that never touched
+  the mixer saves unchanged. `pan-render.test.ts` measures a clip-and-track mix through the real
+  ffmpeg per channel; it fails if export reads only the clip's pan.
 - **J/L cuts and ducking are in that same function, `itemAudioGainAt`** (`src/shared/audio-gain.ts`),
   and the preview's clip gain now reads it too — before, the preview multiplied fade × transition
   itself and so ignored the transition-wins rule above. A J/L item's sound plays from its own

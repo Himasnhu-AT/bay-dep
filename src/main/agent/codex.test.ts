@@ -397,8 +397,9 @@ function fakeRuntime(turnTimeoutMs?: number): { runtime: CodexAgentRuntime; home
   return { runtime, home, events }
 }
 
-test('a turn that times out kills codex and the MCP server it started in its own group', { timeout: 15_000 }, async () => {
-  const { runtime, home, events } = fakeRuntime(2000)
+test('a turn that times out kills codex and the MCP server it started in its own group', { timeout: 25_000 }, async () => {
+  // Longer than a loaded machine's start-up of the fake, or the timeout kills it before its pids exist (see cli.test.ts).
+  const { runtime, home, events } = fakeRuntime(6000)
   let pids: FakePids[] = []
   try {
     runtime.send('work forever')

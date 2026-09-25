@@ -241,9 +241,12 @@ function fakeRuntime(dir: string, turnTimeoutMs?: number): { runtime: CliAgentRu
   return { runtime, events }
 }
 
-test('a turn that times out kills claude, rather than leaving it working on the timeline', { timeout: 15_000 }, async () => {
+test('a turn that times out kills claude, rather than leaving it working on the timeline', { timeout: 25_000 }, async () => {
   const dir = mkdtempSync(join(tmpdir(), 'bay-cli-rt-'))
-  const { runtime, events } = fakeRuntime(dir, 2000)
+  // The turn's budget must outlast the fake's start-up, or the timeout kills it before it has
+  // written its pids and the test waits for pids that never come. 2 s did not, in the full suite
+  // on a loaded machine (a Node child taking over 2 s to start); 6 s leaves room.
+  const { runtime, events } = fakeRuntime(dir, 6000)
   let pids: FakePids[] = []
   try {
     runtime.send('work forever')
