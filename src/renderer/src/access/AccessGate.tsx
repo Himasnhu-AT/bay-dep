@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Check, Copy, ExternalLink, LoaderCircle, LogIn, UserPlus } from 'lucide-react'
 import { describeAccess, isEntitled, type AccessStatus } from '@shared/access'
-import { Button } from '@/components'
+import { BayMark, Button } from '@/components'
 import { bay } from '@/lib/bridge'
 import { useEditor } from '@/store/editor'
 
@@ -98,9 +98,9 @@ function AccessScreen({ status }: { status: AccessStatus | null }): ReactNode {
           data-access-state={status?.state ?? 'loading'}
           className="flex w-full max-w-[420px] flex-col gap-5 rounded-xl border border-line bg-surface-1 p-6"
         >
-          <div className="flex items-center gap-2">
-            <span className="grid size-6 place-items-center rounded-md bg-accent text-[12px] font-semibold text-accent-ink">b</span>
-            <span className="text-[13px] font-semibold tracking-tight">bay</span>
+          <div className="flex items-center gap-2.5">
+            <BayMark variant="tile" size={32} />
+            <span className="text-[17px] font-semibold tracking-tight">bay</span>
           </div>
 
           <div className="flex flex-col gap-1.5">

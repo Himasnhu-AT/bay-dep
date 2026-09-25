@@ -3,11 +3,11 @@ import {
   ArrowUp,
   AtSign,
   Paperclip,
-  Bot,
   Clock,
   Film,
   Loader2,
   MessageSquarePlus,
+  Shield,
   ShieldCheck,
   Square,
   SquareStop,
@@ -26,6 +26,7 @@ import {
   type MentionCandidate,
   type Pin
 } from '@shared/pins'
+import { Tooltip } from '@/components'
 import { cn } from '@/lib/cn'
 import { selectFps, selectTimeline, useEditor } from '@/store/editor'
 import { AGENT_STARTERS } from './agentStarters'
@@ -172,7 +173,6 @@ export function Composer({
   const addPin = useEditor((state) => state.addAgentPin)
   const removePin = useEditor((state) => state.removeAgentPin)
   const approval = useEditor((state) => state.agentApproval)
-  const setApproval = useEditor((state) => state.setAgentApproval)
 
   const [caret, setCaret] = useState(0)
   const [dismissed, setDismissed] = useState<number | null>(null)
@@ -514,17 +514,11 @@ export function Composer({
           className="block w-full resize-none bg-transparent px-3 pt-2.5 text-[12.5px] leading-relaxed text-ink-0 outline-none placeholder:text-ink-2"
         />
 
-        <div className="flex items-center gap-1 px-2 pt-1 pb-2">
-          <span
-            className="flex items-center gap-1.5 rounded-md px-1.5 py-1 text-[11px] text-ink-1"
-            title="Claude Code, with bay's tools and nothing else"
-          >
-            <Bot aria-hidden="true" className="size-3.5" />
-            Agent
-          </span>
-          <ToolbarButton label="Pin an asset, clip or time" icon={AtSign} onClick={openMention} />
+        <div className="@container flex items-center gap-0.5 px-2 pt-1 pb-2">
+          <ToolbarButton text="Pin" label="Pin an asset, clip or time (@)" icon={AtSign} onClick={openMention} />
           <ToolbarButton
-            label="Attach images or video (or paste, or drop them here)"
+            text="Attach"
+            label="Attach images or video — or paste, or drop them here"
             icon={Paperclip}
             onClick={() => picker.current?.click()}
           />
@@ -541,17 +535,13 @@ export function Composer({
             }}
           />
           <ToolbarButton
-            label={approval ? 'Ask before editing: on — the agent proposes, you approve' : 'Ask before editing: off — the agent edits, you can revert'}
-            icon={ShieldCheck}
-            pressed={approval}
-            onClick={() => setApproval(!approval)}
-          />
-          <ToolbarButton
-            label="Pin a time range"
+            text="Range"
+            label="Pin a time range — the agent changes nothing outside it"
             icon={Clock}
             pressed={rangeOpen}
             onClick={() => setRangeOpen((value) => !value)}
           />
+          <ApprovalBadge on={approval} />
           {(running || sending) && (
             <span role="status" className="ml-1 flex items-center gap-1 text-[11px] text-ink-2">
               <Loader2 aria-hidden="true" className="size-3 animate-spin" />
@@ -587,31 +577,71 @@ export function Composer({
   )
 }
 
+/**
+ * A composer tool: its icon, its short name when the composer is wide enough to show it, and
+ * the full sentence in the tooltip and accessible name either way. An icon alone was guesswork —
+ * the clock and the shield read as "history" and nothing.
+ */
 function ToolbarButton({
+  text,
   label,
   icon: Icon,
   onClick,
   pressed
 }: {
+  /** The visible word. */
+  text: string
+  /** The full name: tooltip and accessible name. */
   label: string
   icon: LucideIcon
   onClick: () => void
   pressed?: boolean
 }): ReactNode {
   return (
-    <button
-      type="button"
-      aria-label={label}
-      title={label}
-      aria-pressed={pressed}
-      onClick={onClick}
-      className={cn(
-        't-press grid size-7 place-items-center rounded-md hover:bg-surface-3 hover:text-ink-0 active:scale-[0.96]',
-        pressed ? 'bg-surface-3 text-ink-0' : 'text-ink-2'
-      )}
-    >
-      <Icon aria-hidden="true" className="size-3.5" />
-    </button>
+    <Tooltip label={label} side="top">
+      <button
+        type="button"
+        aria-label={label}
+        aria-pressed={pressed}
+        onClick={onClick}
+        className={cn(
+          't-press flex h-7 min-w-7 items-center justify-center gap-1 rounded-md px-1.5 text-[11px] hover:bg-surface-3 hover:text-ink-0 active:scale-[0.96]',
+          pressed ? 'bg-surface-3 text-ink-0' : 'text-ink-1'
+        )}
+      >
+        <Icon aria-hidden="true" className="size-3.5 shrink-0" />
+        <span className="hidden @[240px]:inline">{text}</span>
+      </button>
+    </Tooltip>
+  )
+}
+
+/**
+ * Whether the agent asks before editing, shown where the user is about to send — and changed in
+ * one place, Settings › Agent. This used to be a second switch here, an unlabelled shield that
+ * changed a setting with consequences (every edit then waits for an approved plan) from a
+ * toolbar nobody read as settings. A badge keeps the state visible at the moment it matters and
+ * leaves one control for it; clicking it opens that control.
+ */
+function ApprovalBadge({ on }: { on: boolean }): ReactNode {
+  const label = on
+    ? 'Ask before editing is on: the agent proposes a plan and waits for your approval. Change it in Settings › Agent.'
+    : 'Ask before editing is off: the agent edits directly, and every change can be reverted. Change it in Settings › Agent.'
+  return (
+    <Tooltip label={label} side="top">
+      <button
+        type="button"
+        aria-label={label}
+        onClick={() => useEditor.getState().setSettingsOpen(true, 'agent')}
+        className={cn(
+          't-fast ml-0.5 flex h-5 items-center gap-1 rounded-full border px-1.5 text-[10.5px] whitespace-nowrap',
+          on ? 'border-accent/50 bg-accent/10 text-ink-0 hover:bg-accent/15' : 'border-line text-ink-2 hover:border-line-strong hover:text-ink-1'
+        )}
+      >
+        {on ? <ShieldCheck aria-hidden="true" className="size-3 shrink-0" /> : <Shield aria-hidden="true" className="size-3 shrink-0" />}
+        <span className="hidden @[350px]:inline">{on ? 'Asks first' : 'Edits directly'}</span>
+      </button>
+    </Tooltip>
   )
 }
 
