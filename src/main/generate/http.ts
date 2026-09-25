@@ -113,27 +113,43 @@ export function providerHttp(inner: Fetch, policy: HostPolicy, label: string): P
         const text = await response.text().catch(() => '')
         throw new Error(`${label} answered ${response.status} to the download${text ? `: ${text.slice(0, 300)}` : ''}.`)
       }
-      const declared = Number(response.headers.get('content-length') ?? NaN)
-      if (Number.isFinite(declared) && declared > maxBytes) {
-        await response.body?.cancel().catch(() => undefined)
-        throw new Error(`${label}'s result is ${declared} bytes, over bay's ${maxBytes}-byte limit; it was not downloaded.`)
+      const read = await readCapped(response, maxBytes)
+      if (read.over === 'declared') {
+        throw new Error(`${label}'s result is ${read.declared} bytes, over bay's ${maxBytes}-byte limit; it was not downloaded.`)
       }
-      const chunks: Buffer[] = []
-      let total = 0
-      const reader = response.body?.getReader()
-      if (reader) {
-        for (;;) {
-          const { done, value } = await reader.read()
-          if (done) break
-          total += value.byteLength
-          if (total > maxBytes) {
-            await reader.cancel().catch(() => undefined)
-            throw new Error(`${label}'s result passed bay's ${maxBytes}-byte limit; the download was abandoned.`)
-          }
-          chunks.push(Buffer.from(value))
-        }
-      }
-      return { bytes: Buffer.concat(chunks), contentType: response.headers.get('content-type') ?? '' }
+      if (read.over === 'streamed') throw new Error(`${label}'s result passed bay's ${maxBytes}-byte limit; the download was abandoned.`)
+      return { bytes: read.bytes, contentType: response.headers.get('content-type') ?? '' }
     }
   }
+}
+
+export type CappedRead = { over: null; bytes: Buffer } | { over: 'declared'; declared: number } | { over: 'streamed' }
+
+/**
+ * A response body, read in chunks and abandoned the moment it passes `maxBytes` — refused
+ * unread when its declared length is already over. A body with no length, or one that lies about
+ * it, costs at most `maxBytes` of memory, never the whole stream.
+ */
+export async function readCapped(response: Response, maxBytes: number): Promise<CappedRead> {
+  const declared = Number(response.headers.get('content-length') ?? NaN)
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    await response.body?.cancel().catch(() => undefined)
+    return { over: 'declared', declared }
+  }
+  const chunks: Buffer[] = []
+  let total = 0
+  const reader = response.body?.getReader()
+  if (reader) {
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      total += value.byteLength
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => undefined)
+        return { over: 'streamed' }
+      }
+      chunks.push(Buffer.from(value))
+    }
+  }
+  return { over: null, bytes: Buffer.concat(chunks) }
 }

@@ -158,6 +158,14 @@ test('track_generation: a landed voiceover is imported and placed on an audio tr
   assert.equal(item.from, 45)
   assert.equal(item.durationInFrames, Math.round(2.5 * fps()))
 
+  // Asked again once it is placed: no second copy, and still the measured length beside the estimate.
+  const again = value(await call('track_generation', { jobId: 'job-1', place: true, atFrame: 45 }))
+  assert.equal(again.placed, false)
+  assert.match(String(again.note), /Already imported and on the timeline/)
+  assert.equal(again.measuredSeconds, 2.5)
+  assert.equal(again.estimatedSeconds, started[0]!.estimatedSeconds)
+  assert.equal(useEditor.getState().past.length, pastBefore + 1, 'the second look changed nothing')
+
   // One undo takes back the placement and the import together.
   useEditor.getState().undo()
   const after = useEditor.getState().project

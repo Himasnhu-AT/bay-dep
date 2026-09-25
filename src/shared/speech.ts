@@ -201,6 +201,12 @@ export type SpeechValidation =
 
 const round4 = (n: number): number => Math.round(n * 10000) / 10000
 
+/**
+ * The fastest a voice plausibly reads, in non-space characters a second (brisk English is about
+ * 15). Prices never assume a text is quicker to say than this.
+ */
+export const SPEECH_FLOOR_CHARS_PER_SECOND = 20
+
 export function speechCost(model: SpeechModelSpec, characters: number, seconds: number): number {
   return round4(model.cost.per === 'second' ? model.cost.usd * seconds : (model.cost.usd * characters) / 1000)
 }
@@ -284,7 +290,19 @@ export function validateSpeech(input: Record<string, unknown>): SpeechValidation
   if (errors.length > 0) return { ok: false, errors }
 
   const pace: SpeechPace = style ? SPEECH_STYLES[style].pace : 'normal'
-  const estimate = estimateSpeech(text, { ...(language ? { language } : {}), pace, speed: speed ?? 1 })
+  const estimated = estimateSpeech(text, { ...(language ? { language } : {}), pace, speed: speed ?? 1 })
+  // A price is never zero for words a provider will speak and bill. The estimator can still come
+  // up short (emoji, symbols, a script it reads roughly), and a zero-second estimate of a
+  // per-second model walks through the spend guard for free. So no estimate goes below this.
+  const floor = Math.round(([...text.replace(/\s+/g, '')].length / SPEECH_FLOOR_CHARS_PER_SECOND / (speed ?? 1)) * 100) / 100
+  const estimate =
+    estimated.seconds >= floor
+      ? estimated
+      : {
+          ...estimated,
+          seconds: floor,
+          notes: [...estimated.notes, `The estimate was raised to ${floor}s, bay's floor of ${SPEECH_FLOOR_CHARS_PER_SECOND} characters a second, so the cost is not understated.`]
+        }
   const request: GenerationRequest = {
     provider: model.provider,
     model: model.id,

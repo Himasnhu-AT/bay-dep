@@ -963,17 +963,28 @@ projects — indexing an array yields `T | undefined` and you must handle it.
   (`src/main/media/url-import.ts`, `@shared/url-import`): the *user's own* `yt-dlp`, found like
   `claude` (`search-dirs.ts`), never shipped or fetched by bay — missing, the tool says
   `brew install yt-dlp`. It runs only when that tool is called, on one `http(s)` address
-  (`checkDownloadUrl`, checked in the renderer, in main's policy and again in the downloader), as an
+  (`checkDownloadUrl`, checked in the renderer, in main's policy and again in the downloader) that
+  is not a literal loopback, private, link-local, CGNAT or `localhost` host, as an
   argument array with `--` before the address, and with `--ignore-config --no-config-locations
-  --no-plugin-dirs --no-exec`, no cookies, `--no-playlist --playlist-items 1`, ≤1080p, ≤2 GB and
-  15 minutes (then the process group is killed; quit kills it too). Output goes to a fresh folder
-  under `<userData>/downloads` and the path yt-dlp prints is believed only inside it; a failed
-  download's folder is removed. Which hosts it reaches is yt-dlp's business — whatever the page and
+  --no-plugin-dirs --no-exec`, no cookies, `--no-playlist --playlist-items 1`,
+  `--match-filter '!is_live'`, ≤1080p, and one download at a time (a second is refused with when
+  to retry). **The 2 GB cap is bay's, not yt-dlp's**: `--max-filesize` only refuses a size the
+  server announces — measured, the real yt-dlp took 20 MB of a chunked response under a 4 MB
+  `--max-filesize` — so main sums the download folder (parts and fragments) every second, kills
+  the process group past the cap, and measures once more at the end. 15 minutes is the other
+  limit (then the group is killed; quit kills it too). Output goes to a fresh UUID folder under
+  `<userData>/downloads`; the path yt-dlp prints is believed only inside it, and only then is a
+  `.bay-complete` marker written. A failed download's folder is removed at once; one a crash left
+  (no marker) is removed at the next startup (`sweepIncompleteDownloads`, bay's UUID folders only). Which hosts it reaches is yt-dlp's business — whatever the page and
   its extractor need — so the guard is consent, not a host list: from the in-app agent every
-  download asks the user in a native dialog showing the whole address (`policy.ts`), because an
-  injected address can carry what the agent read out in its query string. Terminal clients are not
-  asked; they have the network already. `url-import.test.ts` runs the real yt-dlp against
-  127.0.0.1 when it is installed, never the internet.
+  download asks the user in a native dialog showing the whole address, the query string on its
+  own line, and a warning when that query holds another address or runs past 100 characters
+  (`downloadConfirmation`, `policy.ts`), because an injected address can carry what the agent
+  read out in its query string. The private-host refusal is literal addresses and names only; bay
+  does not resolve a public name first. Terminal clients are not asked; they have the network
+  already. `url-import.test.ts` runs the real yt-dlp against 127.0.0.1 when it is installed —
+  through a test-only allowance (`allowPrivateHostsForTests`) no tool can reach — never the
+  internet, including a chunked stream the cap must stop.
 - **Subscribe narrowly to the store** (`useEditor((s) => s.playhead)`), never wholesale, or every
   component re-renders at the frame rate during playback.
 - **Playback is driven by wall-clock elapsed time, not by counting rAF callbacks**, and composites at

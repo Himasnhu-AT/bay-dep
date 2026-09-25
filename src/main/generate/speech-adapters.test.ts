@@ -169,6 +169,79 @@ test('Gemini: headerless L16 audio is wrapped in a RIFF header at its own rate',
   }
 })
 
+/** A completed Gemini interaction carrying `bytes` under `mime_type`, with optional PCM parameters. */
+function geminiAnswer(bytes: Buffer, mime: string, extra: Record<string, unknown> = {}) {
+  return { status: 'completed', steps: [{ content: [{ type: 'audio', data: bytes.toString('base64'), mime_type: mime, ...extra }] }] }
+}
+
+async function geminiOutput(answer: unknown) {
+  const stub = await startStub((_r, response) => json(response, 200, answer))
+  try {
+    return await geminiSpeech.start(speech({ model: 'gemini-3.8-flash-lite-tts', text: 'Hi.' }), ctx(stub))
+  } finally {
+    await stub.close()
+  }
+}
+
+test('Gemini: raw PCM is wrapped by what the bytes are, not by the label; real containers pass untouched', async () => {
+  const pcm = Buffer.alloc(24000 * 2, 3)
+  // Labelled WAV, but headerless: the label alone let this land as a .wav nothing could play.
+  const mislabelled = await geminiOutput(geminiAnswer(pcm, 'audio/wav'))
+  const output = mislabelled.kind === 'done' ? mislabelled.output : null
+  assert.ok(output)
+  assert.equal(output.bytes.subarray(0, 4).toString('ascii'), 'RIFF')
+  assert.equal(output.bytes.readUInt32LE(24), 24000, 'the default rate')
+  assert.deepEqual(output.bytes.subarray(44), pcm)
+
+  // Positive controls: a real WAV, and MP3 whatever it is labelled, are kept byte for byte.
+  const wav = pcmToWav(pcm, 16000, 1)
+  const kept = await geminiOutput(geminiAnswer(wav, 'audio/wav'))
+  assert.deepEqual(kept.kind === 'done' ? kept.output.bytes : null, wav)
+  const mp3 = await geminiOutput(geminiAnswer(MP3, 'audio/wav'))
+  assert.deepEqual(mp3.kind === 'done' ? mp3.output : null, { bytes: MP3, mime: 'audio/mpeg' })
+})
+
+test('Gemini: a PCM rate or channel count outside what a WAV can honestly say is refused; a sane one is written', async () => {
+  const pcm = Buffer.alloc(4800, 1)
+  for (const [extra, said] of [
+    [{ sample_rate: 1_000_000 }, /sample rate of 1000000 Hz, outside 8000–192000/],
+    [{ sample_rate: 100 }, /sample rate of 100 Hz/],
+    [{ channels: 0 }, /0 channels, outside 1–8/],
+    [{ channels: 64 }, /64 channels/]
+  ] as const) {
+    await assert.rejects(geminiOutput(geminiAnswer(pcm, 'audio/l16', extra)), said, JSON.stringify(extra))
+  }
+  const sane = await geminiOutput(geminiAnswer(pcm, 'audio/l16', { sample_rate: 48000, channels: 2 }))
+  const output = sane.kind === 'done' ? sane.output : null
+  assert.ok(output)
+  assert.equal(output.bytes.readUInt32LE(24), 48000)
+  assert.equal(output.bytes.readUInt16LE(22), 2)
+})
+
+test('an audio body with no length is abandoned at the limit while it streams, not read whole', { timeout: 20000 }, async () => {
+  let sent = 0
+  // Never ends on its own: the old read waited for the end, so this call never answered.
+  const stub = await startStub((_r, response) => {
+    response.statusCode = 200
+    response.setHeader('content-type', 'audio/mpeg')
+    const chunk = Buffer.alloc(1024 * 1024, 7)
+    const pump = (): void => {
+      while (!response.destroyed && response.write(chunk)) sent += chunk.length
+      if (!response.destroyed) response.once('drain', pump)
+    }
+    pump()
+  })
+  try {
+    await assert.rejects(
+      openaiSpeech.start(speech({ model: 'gpt-4o-mini-tts', text: 'Hi.' }), ctx(stub)),
+      new RegExp(`OpenAI's audio passed bay's ${100 * 1024 * 1024}-byte limit and was not kept`)
+    )
+    assert.ok(sent < 400 * 1024 * 1024, `stopped near the limit, not after ${sent} bytes`)
+  } finally {
+    await stub.close()
+  }
+})
+
 test('Gemini: a failed interaction says why; an unfinished one is polled, not paid for twice', async () => {
   let polls = 0
   const stub = await startStub((request, response) => {

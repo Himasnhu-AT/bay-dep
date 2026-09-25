@@ -96,6 +96,35 @@ test('a download from the panel asks the person first, naming the host; a termin
   assert.match((await inApp('import_url', { url })) ?? '', /needs the user's go-ahead.*could not ask/)
 })
 
+test('the download dialog puts the query on its own line, and warns when it carries an address or runs long', async () => {
+  const asked: string[] = []
+  const recording: PolicyEnv = {
+    ...env,
+    confirm: async (_message, detail) => {
+      asked.push(detail)
+      return false
+    }
+  }
+  const ask = async (url: string): Promise<string> => {
+    await checkCallPolicy('import_url', { url }, 'in-app', recording)
+    return asked.at(-1) ?? ''
+  }
+  const plain = await ask('https://video.example/watch?v=abc')
+  assert.match(plain, /Query string \(sent to video\.example\):\n\?v=abc/)
+  assert.doesNotMatch(plain, /Warning/, 'an ordinary query is shown, not flagged')
+  assert.doesNotMatch(await ask('https://video.example/clip'), /Query string|Warning/, 'no query, no query line')
+
+  for (const url of [
+    'https://video.example/watch?v=1&next=https://collector.example/x',
+    'https://video.example/watch?v=1&next=https%3A%2F%2Fcollector.example%2Fx',
+    'https://video.example/watch?v=1&n=%2F%2Fcollector.example'
+  ]) {
+    assert.match(await ask(url), /Warning: this query string contains another web address.*carry text the agent read out to video\.example/, url)
+  }
+  const long = `https://video.example/watch?v=1&t=${'the transcript said '.repeat(6)}`.replace(/ /g, '+')
+  assert.match(await ask(long), /Warning: this query string is \d+ characters long/)
+})
+
 test('tools that touch no path are untouched by the policy', async () => {
   assert.equal(await inApp('edit_item', { itemId: 'itm_1', volume: 0.5 }), null)
   assert.equal(await inApp('read_project', {}), null)

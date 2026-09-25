@@ -13,6 +13,7 @@
 
 import type { Adapter, AdapterContext, Output, PollResult } from './adapter'
 import { ProviderError, httpFailure, readJson } from './adapter'
+import { readCapped } from './http'
 import { speechInstructions } from '@shared/speech'
 import type { GenerationProvider, GenerationRequest } from '@shared/generation'
 
@@ -26,10 +27,29 @@ async function audioBody(provider: GenerationProvider, label: string, response: 
     const body = await readJson(response)
     throw new ProviderError(`${label} answered without audio${body ? `: ${JSON.stringify(body).slice(0, 300)}` : ''}. Generate again.`, false)
   }
-  const bytes = Buffer.from(await response.arrayBuffer())
+  // Capped while it streams: a body with no length (or a false one) stops at the limit rather
+  // than being read whole into memory first.
+  const read = await readCapped(response, SPEECH_MAX_BYTES)
+  if (read.over !== null) throw new ProviderError(`${label}'s audio passed bay's ${SPEECH_MAX_BYTES}-byte limit and was not kept.`, false)
+  const bytes = read.bytes
   if (bytes.length === 0) throw new ProviderError(`${label} answered with an empty file. Generate again.`, false)
-  if (bytes.length > SPEECH_MAX_BYTES) throw new ProviderError(`${label}'s audio passed bay's ${SPEECH_MAX_BYTES}-byte limit and was not kept.`, false)
   return { bytes, mime: mime.startsWith('audio/') ? mime : 'audio/mpeg' }
+}
+
+/**
+ * Gemini's JSON, capped while it streams. The audio is base64 inside it (4 bytes per 3), so the
+ * cap is the audio limit's worth of base64 plus room for the envelope.
+ */
+async function geminiJson(response: Response): Promise<unknown> {
+  const read = await readCapped(response, Math.ceil((SPEECH_MAX_BYTES * 4) / 3) + 1024 * 1024)
+  if (read.over !== null) throw new ProviderError(`Gemini's answer passed bay's ${SPEECH_MAX_BYTES}-byte audio limit and was not kept.`, false)
+  const text = read.bytes.toString('utf8')
+  if (!text) return null
+  try {
+    return JSON.parse(text) as unknown
+  } catch {
+    return text
+  }
 }
 
 /** ElevenLabs reports errors as `{ detail: { message } }` (or a string); map it to the usual shape. */
@@ -123,12 +143,32 @@ function audioOf(interaction: Interaction): Output | null {
   const block = blocks.reverse().find((b) => b?.type === 'audio' && typeof b.data === 'string' && b.data.length > 0)
   if (!block?.data) return null
   const bytes = Buffer.from(block.data, 'base64')
-  const mime = (block.mime_type ?? 'audio/wav').toLowerCase()
-  const riff = bytes.subarray(0, 4).toString('ascii') === 'RIFF'
-  if (!riff && (mime.includes('l16') || mime.includes('pcm'))) {
-    return { bytes: pcmToWav(bytes, block.sample_rate ?? 24000, block.channels ?? 1), mime: 'audio/wav' }
+  if (bytes.length > SPEECH_MAX_BYTES) throw new ProviderError(`Gemini's audio passed bay's ${SPEECH_MAX_BYTES}-byte limit and was not kept.`, false)
+  // The bytes say what they are, whatever the label: a file that is not a container bay knows
+  // by its magic (RIFF, MP3, Ogg) is raw PCM and gets a header. Trusting the label alone wrote
+  // headerless PCM labelled `audio/wav` to disk as a .wav nothing could play.
+  if (sniffAudio(bytes) === 'mpeg') return { bytes, mime: 'audio/mpeg' }
+  if (sniffAudio(bytes) === 'ogg') return { bytes, mime: 'audio/ogg' }
+  if (sniffAudio(bytes) === 'wav') return { bytes, mime: 'audio/wav' }
+  const sampleRate = block.sample_rate ?? 24000
+  const channels = block.channels ?? 1
+  if (!Number.isInteger(sampleRate) || sampleRate < 8000 || sampleRate > 192000) {
+    throw new ProviderError(`Gemini's raw audio claims a sample rate of ${String(sampleRate)} Hz, outside 8000–192000, so it was not kept. Generate again.`, false)
   }
-  return { bytes, mime: mime.includes('mp3') || mime.includes('mpeg') ? 'audio/mpeg' : 'audio/wav' }
+  if (!Number.isInteger(channels) || channels < 1 || channels > 8) {
+    throw new ProviderError(`Gemini's raw audio claims ${String(channels)} channels, outside 1–8, so it was not kept. Generate again.`, false)
+  }
+  return { bytes: pcmToWav(bytes, sampleRate, channels), mime: 'audio/wav' }
+}
+
+/** A container by its first bytes, or null for anything else (raw PCM). */
+export function sniffAudio(bytes: Buffer): 'wav' | 'mpeg' | 'ogg' | null {
+  if (bytes.length >= 4 && bytes.subarray(0, 4).toString('ascii') === 'RIFF') return 'wav'
+  if (bytes.length >= 4 && bytes.subarray(0, 4).toString('ascii') === 'OggS') return 'ogg'
+  if (bytes.length >= 3 && bytes.subarray(0, 3).toString('ascii') === 'ID3') return 'mpeg'
+  // An MPEG audio frame: eleven set sync bits, and a layer that is not the reserved 00.
+  if (bytes.length >= 2 && bytes[0] === 0xff && (bytes[1]! & 0xe0) === 0xe0 && (bytes[1]! & 0x06) !== 0) return 'mpeg'
+  return null
 }
 
 function failureOf(interaction: Interaction): string {
@@ -143,7 +183,7 @@ async function fetchInteraction(id: string, ctx: AdapterContext): Promise<Intera
     method: 'GET',
     headers: { 'x-goog-api-key': ctx.credentials.apiKey ?? '' }
   })
-  const body = await readJson(response)
+  const body = await geminiJson(response)
   if (!response.ok) throw httpFailure('gemini', response.status, body)
   return (body ?? {}) as Interaction
 }
@@ -172,7 +212,7 @@ export const geminiSpeech: Adapter = {
         generation_config: { speech_config: [{ voice: request.voice }] }
       })
     })
-    const body = await readJson(response)
+    const body = await geminiJson(response)
     if (!response.ok) throw httpFailure('gemini', response.status, body)
     const interaction = (body ?? {}) as Interaction
     const audio = audioOf(interaction)

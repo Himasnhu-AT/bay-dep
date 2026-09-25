@@ -97,6 +97,7 @@ const HAN = /[㐀-䶿一-鿿豈-﫿\u{20000}-\u{2fa1f}]/gu
 const HANGUL = /[가-힯ᄀ-ᇿ㄰-㆏]/gu
 const CYRILLIC = /[Ѐ-ӿ]/gu
 const LATIN = /[A-Za-zÀ-ɏ]/gu
+const ANY_LATIN = /\p{Script=Latin}/gu
 const SPANISH_MARKS = /[ñ¿¡]/iu
 const GERMAN_MARKS = /[äöüß]/iu
 const TURKISH_MARKS = /[ğşıİ]/u
@@ -109,7 +110,12 @@ function count(text: string, pattern: RegExp): number {
   return text.match(pattern)?.length ?? 0
 }
 
-export function detectLanguage(text: string): SpeechLanguage {
+/**
+ * The language to estimate for. `other` when most letters are in a script bay has no profile
+ * for (Devanagari, Arabic, Greek, Thai…): calling that English counted its words as zero
+ * syllables, and a zero-second estimate made the call free to the spend guard.
+ */
+export function detectLanguage(text: string): SpeechLanguage | 'other' {
   const kana = count(text, KANA)
   const han = count(text, HAN)
   const hangul = count(text, HANGUL)
@@ -119,6 +125,9 @@ export function detectLanguage(text: string): SpeechLanguage {
   if (hangul > latin / 4 && hangul > 0) return 'ko'
   if (han > latin / 4 && han > 0) return kana > 0 ? 'ja' : 'zh'
   if (cyrillic > latin) return 'ru'
+  const anyLatin = count(text, ANY_LATIN)
+  const unprofiled = count(text, /\p{L}/gu) - anyLatin - kana - han - hangul - cyrillic
+  if (unprofiled > anyLatin) return 'other'
   if (TURKISH_MARKS.test(text)) return 'tr'
   if (GERMAN_MARKS.test(text)) return 'de'
   if (SPANISH_MARKS.test(text)) return 'es'
@@ -397,16 +406,55 @@ function heuristicTerms(text: string, pace: SpeechPace): CharTerms {
 
 const round2 = (n: number): number => Math.round(n * 100) / 100
 
+/** A run of letters outside the Latin alphabet, with the marks that belong to them (Devanagari's vowel signs). */
+const FOREIGN_RUN = /(?:(?!\p{Script=Latin})\p{L}\p{M}*)+/gu
+
+interface Foreign {
+  /** The text with every foreign run blanked, for the syllable counters. */
+  latin: string
+  /** Han, kana and Hangul characters: a syllable each. */
+  cjk: number
+  /** Everything else foreign, run by run, for the generic estimate. */
+  rest: string
+  /** Characters (with their marks) that were foreign. */
+  characters: number
+}
+
+/**
+ * The part of an English or Spanish text the syllable counters cannot read. Before this, a Hindi
+ * script called English, or the Chinese half of a mixed line, was dropped: zero syllables, zero
+ * seconds, zero cost. Han, kana and Hangul are a syllable a character; any other script goes to
+ * the generic estimate rather than to nothing.
+ */
+function splitForeign(text: string): Foreign {
+  const runs = text.match(FOREIGN_RUN) ?? []
+  let cjk = 0
+  const rest: string[] = []
+  for (const run of runs) {
+    cjk += count(run, HAN) + count(run, KANA) + count(run, HANGUL)
+    const other = run.replace(HAN, ' ').replace(KANA, ' ').replace(HANGUL, ' ').trim()
+    if (other) rest.push(other)
+  }
+  return {
+    latin: runs.length > 0 ? text.replace(FOREIGN_RUN, ' ') : text,
+    cjk,
+    rest: rest.join(' '),
+    characters: runs.reduce((n, run) => n + [...run].length, 0)
+  }
+}
+
 function secondsAt(text: string, language: SpeechLanguage | 'other', pace: SpeechPace, speed: number): { total: number; terms: CharTerms; unit: 'syllables' | 'characters'; rate: number } {
   if (language === 'en' || language === 'es') {
-    const counted = language === 'en' ? englishSyllables(text) : spanishSyllables(text)
+    const foreign = splitForeign(text)
+    const counted = language === 'en' ? englishSyllables(foreign.latin) : spanishSyllables(foreign.latin)
     const rate = SYLLABLE_RATES[language][pace]
+    const elsewhere = foreign.rest ? heuristicTerms(foreign.rest, pace) : null
     const terms: CharTerms = {
-      speech: counted.words / rate / speed,
+      speech: (counted.words + foreign.cjk) / rate / speed + (elsewhere ? elsewhere.speech / speed : 0),
       pauses: 0,
       numbers: counted.numbers / rate / speed,
       acronyms: counted.acronyms / rate / speed,
-      units: counted.words + counted.numbers + counted.acronyms,
+      units: counted.words + counted.numbers + counted.acronyms + foreign.cjk + (elsewhere?.units ?? 0),
       latinSyllables: 0
     }
     return { total: terms.speech + terms.numbers + terms.acronyms, terms, unit: 'syllables', rate }
@@ -437,6 +485,7 @@ export function estimateSpeech(text: string, options: SpeechEstimateOptions = {}
   if (asked === 'auto' || asked === '') {
     language = detectLanguage(text)
     detected = true
+    if (language === 'other') notes.push('The text is mostly in a script bay has no speech profile for, so this is a generic estimate — treat it as rough (±30%).')
   } else if ((SPEECH_LANGUAGES as readonly string[]).includes(asked)) {
     language = asked as SpeechLanguage
   } else {
@@ -448,6 +497,10 @@ export function estimateSpeech(text: string, options: SpeechEstimateOptions = {}
   const range = {
     slow: round2(secondsAt(text, language, 'slow', speed).total),
     fast: round2(secondsAt(text, language, 'fast', speed).total)
+  }
+  const foreign = at.unit === 'syllables' ? splitForeign(text).characters : 0
+  if (foreign > 0) {
+    notes.push(`${foreign} characters are outside the ${language === 'es' ? 'Spanish' : 'English'} alphabet and were counted roughly; pass the text's language if it is not ${language}.`)
   }
   if (at.unit === 'syllables') {
     notes.push(`${at.terms.units} syllables at ${at.rate} per second (${pace})${speed !== 1 ? `, at speed ${speed}` : ''}; ordinary pauses are already in the rate.`)

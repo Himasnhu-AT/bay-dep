@@ -283,7 +283,19 @@ export class GenerationJobs {
     const adapter = this.#deps.adapters[job.provider]
     this.#update(job, { status: 'running' })
     try {
-      const started = await adapter.start(job.request, this.#context(job.provider, credentials, reference))
+      let started
+      try {
+        started = await adapter.start(job.request, this.#context(job.provider, credentials, reference))
+      } catch (error) {
+        // The provider refused the submission itself with a 4xx (a refused key, a bad argument,
+        // rate-limited): it did no work and charged nothing, so neither does the guard. Any other
+        // failure — a 5xx, a dropped connection, audio that arrived broken — may have been
+        // accepted and billed, and stays counted.
+        if (error instanceof ProviderError && error.status !== null && error.status >= 400 && error.status < 500) {
+          this.#spentUsd = Math.max(0, this.#spentUsd - (job.estimatedCostUsd ?? 0))
+        }
+        throw error
+      }
       if (started.kind === 'pending') {
         this.#update(job, { remote: started.handle })
         await this.#persist()

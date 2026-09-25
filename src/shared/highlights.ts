@@ -202,18 +202,22 @@ export function checkPicks(picks: readonly HighlightPick[], limits: PickLimits):
     }
   })
 
-  // Overlap is judged in time order, whatever order the picks came in.
+  // Overlap is judged in time order, whatever order the picks came in, and against every earlier
+  // pick rather than only the one before: a long pick can contain several short ones, and each of
+  // those overlaps is a fault the agent needs in this refusal, not in the next.
   const order = picks
     .map((pick, index) => ({ pick, index }))
     .filter(({ pick }) => Number.isInteger(pick.fromFrame) && Number.isInteger(pick.toFrame) && pick.toFrame > pick.fromFrame)
     .sort((a, b) => a.pick.fromFrame - b.pick.fromFrame)
-  for (let i = 1; i < order.length; i++) {
-    const before = order[i - 1]!
-    const after = order[i]!
-    if (after.pick.fromFrame < before.pick.toFrame) {
+  for (let j = 1; j < order.length; j++) {
+    const after = order[j]!
+    for (let i = 0; i < j; i++) {
+      const before = order[i]!
+      if (after.pick.fromFrame >= before.pick.toFrame) continue
+      const shared = Math.min(before.pick.toFrame, after.pick.toFrame) - after.pick.fromFrame
       faults.push(
         `${name(after.index)} (from frame ${after.pick.fromFrame}) overlaps ${name(before.index)} ` +
-          `(to frame ${before.pick.toFrame}) by ${before.pick.toFrame - after.pick.fromFrame} frames. ` +
+          `(to frame ${before.pick.toFrame}) by ${shared} frames. ` +
           `Move one boundary to a sentence edge, or keep the stronger clip.`
       )
     }
