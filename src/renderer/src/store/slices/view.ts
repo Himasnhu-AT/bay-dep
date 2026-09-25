@@ -22,6 +22,10 @@ type Actions = Pick<
   | 'setPixelsPerFrame'
   | 'zoomBy'
   | 'setPanel'
+  | 'setPage'
+  | 'setInspectorTab'
+  | 'setLibraryTab'
+  | 'setAgentDocked'
   | 'setRegionHidden'
   | 'setSettingsOpen'
   | 'setAutoDownloadModels'
@@ -95,6 +99,25 @@ export function viewSlice({ set, get, currentTimeline }: StoreKit): Actions {
 
     setPanel(panel) {
       set({ panel })
+    },
+
+    setPage(page) {
+      if (get().page === page) return
+      remember('bay.workspace.page', page)
+      set({ page })
+    },
+
+    setInspectorTab(inspectorTab) {
+      set({ inspectorTab })
+    },
+
+    setLibraryTab(libraryTab) {
+      set({ libraryTab })
+    },
+
+    setAgentDocked(agentDocked) {
+      remember('bay.workspace.agentDocked', agentDocked ? '1' : '0')
+      set({ agentDocked })
     },
 
     setRegionHidden(region, hidden) {

@@ -22,6 +22,13 @@ import { agentSlice } from './slices/agent'
 import { timelineSlice } from './slices/timeline'
 import { itemsSlice } from './slices/items'
 import { viewSlice } from './slices/view'
+import { WORKSPACE_PAGES, type WorkspacePage } from './types'
+
+/** The page the editor opened on last time; Edit when nothing (or something unknown) is kept. */
+function rememberedPage(): WorkspacePage {
+  const kept = remembered('bay.workspace.page')
+  return WORKSPACE_PAGES.find((page) => page === kept) ?? 'edit'
+}
 import { editingSlice } from './slices/editing'
 import type { EditorStore } from './types'
 
@@ -35,7 +42,19 @@ export {
   type AgentCheckpoint,
   type AgentRevert
 } from './agent-turns'
-export type { ClipDialog, EditorActions, EditorState, EditorStore, PanelId, RegionId, Screen } from './types'
+export type {
+  ClipDialog,
+  EditorActions,
+  EditorState,
+  EditorStore,
+  InspectorTab,
+  LibraryTab,
+  PanelId,
+  RegionId,
+  Screen,
+  WorkspacePage
+} from './types'
+export { WORKSPACE_PAGES } from './types'
 
 // ---------------------------------------------------------------------------
 // Store
@@ -55,6 +74,10 @@ export const useEditor = create<EditorStore>((set, get) => {
     playing: false,
     pixelsPerFrame: 4,
     panel: 'media',
+    page: rememberedPage(),
+    inspectorTab: 'video',
+    libraryTab: 'media',
+    agentDocked: remembered('bay.workspace.agentDocked') === '1',
     hiddenRegions: { side: false, inspector: false, timeline: false },
     debugMode: (() => {
       try {

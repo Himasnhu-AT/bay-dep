@@ -80,6 +80,22 @@ export type ClipDialog =
 
 export type PanelId = 'agent' | 'media' | 'text' | 'templates' | 'effects' | 'export' | 'transcript'
 
+/**
+ * The workspace pages, on DaVinci Resolve's own ⇧-digit keys so its users' hands already know
+ * them: Media ⇧2, Edit ⇧4, Color ⇧6, Audio (Resolve's Fairlight) ⇧7, Deliver ⇧8. A page is a
+ * layout over the one project, never a mode: switching changes what is shown, not what edits do.
+ * Five rather than Resolve's seven on purpose — Cut duplicates Edit here, and Fusion is `.brf`.
+ */
+export type WorkspacePage = 'media' | 'edit' | 'color' | 'audio' | 'deliver'
+
+export const WORKSPACE_PAGES: readonly WorkspacePage[] = ['media', 'edit', 'color', 'audio', 'deliver']
+
+/** The inspector's tabs, in Resolve's order. `timeline` is what shows with nothing selected. */
+export type InspectorTab = 'video' | 'title' | 'audio' | 'effects' | 'transition' | 'color' | 'file' | 'timeline'
+
+/** The library slot's tabs (top-left on the Edit page). */
+export type LibraryTab = 'media' | 'effects' | 'index' | 'transcript'
+
 export interface EditorState {
   project: Project
   /** Item ids. Multi-select is supported; most operations act on all of them. */
@@ -90,6 +106,14 @@ export interface EditorState {
   pixelsPerFrame: number
   /** Which left-hand panel is showing. */
   panel: PanelId
+  /** Which workspace page is showing. Remembered per machine (`bay.workspace.page`). */
+  page: WorkspacePage
+  /** The inspector tab last chosen; the inspector falls back when it does not apply. */
+  inspectorTab: InspectorTab
+  /** The library slot's tab. */
+  libraryTab: LibraryTab
+  /** The agent dock beside the workspace, available on every page. */
+  agentDocked: boolean
   /**
    * Which regions are hidden. View state, never project state: it is not saved in the document
    * and never lands on the undo stack — hiding the inspector is not an edit.
@@ -526,6 +550,10 @@ export interface EditorActions {
   setPixelsPerFrame(pixelsPerFrame: number): void
   zoomBy(factor: number): void
   setPanel(panel: PanelId): void
+  setPage(page: WorkspacePage): void
+  setInspectorTab(tab: InspectorTab): void
+  setLibraryTab(tab: LibraryTab): void
+  setAgentDocked(docked: boolean): void
   /** Show or hide one region. */
   setRegionHidden(region: RegionId, hidden: boolean): void
   toggleRegion(region: RegionId): void

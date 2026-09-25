@@ -56,3 +56,11 @@ export { Checkbox, Switch, type CheckboxProps, type SwitchProps } from './Switch
 export { SearchField, TextField, type SearchFieldProps, type TextFieldProps } from './TextField'
 export { Toast } from './Toast'
 export { Tooltip, type TooltipProps, type TooltipSide } from './Tooltip'
+export { BayMark, type BayMarkProps } from './BayMark'
+export { Tabs, type TabItem, type TabsProps } from './Tabs'
+export {
+  ToolbarGroup,
+  ToolButton,
+  type ToolbarGroupProps,
+  type ToolButtonProps
+} from './ToolbarGroup'

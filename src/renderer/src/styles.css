@@ -52,6 +52,12 @@
   --color-line-strong: #333333;
   --color-line-hover: #4a4a4a;
 
+  /* Chrome: the header bars, toolbars, tab strips and the page bar — one step apart from the
+     panels they head, so each region reads as its own band (Resolve's panel title bars). The
+     page bar and top bar sit on `chrome`; `chrome-raised` is a panel's own title strip. */
+  --color-chrome: #1d1d1f;
+  --color-chrome-raised: #232326;
+
   --color-accent: #d9773f;
   --color-accent-hover: #e68a55;
   --color-accent-ink: #ffffff;
@@ -146,6 +152,9 @@
   --color-line: #dadada;
   --color-line-strong: #c6c6c6;
   --color-line-hover: #a8a8a8;
+
+  --color-chrome: #ebebeb;
+  --color-chrome-raised: #f7f7f7;
 
   --color-accent: #b8561f;
   --color-accent-hover: #9e4817;

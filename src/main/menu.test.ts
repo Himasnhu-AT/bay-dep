@@ -225,6 +225,7 @@ test('the menu bar has a menu for every group that has commands, in order', () =
     'Timeline',
     'Playback',
     'View',
+    'Workspace',
     'Window',
     'Help'
   ])
