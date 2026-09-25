@@ -66,6 +66,15 @@ test('a missing key blocks with the way to Providers; a set key does not', () =>
   assert.equal(startBlocker({ provider: 'openai', keys: keys(true), spending: spending(), estimatedCostUsd: 0.05 }), null)
 })
 
+test('keys that could not be read say why, rather than "Checking…" for good; a read in flight still says Checking', () => {
+  const failed = startBlocker({ provider: 'openai', keys: null, spending: null, estimatedCostUsd: 0.05, readError: 'main is not answering' })
+  assert.equal(failed?.reason, 'unreadable')
+  assert.match(failed!.text, /main is not answering/)
+  assert.doesNotMatch(failed!.text, /Checking/)
+  const loading = startBlocker({ provider: 'openai', keys: null, spending: null, estimatedCostUsd: 0.05, readError: null })
+  assert.equal(loading?.reason, 'loading')
+})
+
 test('a spent budget names what was spent and the limit; the same call under budget passes', () => {
   const over = startBlocker({ provider: 'openai', keys: keys(true), spending: spending({ spentUsd: 4.99 }), estimatedCostUsd: 0.05 })
   assert.equal(over?.reason, 'budget')
