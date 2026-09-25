@@ -16,7 +16,8 @@ import { detectBeats } from '@/mcp/beats'
 import { addCaptions } from '@/mcp/captions'
 import { newId, selectTimeline, useEditor } from '@/store/editor'
 import { stillDurationFrames } from '@/store/editing-prefs'
-import { bay, call } from './bay'
+import { bay, call, importMessage } from './bay'
+import { completeBrfImports } from './brfImport'
 
 const state = (): ReturnType<typeof useEditor.getState> => useEditor.getState()
 
@@ -117,6 +118,22 @@ export function addTitle(text: string, place: boolean): string {
     if (place) s.placeAsset(asset.id)
   })
   return asset.id
+}
+
+/**
+ * The system file picker, then everything chosen probed and added to the pool, with the toast
+ * saying what came in. Resolves with the new assets (empty when the picker was dismissed or the
+ * import failed, which `call` has already reported).
+ */
+export async function importMediaDialog(): Promise<Asset[]> {
+  const picked = await call('Import', (api) => api.media.importDialog())
+  // An empty array is the user dismissing the picker, which needs no comment at all.
+  if (!picked || picked.length === 0) return []
+  const imported = await completeBrfImports(picked)
+  state().addAssets(imported.map((entry) => entry.asset))
+  const message = importMessage(imported)
+  state().notify(message.text, message.kind)
+  return imported.map((entry) => entry.asset)
 }
 
 /** The frame after everything on the active timeline — where "Append" puts a clip. */

@@ -22,6 +22,7 @@ export function MediaBrowser(): ReactNode {
 export function MediaSourceViewer(): ReactNode {
   const assetId = useMediaSelection((state) => state.assetId)
   const focusToken = useMediaSelection((state) => state.focusToken)
+  const startUs = useMediaSelection((state) => state.atUs)
   const select = useMediaSelection((state) => state.select)
   const asset = useEditor((state) => (assetId ? state.project.assets.find((a) => a.id === assetId) : undefined))
   if (!asset) {
@@ -38,5 +39,5 @@ export function MediaSourceViewer(): ReactNode {
       </section>
     )
   }
-  return <SourceViewer asset={asset} focusToken={focusToken} variant="large" onClose={() => select(null)} />
+  return <SourceViewer asset={asset} focusToken={focusToken} startUs={startUs} variant="large" onClose={() => select(null)} />
 }

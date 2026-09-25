@@ -15,19 +15,22 @@ interface MediaSelection {
   assetId: string | null
   /** Bumped when a click opens an asset, so the source viewer takes focus and I/O mark the source. */
   focusToken: number
-  select(assetId: string | null, open?: boolean): void
+  /** Where in the source an opening asked the viewer to start (a search hit), in microseconds. */
+  atUs: number
+  select(assetId: string | null, open?: boolean, atUs?: number): void
 }
 
 export const useMediaSelection = create<MediaSelection>((set) => ({
   assetId: null,
   focusToken: 0,
-  select: (assetId, open = false) =>
-    set((state) => ({ assetId, focusToken: open && assetId ? state.focusToken + 1 : state.focusToken }))
+  atUs: 0,
+  select: (assetId, open = false, atUs = 0) =>
+    set((state) => ({ assetId, atUs, focusToken: open && assetId ? state.focusToken + 1 : state.focusToken }))
 }))
 
-/** Opens `assetId` in the source viewer (wherever one is mounted) and gives it focus. */
-export function openInSource(assetId: string): void {
-  useMediaSelection.getState().select(assetId, true)
+/** Opens `assetId` in the source viewer (wherever one is mounted) at `atUs`, and gives it focus. */
+export function openInSource(assetId: string, atUs = 0): void {
+  useMediaSelection.getState().select(assetId, true, atUs)
 }
 
 // -- requests aimed at a surface that may not be mounted yet ----------------------------------

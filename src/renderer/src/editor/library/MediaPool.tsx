@@ -45,8 +45,8 @@ import {
   useFloatingTrigger,
   type MenuEntry
 } from '@/components'
-import { completeBrfImports } from '@/lib/brfImport'
-import { call, importMessage } from '@/lib/bay'
+
+import { call } from '@/lib/bay'
 import { cn } from '@/lib/cn'
 import { shortcutOf } from '@/lib/commands'
 import {
@@ -54,6 +54,7 @@ import {
   endOfTimeline,
   exportCaptions,
   hasCaptions,
+  importMediaDialog,
   importCaptionsDialog,
   locateAndRelink,
   placeAssetRange
@@ -142,11 +143,12 @@ export function MediaPool({ variant = 'panel', inlineSource, title = 'Media Pool
   // Placed caption lines are not media; they live on their Captions track (`mediaPoolAssets`).
   const assets = useMemo(() => mediaPoolAssets(projectAssets, uses), [projectAssets, uses])
   const captionLines = projectAssets.length - assets.length
-  const addAssets = useEditor((state) => state.addAssets)
+
   const notify = useEditor((state) => state.notify)
 
   const selectedId = useMediaSelection((state) => state.assetId)
   const focusToken = useMediaSelection((state) => state.focusToken)
+  const startUs = useMediaSelection((state) => state.atUs)
   const select = useMediaSelection((state) => state.select)
 
   const browser = variant === 'browser'
@@ -191,18 +193,11 @@ export function MediaPool({ variant = 'panel', inlineSource, title = 'Media Pool
 
   const runImport = async (): Promise<void> => {
     setImporting(true)
-    const picked = await call('Import', (api) => api.media.importDialog())
-    // Null is a failure, which `call` has already reported; an empty array is the user
-    // dismissing the picker, which needs no comment at all.
-    if (!picked || picked.length === 0) {
+    try {
+      await importMediaDialog()
+    } finally {
       setImporting(false)
-      return
     }
-    const imported = await completeBrfImports(picked)
-    setImporting(false)
-    addAssets(imported.map((entry) => entry.asset))
-    const message = importMessage(imported)
-    notify(message.text, message.kind)
   }
 
   const newMotionGraphic = (): void =>
@@ -531,7 +526,7 @@ export function MediaPool({ variant = 'panel', inlineSource, title = 'Media Pool
         <div className="flex min-h-0 flex-1">
           <div className="flex min-h-0 min-w-0 flex-1 flex-col">
             {showSource && selected && (
-              <SourceViewer asset={selected} focusToken={focusToken} onClose={() => select(null)} />
+              <SourceViewer asset={selected} focusToken={focusToken} startUs={startUs} onClose={() => select(null)} />
             )}
             {filters}
             {missingAssets.length > 0 && (

@@ -43,12 +43,15 @@ export function SourceViewer({
   asset,
   onClose,
   focusToken = 0,
+  startUs = 0,
   variant = 'compact'
 }: {
   asset: Asset
   onClose(): void
   /** Changes each time a click opens this asset; the viewer then takes focus. */
   focusToken?: number
+  /** Where an opening asked to start (a visual search hit), in microseconds; read with `focusToken`. */
+  startUs?: number
   /**
    * `compact` sits over the bin in a side column; `large` fills the region it is given — the
    * Media page's viewer — with a titled header strip, the picture taking whatever height is left.
@@ -89,6 +92,14 @@ export function SourceViewer({
     setAtFrame(clamped)
     if (media.current) media.current.currentTime = sourceSeekSeconds(clamped, rate)
   }
+
+  // An opening that names a moment (a search hit) starts there rather than at the first frame.
+  // After the reset above, which runs first for a new asset.
+  useEffect(() => {
+    if (focusToken > 0 && startUs > 0 && timed) seek(sourceFrameAtSeconds(startUs / 1_000_000, rate))
+    // Keyed on the opening, not on `seek`, which is a new function every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [asset.id, focusToken, startUs])
 
   // Playing up to an out mark: checked every display frame (not on `timeupdate`, ~4 a second,
   // which ran about three frames past the mark), pausing on the last kept frame and seeking back
