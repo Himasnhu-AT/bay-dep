@@ -49,9 +49,17 @@ type ClipTint = 'video' | 'audio' | 'title' | 'motion'
 const TINTS: Record<ClipTint, { body: string; edge: string }> = {
   video: { body: 'var(--color-clip-video)', edge: 'var(--color-clip-video-edge)' },
   audio: { body: 'var(--color-clip-audio)', edge: 'var(--color-clip-audio-edge)' },
-  title: { body: 'var(--color-clip-title, #372f48)', edge: 'var(--color-clip-title-edge, #5a4a7c)' },
-  motion: { body: 'var(--color-clip-motion, #44361f)', edge: 'var(--color-clip-motion-edge, #7a5c2c)' }
+  title: { body: 'var(--color-clip-title)', edge: 'var(--color-clip-title-edge)' },
+  motion: { body: 'var(--color-clip-motion)', edge: 'var(--color-clip-motion-edge)' }
 }
+
+/**
+ * The picture or waveform sits this far inside the clip's sides and bottom, so the kind's body
+ * colour frames it. Edge to edge, a filmstrip covered the body entirely and a clip's colour was
+ * its footage's: a still and a video on neighbouring tracks, one bright and one dark, read as two
+ * kinds of object with only the thin band to say otherwise.
+ */
+const PICTURE_INSET = 2
 
 function tintOf(asset: Asset | undefined, audio: boolean): ClipTint {
   if (audio) return 'audio'
@@ -259,6 +267,8 @@ function ClipImpl({
   const showThumbs = width >= THUMBS_MIN_WIDTH
   const tint = TINTS[tintOf(asset, audio)]
   const band = innerHeight >= BAND_MIN_CLIP_HEIGHT ? BAND_HEIGHT : 0
+  // The border is 1px each side; the picture's own box is what the filmstrip and waveform fill.
+  const pictureHeight = Math.max(0, innerHeight - 2 - band - PICTURE_INSET)
 
   const strip = useFilmstrip(asset, STRIP_FRAMES, STRIP_HEIGHT, showThumbs && !audio)
   // A still has no filmstrip; its lane repeats the poster. 220 is the media tile's size (long
@@ -360,11 +370,15 @@ function ClipImpl({
     >
       {/* The picture or the sound, under the name band. */}
       {asset && showThumbs && (
-        <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 bottom-0" style={{ top: band }}>
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute overflow-hidden rounded-xs"
+          style={{ top: band, left: PICTURE_INSET, right: PICTURE_INSET, bottom: PICTURE_INSET }}
+        >
           {audio ? (
-            <Waveform peaks={peaks} item={item} asset={asset} fps={fps} height={innerHeight - band} />
+            <Waveform peaks={peaks} item={item} asset={asset} fps={fps} height={pictureHeight} />
           ) : (
-            <Filmstrip frames={lane} item={item} asset={asset} fps={fps} width={width} height={innerHeight - band} />
+            <Filmstrip frames={lane} item={item} asset={asset} fps={fps} width={width - 2 * PICTURE_INSET} height={pictureHeight} />
           )}
         </div>
       )}

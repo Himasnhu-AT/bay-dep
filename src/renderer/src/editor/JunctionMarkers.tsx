@@ -67,13 +67,17 @@ export function JunctionMarkers({
             }`
           : 'No transition on this cut'
 
+        // Named by what the cut has. A cut carrying a transition was read out as "…Click to add
+        // one", which offers a person the thing they already have.
         const detail = broken
           ? 'Stored, but nothing is drawing here.'
           : clamped
             ? `Asked for ${stored?.durationInFrames}, playing ${resolved?.durationInFrames} — ${resolved?.clampedBecause}.`
-            : noRoom !== null
-              ? 'This cut cannot take one — click to see why.'
-              : `Room for up to ${junction.capacityInFrames} frames. Click to add one in the Inspector, ⌥-click for a dialog.`
+            : stored
+              ? 'Click to change or remove it in the Inspector, ⌥-click for a dialog.'
+              : noRoom !== null
+                ? 'This cut cannot take one — click to see why.'
+                : `Room for up to ${junction.capacityInFrames} frames. Click to add one in the Inspector, ⌥-click for a dialog.`
 
         // A transition that plays is drawn over the window it occupies, centred on the cut and
         // labelled, the way editors draw one — a 14px "20" badge read as a glyph, not an edit.
@@ -83,7 +87,7 @@ export function JunctionMarkers({
           const name = KIND_LABEL[stored.kind] ?? stored.kind
           const band = junctionTarget(0, height)
           return (
-            <Tooltip key={junction.key} side="top" label={label} detail={clamped ? detail : 'Click to change or remove it in the Inspector, ⌥-click for a dialog.'}>
+            <Tooltip key={junction.key} side="top" label={label} detail={detail}>
               <button
                 type="button"
                 aria-label={`Transition at frame ${junction.cutFrame}. ${label}. ${detail}`}

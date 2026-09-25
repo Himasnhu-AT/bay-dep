@@ -83,8 +83,17 @@ const TAB_ICON: Record<InspectorTab, ReactNode> = {
   timeline: <Rows3 aria-hidden="true" className="size-3.5 shrink-0" />
 }
 
-/** Below this width the tab row shows icons (each still named in its tooltip and aria-label). */
-const TAB_LABELS_MIN_WIDTH = 400
+/**
+ * The tab row names its tabs in words at every width the inspector normally has (268px by
+ * default, 220px at its smallest): Title, Transition and Color are three glyphs a person has to
+ * learn, and three words they do not. Seven labels do not fit one row at 268px, so the row wraps
+ * to two rather than truncating or dropping them. Icons join the labels once there is room for
+ * both on one row; only below `TAB_LABELS_MIN_WIDTH` — narrower than the panel's own minimum,
+ * so a host that squeezes it — does the row fall back to icons, with the active tab named in
+ * the header.
+ */
+const TAB_ICONS_MIN_WIDTH = 480
+const TAB_LABELS_MIN_WIDTH = 200
 
 /**
  * The inspector, in tabs the way Resolve's is: Video · Title · Audio · Effects · Transition ·
@@ -168,12 +177,13 @@ export function Inspector(): ReactNode {
 
   const tabRow = useRef<HTMLDivElement>(null)
   const narrow = useNarrow(tabRow, TAB_LABELS_MIN_WIDTH)
+  const roomForIcons = !useNarrow(tabRow, TAB_ICONS_MIN_WIDTH)
 
   const shell = (badges: Partial<Record<InspectorTab, number>>, body: ReactNode): ReactNode => {
     const items: TabItem<InspectorTab>[] = tabStates.map((state) => ({
       value: state.value,
       label: state.label,
-      icon: TAB_ICON[state.value],
+      icon: narrow || roomForIcons ? TAB_ICON[state.value] : undefined,
       disabled: !state.enabled,
       hint: state.hint,
       badge: badges[state.value]
@@ -188,7 +198,15 @@ export function Inspector(): ReactNode {
         bodyClassName="flex flex-col"
       >
         <div ref={tabRow}>
-          <Tabs label="Inspector" value={tab} items={items} onChange={setInspectorTab} iconsOnly={narrow && items.length > 1} />
+          <Tabs
+            label="Inspector"
+            value={tab}
+            items={items}
+            onChange={setInspectorTab}
+            iconsOnly={narrow && items.length > 1}
+            // Wraps to a second row rather than clipping a label; each tab keeps the bar's height.
+            className={narrow ? undefined : 'h-auto flex-wrap [&>[role=tab]]:h-7'}
+          />
         </div>
         <ScrollArea className="flex-1">
           <SectionBars>{body}</SectionBars>
