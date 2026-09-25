@@ -20,7 +20,7 @@ import {
   releasePath,
   writeComposition
 } from './html/compositions'
-import { disposeAgent, exportTranscript, sendToAgent, startAgent, stopAgent } from './agent/host'
+import { agentProviders, disposeAgent, exportTranscript, sendToAgent, startAgent, stopAgent } from './agent/host'
 import { mediaToolsReady } from './ffmpeg/ffmpeg'
 import { collectMetrics } from './metrics'
 import { probe } from './ffmpeg/probe'
@@ -131,6 +131,7 @@ interface ChannelApi {
   compositionRelease: BayApi['composition']['release']
 
   agentStart: BayApi['agent']['start']
+  agentProviders: BayApi['agent']['providers']
   agentSend: BayApi['agent']['send']
   agentStop: BayApi['agent']['stop']
   agentDispose: BayApi['agent']['dispose']
@@ -181,7 +182,8 @@ function windowOf(event: IpcMainInvokeEvent): BrowserWindow | null {
 }
 
 const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
-  agentStart: async () => startAgent(),
+  agentStart: async (_event, options) => startAgent(options),
+  agentProviders: async () => agentProviders(),
   agentSend: async (_event, text) => sendToAgent(text),
   agentStop: async () => stopAgent(),
   agentDispose: async () => disposeAgent(),

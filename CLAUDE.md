@@ -71,7 +71,8 @@ pnpm release:signed   # sign + notarize + staple → DMG, update zip, latest-mac
 ```
 
 Environment switches worth knowing: `BAY_AGENT_RUNTIME=sdk` hosts the in-app agent on the Agent
-SDK instead of the `claude` CLI (default); `BAY_MCP_MODE=gateway` makes the proxy list three tools
+SDK instead of the `claude` CLI (default), and `=codex` on OpenAI's `codex` CLI — either overrides
+the Settings › Agent › Model choice; `BAY_MCP_MODE=gateway` makes the proxy list three tools
 (`get_active_project`, `get_guidelines`, `execute`) instead of the whole catalog. `BAY_ACCESS=dev` skips the
 invite-only access check — **unpackaged builds only** — and `./run.sh` sets it (`--gate` does not).
 
@@ -130,6 +131,36 @@ something saves, and nothing a probe does should.
   session), which is why it went. The deny list it was paired with had gone stale: it named
   `Task` after the tool became `Agent`, and never named `Monitor`, which runs commands. A list
   of what is *allowed* cannot miss a tool the CLI adds later; a list of what is denied can.
+
+**The Codex provider has no allow-list, so its sandbox is Codex's own, and it is weaker in one
+named way** (`src/main/agent/codex.ts`, Settings › Agent › Model; `BAY_AGENT_RUNTIME=codex`
+overrides). One `codex exec --json` per turn, `exec resume <thread>` after the first, under
+bay's own `CODEX_HOME` (`<userData>/agent-codex`: a generated `config.toml` plus a *link* to
+the user's `auth.json`, nothing else of `~/.codex`) and a `HOME` inside it. Measured on
+codex-cli 0.149.1:
+- `codex mcp list`: the user's own home lists `chatcut_desktop`, `computer-use`, `cua_repl`,
+  `node_repl`; bay's lists `bay` only. An isolated home with default features still fetched the
+  account's ChatGPT connector catalog (136 tools: Gmail, Drive, Calendar…) and plugin cache; with
+  `apps`/`plugins` off neither cache is created.
+- `HOME` must move too: under an isolated `CODEX_HOME` the user's `~/.agents/skills` were still
+  listed to the model. `codex debug prompt-input` (no model call) is the probe, and
+  `codex.test.ts` runs it with a positive control per exclusion.
+- The model's own tool list, sandbox config in place: `exec` (code mode — the route to MCP tools;
+  `code_mode_host=false` made bay unreachable), `wait`, `request_user_input`, the
+  `collaboration.*` sub-agent tools (feature flags did not remove them; sub-agents inherit this
+  config), `apply_patch`, the three MCP resource readers, `update_plan`, and 37 `bay` tools.
+- Told to try, it could not escape: `id` — no shell tool, and `process is not defined` in `exec`;
+  `apply_patch` to the workspace and to `/tmp` — *"patch rejected: writing is blocked by read-only
+  sandbox"*, and neither file existed afterwards; reading `/etc/hosts` and any fs module —
+  *"unsupported import in exec"*; `fetch` — not defined. **Untested:** whether `read-only` would
+  let a shell *read* files, because with `shell_tool` and `unified_exec` off there is no shell to
+  try it with; a Codex update that re-adds a shell path would change that, which is why the probe
+  is a fixture (`fixtures/codex/sandbox-probe.jsonl`) and worth re-running on upgrade.
+- `developer_instructions` reaches the model verbatim as the first developer message;
+  `project_doc_max_bytes = 0` keeps a workspace `AGENTS.md` out. Skills cannot be loaded by
+  Codex here (it lists a `SKILL.md` but has nothing to open it with), so main inlines each named
+  skill into the message (`withSkills`) and writes none for it. `--strict-config` turns an
+  unrecognised key into a failed start rather than an isolation setting silently ignored.
 
 **bay's skills are real Claude Code skills.** `src/shared/skills.ts` defines them; main writes
 each as `.claude/skills/<slug>/SKILL.md` in the agent's working directory on every start, and the
