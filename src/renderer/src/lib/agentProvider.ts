@@ -13,6 +13,8 @@
 import { create } from 'zustand'
 import type { AgentProvider } from '@shared/agent'
 import { remember, remembered } from '@/store/prefs'
+import { useEditor } from '@/store/editor'
+import { bay } from './bridge'
 
 export const AGENT_PROVIDER_KEY = 'bay.agentProvider'
 
@@ -34,3 +36,26 @@ export const useAgentProvider = create<AgentProviderState>((set) => ({
 }))
 
 export const PROVIDER_LABELS: Record<AgentProvider, string> = { claude: 'Claude', codex: 'Codex' }
+
+/**
+ * Switching provider starts a new conversation: the other model has none of this one's context,
+ * so carrying the session or the log over would show a history it never saw, and a session left
+ * running would keep answering on the old model.
+ *
+ * Here, on the provider store itself, rather than in the agent panel: the panel is a dock that
+ * can be closed, and an effect in it ran only while it was mounted — dock closed, provider
+ * switched in Preferences, dock reopened, and the old session carried on. Every route to
+ * `setProvider` loads this module, so the subscription exists whenever a switch can happen.
+ */
+export function endConversationForProviderChange(): void {
+  const editor = useEditor.getState()
+  if (!editor.agentSessionActive && editor.agentLog.length === 0) return
+  void bay()?.agent.dispose()
+  editor.endAgentSession()
+  editor.clearAgentLog()
+  editor.clearAgentPins()
+}
+
+useAgentProvider.subscribe((state, previous) => {
+  if (state.provider !== previous.provider) endConversationForProviderChange()
+})

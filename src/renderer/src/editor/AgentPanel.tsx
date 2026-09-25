@@ -183,16 +183,16 @@ export function AgentPanel(): ReactNode {
     bottom.current?.scrollIntoView({ block: 'end' })
   }, [log])
 
-  // Switching provider in Settings starts a new conversation: the other model has none of this
-  // one's context, so carrying the log over would show a history it never saw.
+  // Switching provider ends the conversation in `@/lib/agentProvider`, whether or not this dock
+  // is open. What is left here is the panel's own: attachments meant for the old conversation
+  // and a problem line about the old model.
   const provider = useAgentProvider((state) => state.provider)
   const startedWith = useRef(provider)
   useEffect(() => {
     if (startedWith.current === provider) return
     startedWith.current = provider
-    if (useEditor.getState().agentSessionActive || useEditor.getState().agentLog.length > 0) reset()
-    // `reset` is recreated each render and reads only store actions; the provider is the trigger.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    setAttachments([])
+    setProblem(null)
   }, [provider])
 
   /**
