@@ -84,7 +84,7 @@ export function formatDb(db: number): string {
 }
 
 /** The marks a tall meter prints beside its bars, in dBFS. Denser near the top, where mixing happens. */
-export const METER_SCALE_DB: readonly number[] = [0, -3, -6, -12, -18, -24, -36, -48, -60]
+export const METER_SCALE_DB: readonly number[] = [0, -6, -12, -18, -24, -36, -48, -60]
 
 /** Each scale mark with where it sits on the meter (0 bottom, 1 top), for a DOM scale beside a canvas. */
 export function meterTicks(marks: readonly number[] = METER_SCALE_DB): { db: number; label: string; position: number }[] {

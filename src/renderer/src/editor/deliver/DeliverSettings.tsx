@@ -117,6 +117,21 @@ export function PresetCards(): ReactNode {
   const canvas = { width: timeline.width, height: timeline.height }
   return (
     <div role="radiogroup" aria-label="Render preset" className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1">
+      {/* First, as Resolve's Custom Export is: it is lit whenever no preset matches, and a lit
+          card scrolled out of sight would say nothing. */}
+      <div
+        role="radio"
+        aria-checked={custom}
+        aria-disabled="true"
+        aria-label="Custom: your own settings"
+        className={cn(
+          'flex w-[92px] shrink-0 flex-col items-center gap-1.5 rounded-sm border px-1.5 py-2 text-center',
+          custom ? 'border-accent bg-accent/10 text-ink-0' : 'border-dashed border-line text-ink-2'
+        )}
+      >
+        <SlidersHorizontal aria-hidden="true" className="size-5" />
+        <span className="text-[10px] leading-tight font-medium">Custom</span>
+      </div>
       {EXPORT_PRESETS.map((preset) => {
         const chosen = preset.id === current
         return (
@@ -140,19 +155,6 @@ export function PresetCards(): ReactNode {
           </button>
         )
       })}
-      <div
-        role="radio"
-        aria-checked={custom}
-        aria-disabled="true"
-        aria-label="Custom: your own settings"
-        className={cn(
-          'flex w-[92px] shrink-0 flex-col items-center gap-1.5 rounded-sm border px-1.5 py-2 text-center',
-          custom ? 'border-accent bg-accent/10 text-ink-0' : 'border-dashed border-line text-ink-2'
-        )}
-      >
-        <SlidersHorizontal aria-hidden="true" className="size-5" />
-        <span className="text-[10px] leading-tight font-medium">Custom</span>
-      </div>
     </div>
   )
 }

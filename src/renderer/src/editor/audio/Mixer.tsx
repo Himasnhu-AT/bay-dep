@@ -25,7 +25,7 @@ export function Mixer({ className }: MixerProps): ReactNode {
   const timeline = useEditor(selectTimeline)
   const channels = useMemo(() => (timeline ? mixerChannels(project, timeline) : []), [project, timeline])
   return (
-    <section aria-label="Mixer" className={cn('flex min-h-0 min-w-0 flex-col bg-surface-1', className)}>
+    <section aria-label="Mixer" className={cn('flex h-full min-h-0 min-w-0 flex-col bg-surface-1', className)}>
       <header className="flex h-8 shrink-0 items-center gap-2 border-b border-line bg-chrome-raised px-3">
         <h2 className="text-[11px] font-semibold tracking-[0.08em] text-ink-0 uppercase">Mixer</h2>
         <span className="truncate text-[11px] text-ink-2">

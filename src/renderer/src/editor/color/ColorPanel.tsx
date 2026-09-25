@@ -12,6 +12,9 @@ import { GradeSection } from '../GradeSection'
 import { hasLook } from './clips'
 import { pasteGrade, resetGrade, useGradeClipboard } from './gradeClipboard'
 
+/** Below a panel width of 28rem the grade buttons show icons only (their names stay as tooltips). */
+const NARROW = '@max-md:w-7 @max-md:px-0 @max-md:[&>span]:hidden'
+
 export interface ColorPanelProps {
   className?: string
 }
@@ -66,6 +69,7 @@ export function ColorPanel({ className }: ColorPanelProps): ReactNode {
       <ToolbarGroup label="Grade">
         <ToolButton
           label="Copy Grade"
+          className={NARROW}
           icon={<ClipboardCopy aria-hidden="true" className="size-3.5" />}
           disabled={items.length !== 1}
           title={items.length > 1 ? 'Select one clip to copy its grade' : undefined}
@@ -73,12 +77,14 @@ export function ColorPanel({ className }: ColorPanelProps): ReactNode {
         />
         <ToolButton
           label="Paste Grade"
+          className={NARROW}
           icon={<ClipboardPaste aria-hidden="true" className="size-3.5" />}
           disabled={!copied || items.length === 0}
           onClick={paste}
         />
         <ToolButton
           label="Reset Grade"
+          className={NARROW}
           icon={<RotateCcw aria-hidden="true" className="size-3.5" />}
           disabled={!items.some(hasLook)}
           onClick={() => resetGrade(items)}
@@ -90,7 +96,7 @@ export function ColorPanel({ className }: ColorPanelProps): ReactNode {
   if (!timeline || items.length === 0) {
     const unGradeable = selected.length > 0
     return (
-      <section aria-label="Color" className={cn('flex h-full min-h-0 min-w-0 flex-col bg-surface-1', className)}>
+      <section aria-label="Color" className={cn('@container flex h-full min-h-0 min-w-0 flex-col bg-surface-1', className)}>
         {header}
         <EmptyState
           icon={<Palette className="size-6" />}
