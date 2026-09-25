@@ -28,8 +28,8 @@ export interface TabsProps<T extends string> {
 
 /**
  * A row of tabs heading a panel: the inspector's Video / Audio / Effects…, the library's
- * Media Pool / Effects / Index. Arrow keys move between enabled tabs; the chosen tab is the one
- * tab stop, as in a radio group.
+ * Media Pool / Effects / Index. Arrow keys choose the next enabled tab and move focus to it; the
+ * chosen tab is the one tab stop, as in a radio group.
  */
 export function Tabs<T extends string>({
   label,
@@ -41,10 +41,16 @@ export function Tabs<T extends string>({
   className
 }: TabsProps<T>): ReactNode {
   const enabled = items.filter((item) => !item.disabled)
-  const move = (direction: number): void => {
+  // Focus follows the choice. Left on the old button, it sits on a tab that is no longer selected
+  // (and no longer a tab stop), the focus ring marks the wrong tab, and a screen reader announces
+  // nothing, since focus did not move.
+  const move = (list: HTMLElement, direction: number): void => {
     const index = enabled.findIndex((item) => item.value === value)
     const next = enabled[(index + direction + enabled.length) % enabled.length]
-    if (next) onChange(next.value)
+    if (!next) return
+    onChange(next.value)
+    const buttons = [...list.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
+    buttons[items.indexOf(next)]?.focus()
   }
   return (
     <div
@@ -53,10 +59,10 @@ export function Tabs<T extends string>({
       onKeyDown={(event) => {
         if (event.key === 'ArrowRight') {
           event.preventDefault()
-          move(1)
+          move(event.currentTarget, 1)
         } else if (event.key === 'ArrowLeft') {
           event.preventDefault()
-          move(-1)
+          move(event.currentTarget, -1)
         }
       }}
       className={cn(
