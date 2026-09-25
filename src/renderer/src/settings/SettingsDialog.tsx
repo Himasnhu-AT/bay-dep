@@ -140,12 +140,17 @@ function PreferencesBody(): ReactNode {
     const start = isPage(asked) ? asked : lastPage
     return pages.some((page) => page.id === start) ? start : DEFAULT_PAGE
   })
-  // Asked for another page while already open (a second link clicked behind the dialog).
+  // Asked for another page while already open (a second link clicked behind the dialog). The ask
+  // is taken, not just read: left in the store, asking again for the same page after moving to
+  // another would set an equal value, change nothing, and not navigate.
   useEffect(() => {
+    if (asked === null) return
     if (isPage(asked) && pages.some((page) => page.id === asked)) {
       lastPage = asked
       setCurrent(asked)
     }
+    // Still open, with no page asked for: what `setSettingsOpen(true)` means.
+    useEditor.getState().setSettingsOpen(true)
     // `pages` is derived each render; the ask is what matters.
   }, [asked])
   const tabs = useRef(new Map<PreferencesPage, HTMLButtonElement>())
