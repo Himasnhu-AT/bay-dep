@@ -70,7 +70,7 @@ import { assetActions, type AssetAction, type AssetActionId } from './assetActio
 import { AssetDetails } from './AssetDetails'
 import { ImportUrlDialog } from './ImportUrlDialog'
 import { LibraryHeader } from './LibraryHeader'
-import { onLibraryRequest, takeLibraryRequest, useMediaSelection } from './librarySignals'
+import { onLibraryRequest, requestLibrary, takeLibraryRequest, useMediaSelection } from './librarySignals'
 
 type View = 'grid' | 'list'
 const VIEW_KEY = 'bay.media.view'
@@ -279,6 +279,7 @@ export function MediaPool({ variant = 'panel', inlineSource, title = 'Media Pool
         if (!selectFirstUse(asset)) return
         useEditor.getState().setPanel('transcript')
         // The Transcript tab opens on its Subtitles view and focus goes there, not to the page.
+        requestLibrary('subtitles')
         requestFocus('subtitles')
         return
       case 'reveal':
