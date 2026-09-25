@@ -180,7 +180,7 @@ export function Inspector(): ReactNode {
     }))
     return (
       <Panel
-        title={narrow ? `Inspector · ${tabStates.find((state) => state.value === tab)?.label ?? ''}` : 'Inspector'}
+        title={narrow && tabStates.length > 1 ? `Inspector · ${tabStates.find((state) => state.value === tab)?.label ?? ''}` : 'Inspector'}
         actions={
           count > 1 ? <span className="text-[11px] text-ink-1 tabular-nums">{count} clips</span> : undefined
         }
@@ -188,7 +188,7 @@ export function Inspector(): ReactNode {
         bodyClassName="flex flex-col"
       >
         <div ref={tabRow}>
-          <Tabs label="Inspector" value={tab} items={items} onChange={setInspectorTab} iconsOnly={narrow} />
+          <Tabs label="Inspector" value={tab} items={items} onChange={setInspectorTab} iconsOnly={narrow && items.length > 1} />
         </div>
         <ScrollArea className="flex-1">
           <SectionBars>{body}</SectionBars>

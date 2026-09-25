@@ -79,7 +79,6 @@ export function TransitionTab({
           {junctions.length - MAX_CUTS} more cuts — select fewer clips to see them.
         </p>
       )}
-      <div className="px-3 py-3">{addButton}</div>
     </>
   )
 }
