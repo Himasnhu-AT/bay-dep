@@ -1,5 +1,5 @@
 import { useRef, type ReactNode } from 'react'
-import { Check } from 'lucide-react'
+import { Check, ChevronRight } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { FloatingSurface, type Anchor, type Dismiss } from './Floating'
 import { Kbd } from './Kbd'
@@ -17,6 +17,16 @@ export interface MenuAction {
   danger?: boolean
   /** A toggle. Any item that sets it (true or false) makes the menu reserve a check column. */
   checked?: boolean
+  /**
+   * The row opens more rows (the clip menu's Trim, Audio, Ripple Delete pages) and is drawn with
+   * a right-aligned chevron.
+   */
+  submenu?: boolean
+}
+
+/** The row's label, and whether it opens more rows. */
+function rowOf(entry: MenuAction): { label: string; submenu: boolean } {
+  return { label: entry.label, submenu: entry.submenu ?? false }
 }
 
 export type MenuEntry = MenuAction | { kind: 'separator' } | { kind: 'label'; label: string }
@@ -155,12 +165,14 @@ export function Menu({
         }
         actionIndex++
         const toggle = entry.checked !== undefined
+        const row = rowOf(entry)
         return (
           <div
             key={`${actionIndex}-${entry.label}`}
             data-menu-item=""
-            data-menu-label={entry.label}
+            data-menu-label={row.label}
             role={toggle ? 'menuitemcheckbox' : 'menuitem'}
+            aria-haspopup={row.submenu ? 'menu' : undefined}
             aria-checked={toggle ? entry.checked : undefined}
             aria-disabled={entry.disabled || undefined}
             tabIndex={-1}
@@ -198,8 +210,11 @@ export function Menu({
                 {entry.icon}
               </span>
             )}
-            <span className="min-w-0 flex-1 truncate">{entry.label}</span>
+            <span className="min-w-0 flex-1 truncate">{row.label}</span>
             {entry.shortcut && <Kbd shortcut={entry.shortcut} className="ml-4 shrink-0" />}
+            {row.submenu && (
+              <ChevronRight aria-hidden="true" className={cn('ml-2 size-3.5 shrink-0', !entry.disabled && 'text-ink-2')} />
+            )}
           </div>
         )
       })}

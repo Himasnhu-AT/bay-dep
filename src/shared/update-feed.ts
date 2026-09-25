@@ -4,7 +4,7 @@
  * `release/`. Upload them together to the feed folder.
  *
  * Unset until there is somewhere to publish. With it null, bay checks nothing, contacts nothing,
- * and Settings › About says "Updates: releasing soon". Switching updates on is this one line
+ * and Preferences › About says "Updates: releasing soon". Switching updates on is this one line
  * (README, "Releasing"). The updater may contact only this URL's origin (`main/update/policy.ts`),
  * so the feed must serve its files itself and must not redirect to another host.
  */

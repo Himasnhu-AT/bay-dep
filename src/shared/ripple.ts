@@ -209,6 +209,17 @@ export function rippleDelete(
     if (marker.frame >= end) marker.frame -= span
     else if (marker.frame >= start) marker.frame = start
   }
+  // Comments move the same way. A span loses whatever of it was removed, and one left with no
+  // frames becomes a note on the cut.
+  for (const comment of timeline.comments ?? []) {
+    const shift = (frame: number): number => (frame >= end ? frame - span : frame >= start ? start : frame)
+    comment.frame = shift(comment.frame)
+    if (comment.endFrame !== undefined) {
+      const endFrame = shift(comment.endFrame)
+      if (endFrame > comment.frame) comment.endFrame = endFrame
+      else delete comment.endFrame
+    }
+  }
 
   return result
 }

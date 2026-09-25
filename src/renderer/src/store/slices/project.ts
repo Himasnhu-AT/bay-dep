@@ -62,6 +62,7 @@ export function projectSlice({ set, get, history, edit, turnMarks, followReverts
               agentTurnFiles: {},
               agentTurnEdited: false,
               agentTurnUserEdited: false,
+      agentTurnClientEdited: false,
               agentTurnBase: state.agentRunning ? project : null,
               agentProposal: null,
               agentPins: [],

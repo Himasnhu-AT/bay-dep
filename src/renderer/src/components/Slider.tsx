@@ -15,10 +15,37 @@ export interface SliderProps {
   disabled?: boolean
   className?: string
   /**
-   * Where the fill starts: `min` by default. A bipolar control (pan) fills from its centre, so
-   * the bar shows which way and how far rather than a level that is not there.
+   * Where the fill starts: `min` by default. A control with a neutral value inside its range
+   * (pan at 0, brightness at 1, temperature at 0) fills from that value, so the bar shows which
+   * way and how far rather than a level that is not there — filled from the left, every neutral
+   * temperature and lift read as "half on". A tick marks the neutral point.
    */
   origin?: number
+  /** Shorthand for `origin` at the middle of the range, for a symmetric control (-1…1). */
+  bipolar?: boolean
+}
+
+/**
+ * The track range for a control with a neutral value: `neutral` sits `reach` from each end, so an
+ * untouched control's thumb rests on the neutral tick. A control whose stored range is lopsided
+ * around its neutral (Gamma −0.9…4 at 0, Brightness 0…3 at 1) otherwise put its thumb at a fifth
+ * or a third of the track, where it read as "turned down". The range stretches to include `value`,
+ * so a value set past it (by the agent, whose range is wider) is shown where it is and an arrow key
+ * moves it by a step instead of snapping it back to the end; `limit` keeps the track inside what
+ * the field accepts.
+ */
+export function centredRange(
+  neutral: number,
+  reach: number,
+  value: number,
+  limit: { min: number; max: number } = { min: -Infinity, max: Infinity }
+): { min: number; max: number; origin: number } {
+  const shown = Number.isFinite(value) ? value : neutral
+  return {
+    min: Math.max(limit.min, Math.min(neutral - reach, shown)),
+    max: Math.min(limit.max, Math.max(neutral + reach, shown)),
+    origin: neutral
+  }
 }
 
 /**
@@ -38,8 +65,10 @@ export function Slider({
   step = 0.01,
   disabled = false,
   className,
-  origin
+  origin: originProp,
+  bipolar = false
 }: SliderProps): ReactNode {
+  const origin = originProp ?? (bipolar ? (min + max) / 2 : undefined)
   const trackRef = useRef<HTMLDivElement>(null)
   const [draft, setDraft] = useState<number | null>(null)
   const current = draft ?? value
@@ -118,6 +147,13 @@ export function Slider({
       )}
     >
       <div className="relative h-[3px] w-full rounded-full bg-surface-3">
+        {origin !== undefined && originFraction > 0 && originFraction < 1 && (
+          <div
+            aria-hidden="true"
+            className="absolute top-1/2 h-[9px] w-px -translate-x-1/2 -translate-y-1/2 bg-line-hover"
+            style={{ left: `${originFraction * 100}%` }}
+          />
+        )}
         <div
           className="absolute inset-y-0 rounded-full bg-accent/85"
           style={{ left: `${fillFrom * 100}%`, width: `${(fillTo - fillFrom) * 100}%` }}

@@ -17,9 +17,9 @@
  *    exist — which is why it survived: the bug and the feature gated each other.
  */
 
-import { attach, runProbe, PreconditionError, ProbeFailure } from './cdp.mjs'
+import { attach, runProbe, PreconditionError, ProbeFailure, showInspector } from './cdp.mjs'
 
-const CLIP = `${process.cwd()}/assets/podcast-cut/output/goodall-transcript-cut.mp4`
+const CLIP = process.env.CLIP ?? `${process.cwd()}/assets/podcast-cut/output/goodall-transcript-cut.mp4`
 const { evaluate, close } = await attach()
 
 let checks = 0
@@ -70,6 +70,8 @@ check('the clip is at frame 300, not 0', startFrom, 300)
 // The selection has to be empty for the timeline inspector to be the visible one — with a clip
 // selected the panel shows the clip instead, and the control under test is not in the DOM.
 await evaluate(`window.bayEngine.store.setState({ selection: [] })`)
+// And the Inspector is on the Edit page, whose page is remembered per machine: ask for it.
+check('the Edit page shows the Inspector on its Timeline tab', await showInspector(evaluate, 'timeline'), true)
 await new Promise((r) => setTimeout(r, 300))
 
 // -- 1. the control is reachable and reads in the display form --------------

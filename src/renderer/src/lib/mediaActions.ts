@@ -9,14 +9,15 @@
  */
 
 import type { Asset } from '@shared/project'
-import { textAssetName, usToFrames, timelineDuration } from '@shared/project'
+import { assetTrackKind, textAssetName, usToFrames, timelineDuration } from '@shared/project'
 import { captionsToSrt } from '@shared/caption-export'
 import { canRelink, relinkMismatch, siblingCandidates } from '@shared/relink'
 import { detectBeats } from '@/mcp/beats'
 import { addCaptions } from '@/mcp/captions'
 import { newId, selectTimeline, useEditor } from '@/store/editor'
-import { stillDurationFrames } from '@/store/editing-prefs'
-import { bay, call } from './bay'
+import { editingPrefs, stillDurationFrames } from '@/store/editing-prefs'
+import { bay, call, importMessage } from './bay'
+import { completeBrfImports } from './brfImport'
 
 const state = (): ReturnType<typeof useEditor.getState> => useEditor.getState()
 
@@ -74,8 +75,15 @@ export function editIntoTimeline(
     asset.durationUs > 0
       ? Math.max(1, usToFrames(Math.max(0, outUs - inUs) || asset.durationUs, timeline.fps))
       : stillDurationFrames(timeline.fps)
-  const kind = asset.hasVideo || asset.kind === 'image' || asset.kind === 'text' ? 'video' : 'audio'
+  const kind = assetTrackKind(asset)
   const target = timeline.tracks.find((track) => track.kind === kind && !track.locked)
+  // A video whose sound will land on its own clip (Preferences › Editing): Overwrite clears that
+  // span of the audio track too, or the sound would be pushed onto a new track beside what it
+  // replaced. Insert already opens the time on every unlocked track.
+  const soundTrack =
+    mode === 'overwrite' && asset.kind === 'video' && asset.hasVideo && asset.hasAudio && editingPrefs().separateClipAudio
+      ? timeline.tracks.find((track) => track.kind === 'audio' && !track.locked)
+      : undefined
   const at = s.playhead
   let placed: string | null = null
   s.transact(() => {
@@ -83,6 +91,9 @@ export function editIntoTimeline(
       const room = s.openSpan(at, frames, mode, target.id)
       if (!room) return
     }
+    // Only beside a picture that is itself overwriting: with its track locked the picture goes to
+    // a lane of its own, and so must its sound rather than cutting into A1.
+    if (target && soundTrack) s.openSpan(at, frames, 'overwrite', soundTrack.id)
     placed = placeAssetRange(asset, { atFrame: at, ...(target ? { trackId: target.id } : {}), ...options })
   })
   return placed
@@ -117,6 +128,22 @@ export function addTitle(text: string, place: boolean): string {
     if (place) s.placeAsset(asset.id)
   })
   return asset.id
+}
+
+/**
+ * The system file picker, then everything chosen probed and added to the pool, with the toast
+ * saying what came in. Resolves with the new assets (empty when the picker was dismissed or the
+ * import failed, which `call` has already reported).
+ */
+export async function importMediaDialog(): Promise<Asset[]> {
+  const picked = await call('Import', (api) => api.media.importDialog())
+  // An empty array is the user dismissing the picker, which needs no comment at all.
+  if (!picked || picked.length === 0) return []
+  const imported = await completeBrfImports(picked)
+  state().addAssets(imported.map((entry) => entry.asset))
+  const message = importMessage(imported)
+  state().notify(message.text, message.kind)
+  return imported.map((entry) => entry.asset)
 }
 
 /** The frame after everything on the active timeline — where "Append" puts a clip. */

@@ -12,7 +12,7 @@ import {
 import { Badge, Button, IconButton, ProgressBar } from '@/components'
 import { bay } from '@/lib/bay'
 import { useEditor } from '@/store/editor'
-import { Row, Section, SwitchRow } from './parts'
+import { Group, Note, Row, Section, SwitchRow } from './parts'
 
 export function TranscriptionSection(): ReactNode {
   const autoDownload = useEditor((state) => state.autoDownloadModels)
@@ -87,44 +87,50 @@ export function TranscriptionSection(): ReactNode {
       description="Subtitles and the Transcript panel are transcribed on this Mac with whisper.cpp. Your audio never leaves it."
     >
       {/* The engine */}
-      <Row label="whisper.cpp" hint={status?.engine ?? undefined}>
-        {status === null ? (
-          <span className="text-[12px] text-ink-2">Checking…</span>
-        ) : status.engine ? (
-          <Badge tone="success">Installed</Badge>
-        ) : status.brew ? (
-          <Button
-            variant="primary"
-            icon={installing ? <LoaderCircle className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
-            disabled={installing}
-            onClick={() => void install()}
-          >
-            {installing ? 'Installing… (a few minutes)' : 'Install with Homebrew'}
-          </Button>
-        ) : (
-          <span className="max-w-[260px] text-right text-[12px] text-ink-1">
-            Not installed. Install Homebrew from brew.sh, then run <code>brew install whisper-cpp</code>.
-          </span>
-        )}
-      </Row>
-      {installError && <p className="-mt-1 text-[12px] text-pretty text-danger">{installError}</p>}
+      <Group title="Engine">
+        <Row label="whisper.cpp" hint={status?.engine ?? undefined}>
+          {status === null ? (
+            <span className="text-[12px] text-ink-2">Checking…</span>
+          ) : status.engine ? (
+            <Badge tone="success">Installed</Badge>
+          ) : status.brew ? (
+            <Button
+              variant="primary"
+              icon={installing ? <LoaderCircle className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
+              disabled={installing}
+              onClick={() => void install()}
+            >
+              {installing ? 'Installing… (a few minutes)' : 'Install with Homebrew'}
+            </Button>
+          ) : (
+            <span className="max-w-[260px] text-right text-[12px] text-ink-1">
+              Not installed. Install Homebrew from brew.sh, then run <code>brew install whisper-cpp</code>.
+            </span>
+          )}
+        </Row>
+      </Group>
+      {installError && <Note tone="danger">{installError}</Note>}
 
-      <SwitchRow
-        label="Download models when needed"
-        description={`When a transcription finds no model, bay downloads ${defaultWhisperModel('en').label} (${formatBytes(defaultWhisperModel('en').bytes)}) from Hugging Face and checks it before use. Nothing else is sent anywhere.`}
-        checked={autoDownload}
-        onChange={setAutoDownload}
-      />
+      {/* One switch for every model bay can fetch — Visual search links here rather than
+          repeating it, so the setting has one home. */}
+      <Group title="Downloads">
+        <SwitchRow
+          label="Download models when needed"
+          description={`When a transcription finds no model, bay downloads ${defaultWhisperModel('en').label} (${formatBytes(defaultWhisperModel('en').bytes)}) from Hugging Face and checks it before use; visual search fetches its model the same way. Nothing else is sent anywhere.`}
+          checked={autoDownload}
+          onChange={setAutoDownload}
+        />
+      </Group>
 
       {/* The models */}
-      <div className="flex flex-col gap-1">
-        <div className="flex items-baseline justify-between">
-          <h4 className="text-[12px] font-medium text-ink-0">Models</h4>
+      <div className="flex flex-col gap-1.5">
+        <div className="flex items-baseline justify-between gap-3 px-0.5">
+          <h4 className="text-[11px] font-semibold tracking-wide text-ink-1 uppercase">Models</h4>
           <span className="text-[11px] text-ink-2">
             {chosen ? 'Using the one you chose' : 'bay picks the best one you have'}
           </span>
         </div>
-        <ul className="flex flex-col overflow-hidden rounded-md border border-line">
+        <ul className="flex flex-col overflow-hidden rounded-md border border-line bg-surface-0/40">
           {WHISPER_MODELS.map((spec) => {
             const file = whisperFileName(spec.id)
             const installed = installedByFile.get(file) ?? null
@@ -165,7 +171,7 @@ export function TranscriptionSection(): ReactNode {
           ))}
         </ul>
         {status && (
-          <p className="text-[11px] text-pretty text-ink-2">
+          <p className="px-0.5 text-[11px] text-pretty text-ink-2">
             Downloads go to <span className="text-ink-1 select-text">{status.modelDir}</span>. Models other apps
             downloaded are used too, and are theirs to delete.
           </p>

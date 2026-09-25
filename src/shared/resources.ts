@@ -59,6 +59,76 @@ export const RESOURCES: readonly ResourceSpec[] = [
     mimeType: 'text/markdown'
   },
   {
+    uri: 'bay://guide/footage-search',
+    name: 'Finding a shot by what it shows',
+    description:
+      'Read when the user names a shot by its picture and you do not know where it is. Index ' +
+      'once with index_footage, search in caption-like words with search_footage, then turn the ' +
+      'hit (a moment) into the shot with detect_cuts, check it with frame_grid, and place it.',
+    mimeType: 'text/markdown'
+  },
+  {
+    uri: 'bay://guide/review',
+    name: 'Reviewing your own edit',
+    description:
+      'Read before telling the user an edit or export is done. How to watch the result with ' +
+      'frame_grid, the checklist (B-roll on the right line, cues on the word, captions clear of ' +
+      'faces, safe areas, audio, clean cuts and transitions), and what blocking findings mean.',
+    mimeType: 'text/markdown'
+  },
+  {
+    uri: 'bay://guide/generation',
+    name: 'Generating images and video',
+    description:
+      'Read before any generate_image or generate_video call. Stating the cost and getting the ' +
+      'go-ahead, one shot per script line, sizing a clip to how long its line takes to say, what ' +
+      'a reference image is for (identity, style or continuity), framing clear of captions, and ' +
+      'negative constraints.',
+    mimeType: 'text/markdown'
+  },
+  {
+    uri: 'bay://guide/format/talking-head',
+    name: 'Format: talking head',
+    description:
+      'One person to camera — vlog, lesson, UGC testimony. Hook, beats and close; pause and ' +
+      'breath lengths; caption placement; the tool order from transcribe to remove_range to ' +
+      'subtitles; and the checks before calling it done.',
+    mimeType: 'text/markdown'
+  },
+  {
+    uri: 'bay://guide/format/podcast-clip',
+    name: 'Format: podcast or interview clip',
+    description:
+      'A vertical 20–90 s clip from a long conversation: choosing a moment that stands alone, ' +
+      'reframing a landscape recording to 9:16 on the speaking face, word-by-word subtitles ' +
+      'clear of mouths and platform buttons, and the checks.',
+    mimeType: 'text/markdown'
+  },
+  {
+    uri: 'bay://guide/format/ranking',
+    name: 'Format: ranking or listicle',
+    description:
+      'Top-N lists, tier lists and countdowns: reveal, reason and proof per entry, a persistent ' +
+      'board built as one .brf module, reveals timed to the naming word, and the checks.',
+    mimeType: 'text/markdown'
+  },
+  {
+    uri: 'bay://guide/format/ad',
+    name: 'Format: product ad and UGC ad',
+    description:
+      'Hook, problem, proof, offer and call to action with timings for a 30 s ad; a job for ' +
+      'every shot; offer and CTA as typography; real product assets only; and the checks.',
+    mimeType: 'text/markdown'
+  },
+  {
+    uri: 'bay://guide/format/explainer',
+    name: 'Format: explainer with B-roll',
+    description:
+      'Presenter-led or narration-led explainers: exact against mood B-roll, holding a cutaway on ' +
+      'its word, graphics that persist across steps, caption and diagram zones, and the checks.',
+    mimeType: 'text/markdown'
+  },
+  {
     uri: 'bay://guide/brf',
     name: 'Motion graphics as .brf',
     description:
@@ -66,6 +136,15 @@ export const RESOURCES: readonly ResourceSpec[] = [
       'easings, entrance and exit presets, text split word by word, groups and clipping, ' +
       'variables — with complete, valid documents for a title, a lower third, a stat card and ' +
       'kinetic captions to start from.',
+    mimeType: 'text/markdown'
+  },
+  {
+    uri: 'bay://guide/prompt-kits',
+    name: 'Prompt kits for generation',
+    description:
+      'Worked-out prompts for generate_image and generate_video — B-roll, establishing shots, drone ' +
+      'orbits, macro details, product heroes, text-free thumbnail backgrounds and more — each with ' +
+      'its slots, what it keeps out, and a suggested model and aspect. Fill one with fill_prompt_kit.',
     mimeType: 'text/markdown'
   },
   {

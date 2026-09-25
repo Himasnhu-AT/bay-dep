@@ -3,7 +3,7 @@
  */
 
 import { brfAssetFields, brfCodeAssetFields } from '@shared/brf'
-import { activeTimeline, placementLayout, normaliseCrop, isCropped, NO_CROP, defaultLayout, defaultTextStyle, findAsset, findItem, findTrack, framesToUs, itemEnd, itemsOverlap, usToFrames, type Item, type TrackKind } from '@shared/project'
+import { activeTimeline, assetTrackKind, placementLayout, normaliseCrop, isCropped, NO_CROP, defaultLayout, defaultTextStyle, findAsset, findItem, findTrack, framesToUs, itemEnd, itemsOverlap, usToFrames, type Item, type TrackKind } from '@shared/project'
 import { rippleDelete, type RippleDeleteResult } from '@shared/ripple'
 import { applyRelinks } from '@shared/relink'
 import { shiftKeyframes, sliceKeyframes, withKeyframe } from '@shared/keyframes'
@@ -126,11 +126,9 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
       }
 
       const from = Math.max(0, Math.round(atFrame ?? state.playhead))
-      const kind: TrackKind = asset.hasVideo || asset.kind === 'image' || asset.kind === 'text'
-        ? 'video'
-        : 'audio'
+      const kind: TrackKind = assetTrackKind(asset)
 
-      // A still has no duration of its own, so it gets the default from Settings › Editing.
+      // A still has no duration of its own, so it gets the default from Preferences › Editing.
       const naturalFrames =
         asset.durationUs > 0 ? usToFrames(asset.durationUs, timeline.fps) : stillDurationFrames(timeline.fps)
       // A marked part of the source is placed at its own length, so the room looked for is the
@@ -143,7 +141,10 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
       let target = placementTrack(timeline, kind, from, duration, trackId)
 
       const itemId = newId('itm')
-      editTimeline((tl) => {
+      // A video's sound on its own linked clip on an audio track, as in Resolve — in the same edit,
+      // so placing it is still one undo step (Preferences › Editing can keep it inside the picture).
+      const separateSound = asset.kind === 'video' && asset.hasVideo && asset.hasAudio && editingPrefs().separateClipAudio
+      editTimeline((tl, project) => {
         let track = target ? findTrack(tl, target.id) : undefined
         if (!track) {
           // Nothing had room, so the clip gets a new lane rather than overwriting one.
@@ -153,7 +154,7 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
         }
         // Cover or contain, decided by how much of the source cover would crop. A phone video
         // on a landscape timeline keeps under a third of its picture under cover, and arriving
-        // as a band out of the middle reads as bay having mangled the clip. Settings › Editing
+        // as a band out of the middle reads as bay having mangled the clip. Preferences › Editing
         // can fix it to always Fit or always Fill; this is the one placement path, so the
         // setting reaches `place_asset`, a drop, a double-click and the source viewer alike.
         const layout =
@@ -180,6 +181,16 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
         }
         track.items.push(item)
         track.items.sort((a, b) => a.from - b.from)
+        if (separateSound) {
+          detachAudio(project, tl, [itemId], {
+            makeId: newId,
+            makeAudioTrack: (timeline) => {
+              const audioTrack = makeTrack('audio', 1)
+              audioTrack.name = nextTrackName(timeline, 'audio')
+              return audioTrack
+            }
+          })
+        }
       })
       target = null
       set({ selection: [itemId] })
@@ -662,6 +673,18 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
         Object.assign(track, patch)
         // Not soloed is stored as absence, so a project that tried solo saves as one that never did.
         if (track.solo === false) delete track.solo
+        // The fader and pan the same way: unity and centre are absence. Clamped to what the mixer
+        // offers, and a non-finite value is the default rather than a NaN in the file.
+        if (track.volume !== undefined) {
+          const volume = Number.isFinite(track.volume) ? Math.max(0, Math.min(2, track.volume)) : 1
+          if (volume === 1) delete track.volume
+          else track.volume = volume
+        }
+        if (track.pan !== undefined) {
+          const pan = Number.isFinite(track.pan) ? Math.max(-1, Math.min(1, track.pan)) : 0
+          if (pan === 0) delete track.pan
+          else track.pan = pan
+        }
       })
     }
   }

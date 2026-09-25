@@ -5,7 +5,7 @@ import { Button, Field, InlineAlert, NumberField, Select, Modal } from '@/compon
 import { useEditor } from '@/store/editor'
 import { defaultTransitionFrames, whyNoRoom, type Junction } from '@/lib/junctions'
 
-const KINDS: { value: TransitionKind; label: string }[] = [
+export const TRANSITION_KINDS: { value: TransitionKind; label: string }[] = [
   { value: 'cross-dissolve', label: 'Cross dissolve' },
   { value: 'dip-to-black', label: 'Dip to black' },
   { value: 'dip-to-white', label: 'Dip to white' },
@@ -16,9 +16,9 @@ const KINDS: { value: TransitionKind; label: string }[] = [
 ]
 
 /** Kinds that travel, and therefore have somewhere to travel from. */
-const DIRECTIONAL = new Set<TransitionKind>(['wipe', 'push', 'slide'])
+export const DIRECTIONAL = new Set<TransitionKind>(['wipe', 'push', 'slide'])
 
-const DIRECTIONS: { value: TransitionDirection; label: string }[] = [
+export const TRANSITION_DIRECTIONS: { value: TransitionDirection; label: string }[] = [
   { value: 'left', label: 'From left' },
   { value: 'right', label: 'From right' },
   { value: 'up', label: 'From bottom' },
@@ -154,7 +154,7 @@ export function TransitionDialog({
             <Select<TransitionKind>
               label="Transition kind"
               value={kind}
-              options={KINDS}
+              options={TRANSITION_KINDS}
               onChange={setKind}
               disabled={noRoom !== null}
             />
@@ -165,7 +165,7 @@ export function TransitionDialog({
               <Select<TransitionDirection>
                 label="Transition direction"
                 value={direction}
-                options={DIRECTIONS}
+                options={TRANSITION_DIRECTIONS}
                 onChange={setDirection}
                 disabled={noRoom !== null}
               />

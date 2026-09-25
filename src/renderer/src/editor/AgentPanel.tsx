@@ -1,14 +1,59 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { AlertTriangle, Brain, Check, ChevronRight, Download, Loader2, Undo2 } from 'lucide-react'
+import { useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react'
+import {
+  AlertTriangle,
+  Brain,
+  Check,
+  ChevronRight,
+  Film,
+  Loader2,
+  MessageSquarePlus,
+  MessagesSquare,
+  MoreHorizontal,
+  Paperclip,
+  Sparkles,
+  Undo2,
+  X
+} from 'lucide-react'
 import { approvalMessage, DECLINED_MESSAGE, formatElapsed, type AgentEntry } from '@shared/agent'
-import { Button, Markdown, Panel, ScrollArea } from '@/components'
+import {
+  BayMark,
+  Button,
+  IconButton,
+  Markdown,
+  Menu,
+  ScrollArea,
+  Tabs,
+  Tooltip,
+  useFloatingTrigger,
+  type MenuEntry
+} from '@/components'
 import { AGENT_STARTERS, STARTERS_SHOWN, type AgentStarter } from './agentStarters'
+import { GeneratePanel } from './ai/GeneratePanel'
 import { bay } from '@/lib/bay'
+import { PROVIDER_LABELS, useAgentProvider } from '@/lib/agentProvider'
 import { revertImpact, selectFps, useEditor } from '@/store/editor'
 import { composeMessage, pinLabel, type Pin } from '@shared/pins'
 import { insertSkill, skillSegments } from '@shared/skills'
+import { estimateToolCallUsd } from '@shared/generation'
+import { estimateSpeechToolCallUsd } from '@shared/speech'
 import { toolPreview } from '@shared/tool-preview'
 import { Composer } from './Composer'
+import { ASSET_DRAG_TYPE } from './AssetTile'
+import { findAsset } from '@shared/project'
+import { isAttachableFile, manyImagesNote, splitDrop, type AgentAttachmentView } from '@shared/agent-attachments'
+import {
+  deliverMessage,
+  IMPORT_FILES_EVENT,
+  makeThumb,
+  pendingFromAsset,
+  pendingFromFile,
+  picturesSent,
+  roomFor,
+  toInput,
+  toView,
+  type PendingAttachment
+} from '@/lib/agentAttachments'
+import { cn } from '@/lib/cn'
 
 /**
  * Claude Code, in the editor.
@@ -31,7 +76,6 @@ import { Composer } from './Composer'
 export function AgentPanel(): ReactNode {
   const log = useEditor((state) => state.agentLog)
   const running = useEditor((state) => state.agentRunning)
-  const sessionActive = useEditor((state) => state.agentSessionActive)
   const logUserMessage = useEditor((state) => state.logUserMessage)
   const startAgentSession = useEditor((state) => state.startAgentSession)
   const endAgentSession = useEditor((state) => state.endAgentSession)
@@ -39,14 +83,77 @@ export function AgentPanel(): ReactNode {
 
   const [draft, setDraft] = useState('')
   const [problem, setProblem] = useState<string | null>(null)
+  const [attachments, setAttachments] = useState<PendingAttachment[]>([])
+  const [dragOver, setDragOver] = useState(false)
+  const [sending, setSending] = useState(false)
+  const sendingNow = useRef(false)
+  const manyPictures = manyImagesNote(picturesSent(log))
+
+  /**
+   * Add what the user attached, up to the limit, saying what was refused and why. Thumbnails are
+   * made after the chips appear, so a large video does not hold the chip back.
+   */
+  const addAttachments = (candidates: Array<{ ok: true; pending: PendingAttachment } | { ok: false; error: string }>): void => {
+    const refused = candidates.flatMap((c) => (c.ok ? [] : [c.error]))
+    const accepted = candidates.flatMap((c) => (c.ok ? [c.pending] : []))
+    const room = roomFor(attachments.length, accepted.length)
+    const taken = accepted.slice(0, room.take)
+    if (room.error) refused.push(room.error)
+    setProblem(refused.length > 0 ? refused.join(' ') : null)
+    if (taken.length === 0) return
+    setAttachments((list) => [...list, ...taken])
+    for (const pending of taken) {
+      void makeThumb(pending).then((thumb) =>
+        setAttachments((list) => list.map((a) => (a.id === pending.id ? { ...a, thumb } : a)))
+      )
+    }
+  }
+  const addFiles = (files: readonly File[]): void => {
+    let pasted = 0
+    addAttachments(files.map((file) => pendingFromFile(file, `Pasted image ${(pasted += 1)}`)))
+  }
+  const removeAttachment = (id: string): void => setAttachments((list) => list.filter((a) => a.id !== id))
+
+  // Files from Finder and assets from the media bin. Only pictures and video are the panel's: a
+  // drop here is taken (`preventDefault`, which the window's own handler respects) only when it
+  // holds at least one, and whatever else it holds is handed to the window's import
+  // (`IMPORT_FILES_EVENT`) — dropping a song or a caption file here imports it, as anywhere else.
+  // While dragging, only MIME types are visible, so a Finder file without one (some `.mkv`) shows
+  // the import overlay but is still attached on drop, where its name can be read.
+  const mediaDrag = (event: DragEvent): boolean =>
+    event.dataTransfer.types.includes(ASSET_DRAG_TYPE) ||
+    Array.from(event.dataTransfer.items).some((item) => item.kind === 'file' && isAttachableFile('', item.type))
+  const onDragOver = (event: DragEvent): void => {
+    if (!mediaDrag(event)) {
+      setDragOver(false)
+      return
+    }
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'copy'
+    setDragOver(true)
+  }
+  const onDrop = (event: DragEvent): void => {
+    setDragOver(false)
+    const assetId = event.dataTransfer.getData(ASSET_DRAG_TYPE)
+    if (assetId) {
+      event.preventDefault()
+      const asset = findAsset(useEditor.getState().project, assetId)
+      addAttachments([asset ? pendingFromAsset(asset) : { ok: false, error: 'That asset is no longer in the project.' }])
+      return
+    }
+    const files = Array.from(event.dataTransfer.files)
+    const { attach, importRest } = splitDrop(files.map((file) => ({ name: file.name, type: file.type })))
+    // Nothing to attach: not the panel's drop. The window imports it all.
+    if (attach.length === 0) return
+    event.preventDefault()
+    addFiles(attach.map((i) => files[i]!))
+    if (importRest.length > 0) window.dispatchEvent(new CustomEvent(IMPORT_FILES_EVENT, { detail: importRest.map((i) => files[i]!) }))
+  }
   const bottom = useRef<HTMLDivElement | null>(null)
   const composer = useRef<HTMLTextAreaElement | null>(null)
+  const [tab, setTab] = useState<AgentTab>('chat')
 
-  // A starter fills the composer and hands it back to the user — never sends. The prompt is a
-  // draft: which clip, whose name, what style are theirs to add, and sending on click would
-  // start a paid turn from a single mis-click.
-  const pickStarter = (starter: AgentStarter): void => {
-    setDraft(insertSkill(draft, starter.skill))
+  const focusComposer = (): void => {
     requestAnimationFrame(() => {
       const box = composer.current
       if (!box) return
@@ -55,9 +162,38 @@ export function AgentPanel(): ReactNode {
     })
   }
 
+  // A starter fills the composer and hands it back to the user — never sends. The prompt is a
+  // draft: which clip, whose name, what style are theirs to add, and sending on click would
+  // start a paid turn from a single mis-click.
+  const pickStarter = (starter: AgentStarter): void => {
+    setDraft(insertSkill(draft, starter.skill))
+    focusComposer()
+  }
+
+  // A quick action on the Generate tab: the same, from the other tab. What was already typed is
+  // kept, with the action's words after it.
+  const pickQuickAction = (text: string): void => {
+    const body = draft.replace(/\s+$/, '')
+    setDraft(body ? `${body} ${text}` : text)
+    setTab('chat')
+    focusComposer()
+  }
+
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: 'end' })
   }, [log])
+
+  // Switching provider ends the conversation in `@/lib/agentProvider`, whether or not this dock
+  // is open. What is left here is the panel's own: attachments meant for the old conversation
+  // and a problem line about the old model.
+  const provider = useAgentProvider((state) => state.provider)
+  const startedWith = useRef(provider)
+  useEffect(() => {
+    if (startedWith.current === provider) return
+    startedWith.current = provider
+    setAttachments([])
+    setProblem(null)
+  }, [provider])
 
   /**
    * One user turn, from the text box or from a decision on a proposal card.
@@ -70,37 +206,59 @@ export function AgentPanel(): ReactNode {
    * `shown` is what the conversation displays when it differs from what the agent receives — an
    * approval is one short line to the user and the full list of calls to the model.
    */
-  const deliver = async (text: string, pins: Pin[] = [], shown?: string): Promise<void> => {
-    if (!text || running) return
+  const deliver = async (
+    text: string,
+    pins: Pin[] = [],
+    shown?: string,
+    attached: PendingAttachment[] = []
+  ): Promise<void> => {
+    // `sendingNow` rather than the state: two clicks in one frame both read the state as false.
+    if ((!text && attached.length === 0) || running || sendingNow.current) return
     const api = bay()
     if (!api) {
       setProblem('bay is not answering. The main process may still be starting.')
+      if (attached.length > 0) setAttachments((list) => [...attached, ...list])
       return
     }
     setProblem(null)
-    logUserMessage(shown ?? text, pins)
+    logUserMessage(shown ?? text, pins, attached.map(toView))
 
-    // Starting is separate from sending so a missing `claude` binary reads as "could not start"
-    // rather than as a model that ignored the message.
-    if (!sessionActive) {
-      const started = await api.agent.start()
-      if (!started.ok) {
-        setProblem(started.error)
-        return
-      }
-      startAgentSession()
+    // From the click until main has the message — the start, reading the files, main preparing a
+    // video — the composer says so and takes no second message, which would otherwise be sent
+    // while this one was still on its way.
+    sendingNow.current = true
+    setSending(true)
+    try {
+      await deliverMessage(attached, {
+        // Starting is separate from sending so a missing `claude` binary reads as "could not
+        // start" rather than as a model that ignored the message.
+        start: async () => {
+          if (useEditor.getState().agentSessionActive) return { ok: true }
+          const started = await api.agent.start({ provider: useAgentProvider.getState().provider })
+          if (started.ok) startAgentSession()
+          return started.ok ? { ok: true } : started
+        },
+        toInputs: (list) => Promise.all(list.map(toInput)),
+        // The log shows what was typed, with the pins as chips; the agent receives the pins
+        // spelled out as ids and frames ahead of it.
+        send: (inputs) => api.agent.send(composeMessage(text, pins, selectFps(useEditor.getState())), inputs),
+        // Given back rather than lost: the user removes the one that was refused and sends again.
+        giveBack: (list) => setAttachments((current) => [...list, ...current]),
+        problem: setProblem
+      })
+    } finally {
+      sendingNow.current = false
+      setSending(false)
     }
-    // The log shows what was typed, with the pins as chips; the agent receives the pins spelled
-    // out as ids and frames ahead of it.
-    const sent = await api.agent.send(composeMessage(text, pins, selectFps(useEditor.getState())))
-    if (!sent.ok) setProblem(sent.error ?? 'The message could not be delivered.')
   }
 
   // Typed messages carry the pins; a decision on a proposal card does not — it already names
   // the exact calls it approves.
   const send = async (text: string): Promise<void> => {
+    const attached = attachments
     setDraft('')
-    await deliver(text, useEditor.getState().agentPins)
+    setAttachments([])
+    await deliver(text, useEditor.getState().agentPins, undefined, attached)
   }
 
   const stop = (): void => {
@@ -129,38 +287,64 @@ export function AgentPanel(): ReactNode {
     endAgentSession()
     clearAgentLog()
     useEditor.getState().clearAgentPins()
+    setAttachments([])
     setDraft('')
     setProblem(null)
   }
 
+  const moreItems: MenuEntry[] = [
+    { label: 'Agent settings…', onSelect: () => useEditor.getState().setSettingsOpen(true, 'agent') },
+    ...(debugMode
+      ? [
+          { kind: 'separator' as const },
+          {
+            label: exporting ? 'Exporting transcript…' : 'Export transcript',
+            disabled: log.length === 0 || exporting,
+            onSelect: () => void exportTranscript()
+          }
+        ]
+      : [])
+  ]
+
   return (
-    <Panel
-      title="Agent"
-      className="h-full"
-      bodyClassName="flex flex-col"
-      actions={
-        debugMode || log.length > 0 ? (
-          <>
-            {debugMode && (
-              <Button
-                variant="subtle"
-                icon={<Download className="size-3.5" />}
-                disabled={log.length === 0 || exporting}
-                onClick={() => void exportTranscript()}
-                title="Debug mode: write this conversation to a folder in Downloads"
-              >
-                {exporting ? 'Exporting…' : 'Export transcript'}
-              </Button>
-            )}
-            {log.length > 0 && (
-              <Button variant="subtle" onClick={reset}>
-                New
-              </Button>
-            )}
-          </>
-        ) : undefined
-      }
-    >
+    <section aria-labelledby="agent-dock-title" className="flex h-full min-h-0 flex-col bg-surface-1">
+      <AgentHeader
+        canReset={log.length > 0 || attachments.length > 0 || draft.length > 0}
+        onReset={reset}
+        moreItems={moreItems}
+      />
+      <Tabs<AgentTab>
+        label="Agent views"
+        value={tab}
+        onChange={setTab}
+        items={[
+          { value: 'chat', label: 'Chat', icon: <MessagesSquare aria-hidden="true" className="size-3.5" /> },
+          { value: 'generate', label: 'Generate', icon: <Sparkles aria-hidden="true" className="size-3.5" /> }
+        ]}
+      />
+      {tab === 'generate' ? (
+        <ScrollArea className="min-h-0 flex-1">
+          <GeneratePanel onDraft={pickQuickAction} />
+        </ScrollArea>
+      ) : (
+      <div
+        className={cn('relative flex min-h-0 flex-1 flex-col', dragOver && 'ring-2 ring-accent ring-inset')}
+        onDragOver={onDragOver}
+        onDragLeave={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragOver(false)
+        }}
+        onDrop={onDrop}
+      >
+      {dragOver && (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 z-10 grid place-items-center bg-accent/5 text-[12px] font-medium text-ink-0"
+        >
+          <span className="flex items-center gap-1.5 rounded-md bg-surface-2 px-2 py-1 shadow-pop">
+            <Paperclip className="size-3.5" /> Attach to the message
+          </span>
+        </div>
+      )}
       <ScrollArea className="flex-1">
         {log.length === 0 ? (
           <Starters onPick={pickStarter} />
@@ -182,20 +366,104 @@ export function AgentPanel(): ReactNode {
         </div>
       )}
 
+      {manyPictures && (
+        <p className="border-t border-line px-2 py-1.5 text-[11px] leading-relaxed text-ink-2">{manyPictures}</p>
+      )}
+
       <Composer
         running={running}
+        sending={sending}
         onSend={send}
         onStop={stop}
         onNewConversation={reset}
         draft={draft}
         setDraft={setDraft}
         textareaRef={composer}
+        attachments={attachments}
+        onAddFiles={addFiles}
+        onRemoveAttachment={removeAttachment}
       />
-    </Panel>
+      </div>
+      )}
+    </section>
   )
 }
 
-type Deliver = (text: string, pins?: Pin[], shown?: string) => Promise<void>
+type AgentTab = 'chat' | 'generate'
+
+/**
+ * The dock's title strip: the mark and "Agent", which model is answering, and the three things
+ * a person does to the conversation as a whole — start over, the rare options, close.
+ */
+function AgentHeader({
+  canReset,
+  onReset,
+  moreItems
+}: {
+  canReset: boolean
+  onReset: () => void
+  moreItems: MenuEntry[]
+}): ReactNode {
+  const provider = useAgentProvider((state) => state.provider)
+  const running = useEditor((state) => state.agentRunning)
+  const setAgentDocked = useEditor((state) => state.setAgentDocked)
+  const more = useFloatingTrigger()
+  return (
+    <header className="@container flex h-9 shrink-0 items-center gap-1.5 border-b border-line bg-chrome pr-1 pl-2.5">
+      <BayMark variant="glyph" size={15} />
+      <h2 id="agent-dock-title" className="text-[13px] font-semibold text-ink-0">
+        Agent
+      </h2>
+      <Tooltip label={`Answered by ${PROVIDER_LABELS[provider]}, with bay's tools and nothing else. Change it in Preferences › Agent.`}>
+        <button
+          type="button"
+          onClick={() => useEditor.getState().setSettingsOpen(true, 'agent')}
+          className="t-fast flex h-5 items-center gap-1 rounded-full border border-line-strong px-1.5 text-[10.5px] text-ink-1 hover:border-line-hover hover:text-ink-0"
+        >
+          {running && <Loader2 aria-hidden="true" className="size-2.5 animate-spin" />}
+          {PROVIDER_LABELS[provider]}
+        </button>
+      </Tooltip>
+      <div className="flex-1" />
+      <Tooltip label="New conversation" detail="Clears the chat and the pins. The project is not touched.">
+        <button
+          type="button"
+          aria-label="New conversation"
+          disabled={!canReset}
+          onClick={onReset}
+          className="t-press flex h-7 items-center gap-1 rounded-sm px-1.5 text-[11px] font-medium text-ink-1 hover:bg-surface-3 hover:text-ink-0 disabled:pointer-events-none disabled:opacity-35"
+        >
+          <MessageSquarePlus aria-hidden="true" className="size-3.5" />
+          <span className="hidden @[260px]:inline">New</span>
+        </button>
+      </Tooltip>
+      <IconButton {...more.triggerProps} label="More agent options" icon={<MoreHorizontal className="size-3.5" />} />
+      <Menu {...more.surfaceProps} label="Agent options" side="bottom" align="end" items={moreItems} />
+      <IconButton label="Close the agent" icon={<X className="size-3.5" />} onClick={() => setAgentDocked(false)} />
+    </header>
+  )
+}
+
+type Deliver = (text: string, pins?: Pin[], shown?: string, attached?: PendingAttachment[]) => Promise<void>
+
+/** An attachment as the transcript shows it: its thumbnail, or its name when there is none. */
+function AttachmentThumb({ view }: { view: AgentAttachmentView }): ReactNode {
+  return (
+    <li
+      title={view.name}
+      className="relative grid size-14 place-items-center overflow-hidden rounded-md border border-line-strong bg-surface-2"
+    >
+      {view.thumb ? (
+        <img src={view.thumb} alt={view.name} className="size-full object-cover" draggable={false} />
+      ) : (
+        <span className="px-1 text-center text-[9.5px] leading-tight break-all text-ink-2">{view.name}</span>
+      )}
+      {view.kind === 'video' && (
+        <Film aria-label="video" className="absolute right-0.5 bottom-0.5 size-3 rounded-sm bg-black/60 p-px text-white" />
+      )}
+    </li>
+  )
+}
 
 /** What the user sent: their words, with what they had pinned shown as chips above them. */
 function UserEntry({ entry }: { entry: Extract<AgentEntry, { kind: 'user' }> }): ReactNode {
@@ -203,6 +471,13 @@ function UserEntry({ entry }: { entry: Extract<AgentEntry, { kind: 'user' }> }):
 
   return (
     <div className="flex max-w-[92%] flex-col items-end gap-1 self-end">
+      {entry.attachments && entry.attachments.length > 0 && (
+        <ul aria-label="Attached to this message" className="flex flex-wrap justify-end gap-1">
+          {entry.attachments.map((view, index) => (
+            <AttachmentThumb key={index} view={view} />
+          ))}
+        </ul>
+      )}
       {entry.pins && entry.pins.length > 0 && (
         <ul aria-label="Pinned for this message" className="flex flex-wrap justify-end gap-1">
           {entry.pins.map((pin) => (
@@ -217,7 +492,7 @@ function UserEntry({ entry }: { entry: Extract<AgentEntry, { kind: 'user' }> }):
           ))}
         </ul>
       )}
-      <p className="rounded-lg bg-surface-3 px-2.5 py-1.5 text-[12px] leading-relaxed whitespace-pre-wrap text-ink-0">
+      {entry.text && <p className="rounded-lg bg-surface-3 px-2.5 py-1.5 text-[12px] leading-relaxed whitespace-pre-wrap text-ink-0">
         {skillSegments(entry.text).map((part, index) =>
           part.skill ? (
             <span
@@ -231,7 +506,7 @@ function UserEntry({ entry }: { entry: Extract<AgentEntry, { kind: 'user' }> }):
             <span key={index}>{part.text}</span>
           )
         )}
-      </p>
+      </p>}
     </div>
   )
 }
@@ -364,6 +639,8 @@ function ToolCard({ entry }: { entry: Extract<AgentEntry, { kind: 'tool' }> }): 
   // A failed call opens itself. Its text is the recovery instruction, and hiding that behind a
   // click is hiding the only part that helps.
   const expanded = open || entry.state === 'failed'
+  // A paid call says what it costs where the user already looks: on the card, not in its result.
+  const costUsd = estimateToolCallUsd(entry.tool, entry.args) ?? estimateSpeechToolCallUsd(entry.tool, entry.args)
 
   return (
     <div className="rounded border border-line bg-surface-2 text-[11px]">
@@ -386,6 +663,11 @@ function ToolCard({ entry }: { entry: Extract<AgentEntry, { kind: 'tool' }> }): 
             ? `/${entry.args['skill']} loaded`
             : entry.tool}
         </span>
+        {costUsd !== null && (
+          <span className="font-mono text-ink-2" title="Estimated from list prices; the provider bills the actual amount.">
+            ~${costUsd.toFixed(2)}
+          </span>
+        )}
         {(hasArgs || entry.result) && (
           <ChevronRight
             aria-hidden="true"

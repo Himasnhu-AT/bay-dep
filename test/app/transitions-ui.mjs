@@ -16,9 +16,9 @@
 
 import { attach, runProbe, PreconditionError, ProbeFailure } from './cdp.mjs'
 
-const CLIP = `${process.cwd()}/assets/podcast-cut/output/goodall-transcript-cut.mp4`
+const CLIP = process.env.CLIP ?? `${process.cwd()}/assets/podcast-cut/output/goodall-transcript-cut.mp4`
 // A video asset is refused by an audio track, so the audio half of this probe needs its own.
-const BED = `${process.cwd()}/assets/round2/bed_pad_c3.wav`
+const BED = process.env.BED ?? `${process.cwd()}/assets/round2/bed_pad_c3.wav`
 const { evaluate, close } = await attach()
 
 let checks = 0
@@ -105,7 +105,9 @@ const openDialog = (frame) =>
     const buttons = [...document.querySelectorAll('button[aria-label^="Transition at frame"]')]
     const one = buttons.find((el) => el.getAttribute('aria-label').startsWith('Transition at frame ${frame}.'))
     if (!one) return false
-    one.click()
+    // A plain click edits the cut in the Inspector's Transition tab; ⌥-click opens the dialog,
+    // which is what this probe drives.
+    one.dispatchEvent(new MouseEvent('click', { bubbles: true, altKey: true }))
     return true
   })()`)
 

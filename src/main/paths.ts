@@ -58,6 +58,14 @@ export function fontsDir(): string {
   return ensure(join(app.getPath('userData'), 'fonts'))
 }
 
+/**
+ * Videos `import_url` downloaded with yt-dlp, one folder per download. Not a cache: a placed clip
+ * plays from here for as long as the project uses it.
+ */
+export function downloadsDir(): string {
+  return ensure(join(app.getPath('userData'), 'downloads'))
+}
+
 /** Scratch space for export intermediates — half-written video before the audio is muxed. */
 export function exportScratchDir(): string {
   return ensure(join(cacheDir(), 'export'))

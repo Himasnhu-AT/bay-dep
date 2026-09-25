@@ -109,6 +109,10 @@ else
   BAY_ACCESS=dev
   export BAY_ACCESS
 fi
+# MCP clients are off by default (Preferences › Agent); a dev run opens bay-mcp.sock so terminal
+# clients and the probes in test/app/ that use it can connect.
+BAY_MCP_CLIENTS=1
+export BAY_MCP_CLIENTS
 ./node_modules/.bin/electron . \
   --remote-debugging-port="$PORT" \
   --disable-backgrounding-occluded-windows \

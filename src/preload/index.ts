@@ -23,10 +23,12 @@ import type {
   ThumbnailRequest
 } from '@shared/ipc'
 import { IPC } from '@shared/ipc'
-import type { AgentEntry, AgentEvent } from '@shared/agent'
+import type { AgentEntry, AgentEvent, AgentProvider } from '@shared/agent'
+import type { AgentAttachmentInput } from '@shared/agent-attachments'
 import type { McpToolCall, McpToolResult } from '@shared/mcp'
 import type { Project } from '@shared/project'
 import type { WhisperDownload } from '@shared/whisper'
+import type { VisionStatus } from '@shared/visual-search'
 import type { AccessStatus } from '@shared/access'
 import type { UpdateStatus } from '@shared/update'
 
@@ -41,18 +43,14 @@ const api: BayApi = {
         ffmpeg: string | null
         ffprobe: string | null
       }>,
+    setMcpClients: (on: boolean) => ipcRenderer.invoke(IPC.appSetMcpClients, on) as ReturnType<BayApi['app']['setMcpClients']>,
+    repairStorage: () => ipcRenderer.invoke(IPC.appRepairStorage) as ReturnType<BayApi['app']['repairStorage']>,
     storageReady: () =>
       ipcRenderer.invoke(IPC.appStorageReady) as Promise<{
         ready: boolean
         error: string | null
       }>,
-    mcpReady: () =>
-      ipcRenderer.invoke(IPC.appMcpReady) as Promise<{
-        ready: boolean
-        error: string | null
-        socketPath: string | null
-        connectionsSeen: number
-      }>,
+    mcpReady: () => ipcRenderer.invoke(IPC.appMcpReady) as ReturnType<BayApi['app']['mcpReady']>,
     onMenuCommand: (listener: (command: MenuCommand) => void) => {
       // The wrapper is held for the same reason as `onProgress`: `removeListener` matches by
       // identity, so building a fresh arrow inside the unsubscribe would remove nothing.
@@ -68,6 +66,7 @@ const api: BayApi = {
     importDialog: () => ipcRenderer.invoke(IPC.mediaImportDialog) as Promise<ImportedAsset[]>,
     importPaths: (paths: string[]) =>
       ipcRenderer.invoke(IPC.mediaImportPaths, paths) as Promise<ImportedAsset[]>,
+    importUrl: (url: string, options?: { dryRun?: boolean }) => ipcRenderer.invoke(IPC.mediaImportUrl, url, options),
     probe: (path: string) => ipcRenderer.invoke(IPC.mediaProbe, path) as Promise<ProbeResult>,
     transcribe: (path: string, language?: string, options?: { download?: boolean; model?: string | null }) =>
       ipcRenderer.invoke(IPC.mediaTranscribe, path, language, options),
@@ -78,6 +77,7 @@ const api: BayApi = {
     waveform: (assetId: string, path: string, buckets: number) =>
       ipcRenderer.invoke(IPC.mediaWaveform, assetId, path, buckets) as Promise<number[]>,
     beats: (path: string, options?: { beatsPerBar?: number }) => ipcRenderer.invoke(IPC.mediaBeats, path, options),
+    cuts: (path: string, options?: { threshold?: number }) => ipcRenderer.invoke(IPC.mediaCuts, path, options),
     revealInFolder: (path: string) =>
       ipcRenderer.invoke(IPC.mediaReveal, path) as Promise<void>,
     stat: (paths: string[]) => ipcRenderer.invoke(IPC.mediaStat, paths) as Promise<(number | null)[]>,
@@ -116,9 +116,40 @@ const api: BayApi = {
     }
   },
 
+  vision: {
+    status: () => ipcRenderer.invoke(IPC.visionStatus),
+    download: () => ipcRenderer.invoke(IPC.visionDownload),
+    cancelDownload: () => ipcRenderer.invoke(IPC.visionCancelDownload),
+    deleteModel: () => ipcRenderer.invoke(IPC.visionDelete),
+    index: (assets, options) => ipcRenderer.invoke(IPC.visionIndex, assets, options),
+    cancelIndex: () => ipcRenderer.invoke(IPC.visionCancelIndex),
+    search: (request) => ipcRenderer.invoke(IPC.visionSearch, request),
+    onChange: (listener) => {
+      const handler = (_event: unknown, payload: VisionStatus): void => listener(payload)
+      ipcRenderer.on(IPC.visionChanged, handler)
+      return () => ipcRenderer.removeListener(IPC.visionChanged, handler)
+    }
+  },
+
+  generation: {
+    keys: () => ipcRenderer.invoke(IPC.generationKeys),
+    setKey: (provider, fields) => ipcRenderer.invoke(IPC.generationSetKey, provider, fields),
+    clearKey: (provider) => ipcRenderer.invoke(IPC.generationClearKey, provider),
+    start: (request, options) => ipcRenderer.invoke(IPC.generationStart, request, options),
+    reserve: (totalUsd) => ipcRenderer.invoke(IPC.generationReserve, totalUsd),
+    release: (reservationId) => ipcRenderer.invoke(IPC.generationRelease, reservationId),
+    dubs: () => ipcRenderer.invoke(IPC.generationDubs),
+    saveDub: (record) => ipcRenderer.invoke(IPC.generationSaveDub, record),
+    job: (id) => ipcRenderer.invoke(IPC.generationJob, id),
+    jobs: () => ipcRenderer.invoke(IPC.generationJobs),
+    spending: () => ipcRenderer.invoke(IPC.generationSpending),
+    setLimits: (limits) => ipcRenderer.invoke(IPC.generationSetLimits, limits)
+  },
+
   agent: {
-    start: () => ipcRenderer.invoke(IPC.agentStart),
-    send: (text: string) => ipcRenderer.invoke(IPC.agentSend, text),
+    start: (options?: { provider?: AgentProvider }) => ipcRenderer.invoke(IPC.agentStart, options),
+    providers: () => ipcRenderer.invoke(IPC.agentProviders),
+    send: (text: string, attachments?: AgentAttachmentInput[]) => ipcRenderer.invoke(IPC.agentSend, text, attachments),
     stop: () => ipcRenderer.invoke(IPC.agentStop),
     dispose: () => ipcRenderer.invoke(IPC.agentDispose),
     exportTranscript: (projectName: string, log: AgentEntry[]) =>

@@ -37,6 +37,9 @@ import {
 import { buildAudioGraph } from '../export/audio-graph'
 import { masterFilter } from '../export/master'
 import { colourFilter } from '../media/frame-grab'
+import { sceneCutFilter } from '../media/scene-cuts'
+import { contactSheetArgs, contactSheetPlan, imageScaleFilter } from '../agent/attachments'
+import { sampleFilter } from '@shared/visual-search'
 import { NO_VENDORED_FFMPEG, vendoredTools } from './vendor'
 
 const TOOLS = vendoredTools()
@@ -134,6 +137,13 @@ function filtersTheCodeWrites(): Set<string> {
     graphs.push(graph.filter)
   }
   graphs.push(masterFilter({ gainDb: -3, limiterCeilingDb: -1 }))
+  // detect_cuts (media/scene-cuts.ts): scale, scdet, metadata.
+  graphs.push(sceneCutFilter(10))
+  // Agent attachments (agent/attachments.ts): a video's contact sheet and an image's downscale.
+  const sheet = contactSheetArgs('/in.mov', contactSheetPlan(10, 1920, 1080), '/out.jpg')
+  graphs.push(valueOf(sheet, '-filter_complex') ?? '', imageScaleFilter(2000, 1000))
+  // Visual search's index pass (shared/visual-search.ts `sampleFilter`): select, showinfo, scale, format.
+  graphs.push(sampleFilter())
   for (const format of FORMATS) {
     for (const quality of QUALITIES) {
       const vf = valueOf(videoCodecArgs(format, quality), '-vf')
@@ -168,7 +178,7 @@ test('every encoder and filter bay asks for is in the ffmpeg it ships', { skip: 
   const wanted = filtersTheCodeWrites()
   // Every name here comes from a parsed graph, none from the inline list: proof the parse ran.
   assert.ok(
-    ['amix', 'alimiter', 'setparams', 'atempo', 'aformat', 'pan'].every((f) => wanted.has(f)),
+    ['amix', 'alimiter', 'setparams', 'atempo', 'aformat', 'pan', 'tile', 'trim'].every((f) => wanted.has(f)),
     `the graphs must parse: ${[...wanted].join(' ')}`
   )
   const missing = [

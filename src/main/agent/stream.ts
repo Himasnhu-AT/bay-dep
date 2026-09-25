@@ -216,7 +216,7 @@ function failureText(message: StreamMessage): string | null {
  */
 const MAX_SUMMARY = 2000
 
-function summarise(content: unknown): string {
+export function summarise(content: unknown): string {
   if (typeof content === 'string') return clamp(content)
   if (Array.isArray(content)) {
     const parts: string[] = []

@@ -36,7 +36,7 @@ import { asBlendMode, lookWarnings, mergeAdjustments } from './adjustments'
 import { audioFinishPatch, audioFinishReport } from './audioFinish'
 import { GRADEABLE_KINDS, gradeWarnings, mergeGrade } from './grade'
 import { coerce } from '@shared/composition'
-import { isCropped, normaliseCrop } from '@shared/project'
+import { activeTimeline, isCropped, normaliseCrop } from '@shared/project'
 import { bay } from '@/lib/bay'
 import { stillDurationFrames } from '@/store/editing-prefs'
 import {
@@ -163,13 +163,27 @@ export function placeAsset(args: Record<string, unknown>): Record<string, unknow
   if (!placed) fail(`${asset.name} could not be placed at frame ${atFrame}.`)
 
   const { item, track } = resolveItem(placed)
+  // A video with sound arrives with its sound on its own linked clip (Preferences › Editing);
+  // name it, so the agent does not find an item it did not ask for and wonder where it came from.
+  const sound = item.linkId
+    ? activeTimeline(store().project)
+        ?.tracks.flatMap((t) => t.items.map((i) => ({ i, t })))
+        .find(({ i, t }) => i.linkId === item.linkId && i.id !== item.id && t.kind === 'audio')
+    : undefined
   return {
     itemId: item.id,
     trackId: track.id,
     trackName: track.name,
     from: item.from,
     durationInFrames: item.durationInFrames,
-    endFrame: itemEnd(item)
+    endFrame: itemEnd(item),
+    ...(sound
+      ? {
+          soundItemId: sound.i.id,
+          soundTrack: sound.t.name,
+          note: `Its sound is a separate clip linked to it on ${sound.t.name} (${sound.i.id}); they move, trim and delete together. Set volume/fades on the sound clip.`
+        }
+      : {})
   }
 }
 

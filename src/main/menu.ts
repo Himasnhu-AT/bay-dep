@@ -271,6 +271,7 @@ export function menuTemplate(options: MenuOptions): MenuItemConstructorOptions[]
     ...plain('Timeline'),
     ...plain('Playback'),
     view,
+    ...plain('Workspace'),
     window,
     ...help
   ]

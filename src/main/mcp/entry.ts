@@ -82,3 +82,6 @@ const { mode, warning } = toolModeFromEnv(process.env[TOOL_MODE_ENV])
 if (warning) process.stderr.write(`[bay-mcp] ${warning}\n`)
 
 await runProxy({ socketPath: defaultSocketPath(), launch: launchBay(appBinary()), mode })
+// The client has gone (see `runProxy`). Exit now rather than when the last timer or socket lets
+// the event loop drain — a launch wait alone would hold it for thirty seconds.
+process.exit(0)

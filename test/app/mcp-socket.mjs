@@ -149,7 +149,14 @@ check('a write through the socket reaches the store',
   `tracks ${tracksBefore} -> ${tracksAfter}`)
 
 // And the clamp itself is reported rather than silently applied.
-const clamped = await proxy.send('tools/call', { name: 'set_playhead', arguments: { frame: 7 } })
+// A frame past the timeline's end, derived rather than a literal: frame 7 clamps only on an
+// empty timeline, and on a project with a clip it is simply a legal playhead.
+const pastEnd = await evaluate(`(() => {
+  const s = window.bayEngine.store.getState()
+  const tl = s.project.timelines.find((t) => t.id === s.project.activeTimelineId)
+  return Math.max(0, ...tl.tracks.flatMap((t) => t.items.map((i) => i.from + i.durationInFrames))) + 7
+})()`)
+const clamped = await proxy.send('tools/call', { name: 'set_playhead', arguments: { frame: pastEnd } })
 check('a clamped playhead says so instead of claiming the frame',
   clamped.result?.isError !== true && /clampedTo/.test(textOf(clamped)),
   textOf(clamped).replace(/\s+/g, ' ').slice(0, 70))

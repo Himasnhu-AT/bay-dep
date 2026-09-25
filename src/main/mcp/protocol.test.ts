@@ -178,7 +178,9 @@ test('the manifest advertises validateOnly on the dry-runnable tools and only th
   assert.equal(takes('edit_item'), true)
   assert.equal(takes('export_timeline'), false)
   assert.equal(takes('read_project'), false)
-  for (const spec of TOOLS) assert.equal(takes(spec.name), spec.dryRunnable === true, spec.name)
+  // A self-validating tool (generate_*) answers the flag in its own handler; it is published too.
+  assert.equal(takes('generate_video'), true)
+  for (const spec of TOOLS) assert.equal(takes(spec.name), spec.dryRunnable === true || spec.selfValidating === true, spec.name)
 })
 
 test('the manifest can be built without the app running', () => {

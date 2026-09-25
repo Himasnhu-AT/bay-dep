@@ -16,6 +16,7 @@ export const COMMAND_GROUPS = [
   'Timeline',
   'Playback',
   'View',
+  'Workspace',
   'Help'
 ] as const
 

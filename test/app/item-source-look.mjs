@@ -12,7 +12,7 @@
 
 import { attach, runProbe, PreconditionError, ProbeFailure } from './cdp.mjs'
 
-const CLIP = `${process.cwd()}/assets/podcast-cut/output/goodall-transcript-cut.mp4`
+const CLIP = process.env.CLIP ?? `${process.cwd()}/assets/podcast-cut/output/goodall-transcript-cut.mp4`
 const { evaluate, close } = await attach()
 
 let checks = 0

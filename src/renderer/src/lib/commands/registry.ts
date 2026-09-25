@@ -11,6 +11,7 @@ import { playbackHandlers } from './playback'
 import { timelineHandlers } from './timeline'
 import type { CommandContext, CommandHandler, CommandHost } from './types'
 import { viewHandlers } from './view'
+import { workspaceHandlers } from './workspace'
 
 /** Every declared command's behaviour. Typed as total: a declared id with no handler fails here. */
 export const HANDLERS: { readonly [K in CommandId]: CommandHandler } = {
@@ -21,6 +22,7 @@ export const HANDLERS: { readonly [K in CommandId]: CommandHandler } = {
   ...timelineHandlers,
   ...playbackHandlers,
   ...viewHandlers,
+  ...workspaceHandlers,
   ...helpHandlers
 }
 

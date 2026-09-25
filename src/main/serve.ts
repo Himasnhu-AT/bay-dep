@@ -14,7 +14,7 @@
 
 import { createReadStream } from 'node:fs'
 import { stat } from 'node:fs/promises'
-import { extname, isAbsolute, resolve as resolvePath } from 'node:path'
+import { extname, isAbsolute, resolve as resolvePath, sep } from 'node:path'
 import { Readable } from 'node:stream'
 
 export const BAY_SCHEME = 'bay'
@@ -137,6 +137,18 @@ function headers(extra: Record<string, string>): Record<string, string> {
 function bodyFor(path: string, start: number, end: number): ReadableStream<Uint8Array> {
   const stream = createReadStream(path, { start, end })
   return Readable.toWeb(stream) as ReadableStream<Uint8Array>
+}
+
+/**
+ * The `bay://` allowlist rule: an exact admitted file, or anything under `root` (bay's cache).
+ * The path is resolved first, whoever calls: `serveFile` already hands over a resolved path, but
+ * `isAllowed` is also asked by generation about a reference path the agent named, and
+ * `<root>/../secret.png` passes a raw prefix check.
+ */
+export function allowedBy(allowed: ReadonlySet<string>, root: string, path: string): boolean {
+  const p = resolvePath(path)
+  if (allowed.has(p)) return true
+  return p === root || p.startsWith(root + sep)
 }
 
 /**

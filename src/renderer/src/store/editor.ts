@@ -22,6 +22,13 @@ import { agentSlice } from './slices/agent'
 import { timelineSlice } from './slices/timeline'
 import { itemsSlice } from './slices/items'
 import { viewSlice } from './slices/view'
+import { WORKSPACE_PAGES, type WorkspacePage } from './types'
+
+/** The page the editor opened on last time; Edit when nothing (or something unknown) is kept. */
+function rememberedPage(): WorkspacePage {
+  const kept = remembered('bay.workspace.page')
+  return WORKSPACE_PAGES.find((page) => page === kept) ?? 'edit'
+}
 import { editingSlice } from './slices/editing'
 import type { EditorStore } from './types'
 
@@ -30,12 +37,25 @@ export { emptyProject, newId } from './factory'
 export {
   MAX_AGENT_CHECKPOINTS,
   asAgent,
+  asClient,
   revertImpact,
   setAgentFileWriter,
   type AgentCheckpoint,
   type AgentRevert
 } from './agent-turns'
-export type { ClipDialog, EditorActions, EditorState, EditorStore, PanelId, RegionId, Screen } from './types'
+export type {
+  ClipDialog,
+  EditorActions,
+  EditorState,
+  EditorStore,
+  InspectorTab,
+  LibraryTab,
+  PanelId,
+  RegionId,
+  Screen,
+  WorkspacePage
+} from './types'
+export { WORKSPACE_PAGES } from './types'
 
 // ---------------------------------------------------------------------------
 // Store
@@ -55,6 +75,10 @@ export const useEditor = create<EditorStore>((set, get) => {
     playing: false,
     pixelsPerFrame: 4,
     panel: 'media',
+    page: rememberedPage(),
+    inspectorTab: 'video',
+    libraryTab: 'media',
+    agentDocked: remembered('bay.workspace.agentDocked') === '1',
     hiddenRegions: { side: false, inspector: false, timeline: false },
     debugMode: (() => {
       try {
@@ -64,6 +88,7 @@ export const useEditor = create<EditorStore>((set, get) => {
       }
     })(),
     settingsOpen: false,
+    settingsPage: null,
     // Opt-in: a speech model is 75 MB–3 GB fetched from Hugging Face, and nothing reaches the
     // network unasked. Only an explicit '1' (the switch in Settings) turns it on.
     autoDownloadModels: remembered('bay.autoDownloadModels') === '1',
@@ -90,6 +115,7 @@ export const useEditor = create<EditorStore>((set, get) => {
     agentTurnFiles: {},
     agentTurnEdited: false,
     agentTurnUserEdited: false,
+    agentTurnClientEdited: false,
     agentCheckpoints: {},
     agentReverts: [],
     compositionEpochs: {},

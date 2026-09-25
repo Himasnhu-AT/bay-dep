@@ -273,58 +273,22 @@ export class Compositor {
     // waited on is the element drawn. See `itemsToDraw`.
     const { items: drawing, active } = itemsToDraw(project, timeline, frame)
     const pair = active ? [active.resolved.from, active.resolved.to] : []
-    const others = drawing.filter((item) => !pair.some((p) => p.id === item.id))
     // Decided before any of them is drawn: one element cannot be at two source times, so an
     // asset drawn twice in one frame gets two elements. See `elementSlots`.
     const slots = elementSlots(drawing)
 
-    for (const item of others) {
+    // In stack order, bottom first; the transition is painted where its pair sits in the list
+    // (`itemsToDraw` keeps it at its track's place), so higher tracks draw over it.
+    let transitionDrawn = false
+    for (const item of drawing) {
+      if (pair.some((p) => p.id === item.id)) {
+        if (!transitionDrawn && active) {
+          this.#paintTransition(ctx, project, active, frame, fps, mode, now, width, height, slots, stats)
+        }
+        transitionDrawn = true
+        continue
+      }
       this.#paintItem(ctx, project, item, frame, fps, mode, now(), slots.get(item.id) ?? 0, stats, {})
-    }
-
-    if (active) {
-      const { resolved, progress } = active
-      stats.transition = {
-        kind: resolved.transition.kind,
-        progress,
-        durationInFrames: resolved.durationInFrames,
-        requestedFrames: resolved.transition.durationInFrames,
-        clampedBecause: resolved.clampedBecause
-      }
-      const byWhich = { from: resolved.from, to: resolved.to }
-      for (const step of planTransition(
-        resolved.transition.kind,
-        resolved.transition.direction,
-        progress,
-        { width, height }
-      )) {
-        if (step.kind === 'fill') {
-          if (step.alpha <= 0) continue
-          ctx.save()
-          ctx.globalAlpha = clamp01(step.alpha)
-          ctx.fillStyle = step.color
-          ctx.fillRect(0, 0, width, height)
-          ctx.restore()
-          continue
-        }
-        const item = byWhich[step.which]
-        ctx.save()
-        if (step.clipRect) {
-          ctx.beginPath()
-          ctx.rect(step.clipRect.left, step.clipRect.top, step.clipRect.width, step.clipRect.height)
-          ctx.clip()
-        }
-        if (step.clipCircle) {
-          ctx.beginPath()
-          ctx.arc(step.clipCircle.centreX, step.clipCircle.centreY, step.clipCircle.radius, 0, Math.PI * 2)
-          ctx.clip()
-        }
-        ctx.translate(step.offsetX, step.offsetY)
-        this.#paintItem(ctx, project, item, frame, fps, mode, now(), slots.get(item.id) ?? 0, stats, {
-          alphaMul: step.alpha
-        })
-        ctx.restore()
-      }
     }
 
     ctx.restore()
@@ -479,6 +443,64 @@ export class Compositor {
       // A frame can be pulled out from under us mid-draw (the element reloaded, the source
       // went away). One missing item must not abandon the rest of the frame.
     } finally {
+      ctx.restore()
+    }
+  }
+
+  /** The transition across this frame: its two sides and any dip, per `planTransition`'s steps. */
+  #paintTransition(
+    ctx: RenderTarget,
+    project: Project,
+    active: NonNullable<ReturnType<typeof transitionAtFrame>>,
+    frame: number,
+    fps: number,
+    mode: 'playback' | 'scrub',
+    now: () => number,
+    width: number,
+    height: number,
+    slots: Map<string, number>,
+    stats: DrawStats
+  ): void {
+    const { resolved, progress } = active
+    stats.transition = {
+      kind: resolved.transition.kind,
+      progress,
+      durationInFrames: resolved.durationInFrames,
+      requestedFrames: resolved.transition.durationInFrames,
+      clampedBecause: resolved.clampedBecause
+    }
+    const byWhich = { from: resolved.from, to: resolved.to }
+    for (const step of planTransition(
+      resolved.transition.kind,
+      resolved.transition.direction,
+      progress,
+      { width, height }
+    )) {
+      if (step.kind === 'fill') {
+        if (step.alpha <= 0) continue
+        ctx.save()
+        ctx.globalAlpha = clamp01(step.alpha)
+        ctx.fillStyle = step.color
+        ctx.fillRect(0, 0, width, height)
+        ctx.restore()
+        continue
+      }
+      const item = byWhich[step.which]
+      ctx.save()
+      if (step.clipRect) {
+        ctx.beginPath()
+        ctx.rect(step.clipRect.left, step.clipRect.top, step.clipRect.width, step.clipRect.height)
+        ctx.clip()
+      }
+      if (step.clipCircle) {
+        ctx.beginPath()
+        ctx.arc(step.clipCircle.centreX, step.clipCircle.centreY, step.clipCircle.radius, 0, Math.PI * 2)
+        ctx.clip()
+      }
+      ctx.translate(step.offsetX, step.offsetY)
+      this.#paintItem(ctx, project, item, frame, fps, mode, now(), slots.get(item.id) ?? 0, stats, {
+        alphaMul: step.alpha
+      })
       ctx.restore()
     }
   }
@@ -954,8 +976,14 @@ export function itemsToDraw(
   const present = itemsAtFrame(timeline, frame, 'video')
   if (!active) return { items: present, active }
   const pair = [active.resolved.from, active.resolved.to]
-  const others = present.filter((item) => !pair.some((p) => p.id === item.id))
-  return { items: [...others, ...pair], active }
+  const isPair = (item: Item): boolean => pair.some((p) => p.id === item.id)
+  // The pair goes where its track sits in the stack, not on top of it: a title on V2 over a
+  // dissolve on V1 must stay visible through the window. Appending the pair painted every
+  // transition over every higher track, in the preview and in the export alike.
+  const at = present.findIndex(isPair)
+  const others = present.filter((item) => !isPair(item))
+  const below = at < 0 ? others.length : present.slice(0, at).filter((item) => !isPair(item)).length
+  return { items: [...others.slice(0, below), ...pair, ...others.slice(below)], active }
 }
 
 /** A clip that is not drawn yet, the frame it first will be, and the element it will be drawn from. */

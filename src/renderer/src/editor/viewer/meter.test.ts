@@ -3,7 +3,10 @@ import assert from 'node:assert/strict'
 import { levelOf } from '../../engine/audio'
 import {
   emptyChannel,
+  heldPeakText,
+  METER_FLOOR_DB,
   meterPosition,
+  meterTicks,
   PEAK_HOLD_MS,
   stepChannel,
   toDb
@@ -51,4 +54,29 @@ test('without ballistics (reduced motion) the meter shows the reading as it is',
   ch = stepChannel(ch, { peak: 0.01, rms: 0.01 }, 16, 16, false)
   assert.equal(ch.rmsDb, toDb(0.01))
   assert.equal(ch.peakDb, toDb(0.01))
+})
+
+test('the scale marks sit where the bars reach those levels', () => {
+  const ticks = meterTicks()
+  const top = ticks.find((tick) => tick.db === 0)
+  const bottom = ticks.find((tick) => tick.db === METER_FLOOR_DB)
+  assert.equal(top?.position, 1, '0 dBFS is the top of the meter')
+  assert.equal(bottom?.position, 0, 'the floor is the bottom')
+  // -30 would sit exactly half way; its absence shows the marks are the listed ones, not a grid.
+  assert.equal(ticks.find((tick) => tick.db === -30), undefined)
+  assert.ok(Math.abs((ticks.find((tick) => tick.db === -6)?.position ?? 0) - 0.9) < 1e-9, '-6 is nine tenths up a 60 dB scale')
+  assert.equal(top?.label, '0')
+  assert.equal(ticks.find((tick) => tick.db === -6)?.label, '−6', 'a real minus sign, as the export form writes levels')
+})
+
+test('a strip prints the loudest held peak of its channels', () => {
+  assert.equal(heldPeakText([emptyChannel(), emptyChannel()]), '−∞', 'silence is minus infinity, not NaN or -Infinity')
+  const left = stepChannel(emptyChannel(), { peak: 0.5, rms: 0.3 }, 0, 16)
+  const right = stepChannel(emptyChannel(), { peak: 0.25, rms: 0.1 }, 0, 16)
+  assert.equal(heldPeakText([left, right]), '−6.0', 'the louder side wins')
+  assert.equal(heldPeakText([right, left]), '−6.0', 'whichever side it is on')
+  assert.equal(heldPeakText([right]), '−12.0')
+  const over = stepChannel(emptyChannel(), { peak: 1.4, rms: 1 }, 0, 16)
+  assert.equal(heldPeakText([over]), '2.9', 'an over reads as positive, not clamped to 0')
+  assert.equal(heldPeakText([{ peakDb: -0.01 }]), '0.0', 'no "−0.0"')
 })

@@ -13,11 +13,15 @@ import {
   Clapperboard,
   Film,
   Flag,
+  Languages,
   Layers,
   MessageSquareText,
+  ScanLine,
   Scissors,
+  Smartphone,
   Sparkles,
   SquareUser,
+  Star,
   Type,
   Wand2
 } from 'lucide-react'
@@ -44,7 +48,10 @@ const LOOK: Record<string, Pick<AgentStarter, 'icon' | 'tint' | 'badge'>> = {
   transitions: { icon: Layers, tint: ['#1d3336', '#2f6a70'] },
   'end-card': { icon: Clapperboard, tint: ['#3a2022', '#7a3a40'] },
   chapters: { icon: Flag, tint: ['#2d3320', '#5b6a35'] },
-  review: { icon: MessageSquareText, tint: ['#262a36', '#4a5270'] }
+  review: { icon: MessageSquareText, tint: ['#262a36', '#4a5270'] },
+  'short-form': { icon: Smartphone, tint: ['#33222e', '#6e3f5f'] },
+  highlights: { icon: Star, tint: ['#3a3120', '#7a6530'] },
+  dub: { icon: Languages, tint: ['#1f2f33', '#3a6570'] }
 }
 
 /** Every bay skill as a starter card, in the skills' own order. */
@@ -56,3 +63,43 @@ export const AGENT_STARTERS: readonly AgentStarter[] = BAY_SKILLS.map((skill) =>
 
 /** How many starters show before "More". Two columns, four rows. */
 export const STARTERS_SHOWN = 8
+
+/**
+ * The agent's one-click jobs on the Generate tab. Each puts a prefilled message in the composer
+ * and hands it back, like a starter — never sent on click: which clip, which language are the
+ * user's to add, and a sent message starts a turn that may cost money.
+ */
+export interface AgentQuickAction {
+  id: 'highlights' | 'dub' | 'detect-cuts'
+  title: string
+  /** One line under the title: what the agent will do. */
+  detail: string
+  icon: LucideIcon
+  /** What lands in the composer. A skill action is `/slug …`, as its starter card writes it. */
+  draft: string
+}
+
+export const AGENT_QUICK_ACTIONS: readonly AgentQuickAction[] = [
+  {
+    id: 'highlights',
+    title: 'Find highlights',
+    detail: 'Mark the moments of a long talk that work as clips on their own',
+    icon: Star,
+    draft: '/highlights '
+  },
+  {
+    id: 'dub',
+    title: 'Dub',
+    detail: 'Translate the speech and voice it in another language, in sync',
+    icon: Languages,
+    draft: '/dub into '
+  },
+  {
+    id: 'detect-cuts',
+    title: 'Detect cuts',
+    detail: 'Find the shot changes in a clip and mark each one',
+    icon: ScanLine,
+    draft:
+      'Find the shot changes in the selected clip with detect_cuts, add a marker at each cut, and list them with their timecodes. '
+  }
+]

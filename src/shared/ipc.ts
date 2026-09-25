@@ -9,19 +9,48 @@
  */
 
 import type { Asset, Project } from './project'
-import type { AgentEntry, AgentEvent } from './agent'
+import type { AgentEntry, AgentEvent, AgentProvider, AgentProviderStatus } from './agent'
+import type { AgentAttachmentInput } from './agent-attachments'
 import type { TranscriptSegment } from './transcribe'
 import type { BeatGrid } from './beats'
 import type { WhisperDownload, WhisperStatus } from './whisper'
+import type {
+  GenerationJob,
+  GenerationLimits,
+  GenerationProvider,
+  GenerationRequest,
+  GenerationSpending,
+  ProviderKeyStatus,
+  StartRefused
+} from './generation'
 import type { CompositionFault, CompositionInfo } from './composition'
 import type { McpToolCall, McpToolResult } from './mcp'
 import type { LoudnessReport, LoudnessTarget } from './loudness'
 import type { AccessStatus, ReferralResult } from './access'
 import type { UpdateStatus } from './update'
+import type { Finding } from './findings'
+import type { UrlImportResult } from './url-import'
+import type { VisionAssetRef, VisionIndexAnswer, VisionSearchAnswer, VisionSearchRequest, VisionStatus } from './visual-search'
 
 // ---------------------------------------------------------------------------
 // Media
 // ---------------------------------------------------------------------------
+
+/** One scene boundary in a source file: the first frame of the new shot. */
+export interface SceneCut {
+  /** Source microseconds from the file's start. */
+  us: number
+  /** scdet's score for the change, 0–100. Higher is a harder cut. */
+  score: number
+}
+
+/** scdet's default threshold: a score (0–100) above it is a cut. */
+export const DEFAULT_CUT_THRESHOLD = 10
+
+/** The threshold scdet is run with for one asked for: it takes 1–100. The one place the range lives. */
+export function clampCutThreshold(threshold: number): number {
+  return Math.min(100, Math.max(1, threshold))
+}
 
 /** What ffprobe told us about a file, before it becomes an Asset. */
 export interface ProbeResult {
@@ -185,6 +214,12 @@ export interface ExportProgress {
   /** On `done`, when the request asked for mastering: what the delivered file measures. */
   loudness?: LoudnessReport
   /**
+   * On `done`: what reading the delivered file back found wrong with it (`@shared/findings`) —
+   * no audio stream under a timeline with sound, a length off the range by more than 2%, an
+   * empty or unreadable file. Empty when the file checks out; absent for a PNG sequence.
+   */
+  findings?: Finding[]
+  /**
    * Frames written with something still not drawn. Set by the renderer, which composites the
    * frames — main encodes whatever it is handed and cannot know. Absent when every frame was
    * complete.
@@ -324,6 +359,12 @@ export interface BayApi {
      */
     storageReady(): Promise<{ ready: boolean; error: string | null }>
     /**
+     * Makes the project database open again with nothing lost: the old file is renamed aside
+     * (never deleted), what it still yields is carried over, and the projects folder's `.bay`
+     * files are listed again. Projects themselves are never touched.
+     */
+    repairStorage(): Promise<{ ready: boolean; error: string | null; movedAside: string[]; recents: number }>
+    /**
      * Whether bay can be driven over MCP, and whether anything has.
      *
      * `connectionsSeen` is the reason this is not a boolean. "The socket never opened" and
@@ -333,11 +374,14 @@ export interface BayApi {
      * what a user pastes into an MCP client's config, so a status line can offer it.
      */
     mcpReady(): Promise<{
+      enabled: boolean
       ready: boolean
       error: string | null
       socketPath: string | null
       connectionsSeen: number
     }>
+    /** Allow or stop MCP clients other than the in-app agent; remembered. Answers the new status. */
+    setMcpClients(on: boolean): ReturnType<BayApi['app']['mcpReady']>
     /**
      * Menu and document-open commands. Returns an unsubscribe function.
      *
@@ -369,6 +413,13 @@ export interface BayApi {
     /** Import specific paths — used by drag-and-drop onto the window. */
     importPaths(paths: string[]): Promise<ImportedAsset[]>
     /**
+     * Download one video from a web page with the user's own `yt-dlp` into bay's downloads
+     * folder (`main/media/url-import.ts`) — a network exception, see CLAUDE.md. Nothing is
+     * imported: the renderer passes the returned path to `importPaths`. `dryRun` checks the
+     * address and finds yt-dlp, and returns the argument list without running it.
+     */
+    importUrl(url: string, options?: { dryRun?: boolean }): Promise<UrlImportResult>
+    /**
      * The absolute path behind a dropped `File`.
      *
      * The odd one out in this interface: synchronous, and not backed by a channel in `IPC`.
@@ -392,6 +443,12 @@ export interface BayApi {
      * by content. Times are in source microseconds. `ok: false` carries ffmpeg's own words.
      */
     beats(path: string, options?: { beatsPerBar?: number }): Promise<{ ok: true; grid: BeatGrid } | { ok: false; error: string }>
+    /**
+     * Scene cuts in a video file, found by ffmpeg's `scdet` on this machine (`media/scene-cuts.ts`).
+     * Times are source microseconds from the file's start, with scdet's score (0–100) for each.
+     * `threshold` is scdet's own (default 10): lower finds softer cuts and more false ones.
+     */
+    cuts(path: string, options?: { threshold?: number }): Promise<{ ok: true; cuts: SceneCut[] } | { ok: false; error: string }>
     /** Reveals a file in Finder/Explorer. */
     revealInFolder(path: string): Promise<void>
     /**
@@ -443,6 +500,71 @@ export interface BayApi {
   }
 
   /**
+   * Visual search over the project's footage (`src/shared/visual-search.ts`, `src/main/vision/`):
+   * a SigLIP model on this Mac, frames indexed per file and cached by content. The model is the
+   * only thing fetched — from Hugging Face, on Download or on an index with `download: true`
+   * (the user's "Download models when needed"). Changes (download progress, the indexing job) are
+   * pushed through `onChange`.
+   */
+  vision: {
+    status(): Promise<VisionStatus>
+    /** Resolves when every file is on disk and verified. */
+    download(): Promise<{ ok: true } | { ok: false; error: string }>
+    cancelDownload(): Promise<void>
+    deleteModel(): Promise<{ ok: boolean; error?: string }>
+    /** Index what is not indexed yet; `dryRun` plans only (counts and an estimate) and starts nothing. */
+    index(assets: VisionAssetRef[], options?: { dryRun?: boolean; download?: boolean }): Promise<VisionIndexAnswer>
+    cancelIndex(): Promise<void>
+    search(request: VisionSearchRequest): Promise<VisionSearchAnswer>
+    onChange(listener: (status: VisionStatus) => void): () => void
+  }
+
+  /**
+   * AI image and video generation (`src/shared/generation.ts`, `src/main/generate/`) — bay's
+   * fourth network exception. Main alone calls the providers, with keys set here and only when
+   * a generation tool asks. Keys go in and never come back out: `keys` answers set/not-set.
+   * Main re-validates every request against the catalog; the renderer's check is for the
+   * agent's benefit, not the lock.
+   */
+  generation: {
+    keys(): Promise<ProviderKeyStatus[]>
+    setKey(provider: GenerationProvider, fields: Record<string, string>): Promise<{ ok: true; keys: ProviderKeyStatus[] } | { ok: false; error: string }>
+    clearKey(provider: GenerationProvider): Promise<ProviderKeyStatus[]>
+    /**
+     * Persists the job, then submits it. Resolves once the submission settles or a few seconds
+     * pass. Refused, with nothing sent, when the row cannot be written or the spend guard's
+     * session budget or jobs-at-once limit would be passed; `spending` is where it stands after.
+     */
+    start(
+      request: GenerationRequest,
+      options?: { reservationId?: string }
+    ): Promise<{ ok: true; job: GenerationJob; spending: GenerationSpending } | StartRefused>
+    /**
+     * Holds `totalUsd` of the session budget for jobs that will start over time (a dub's lines),
+     * so a generation started meanwhile cannot take the money they need. A start that passes the
+     * reservation's id draws from it; `release` drops what is left. Refused like a start that
+     * would pass the budget.
+     */
+    reserve(totalUsd: number): Promise<{ ok: true; reservationId: string; spending: GenerationSpending } | StartRefused>
+    release(reservationId: string): Promise<GenerationSpending>
+    /**
+     * Dubs in flight, kept by main beside the job table so a reload does not forget them. Main
+     * keeps each record as the renderer wrote it (`DubRecordData` in `@shared/dub`), bounded in id,
+     * size and count; the renderer checks what it reads back.
+     */
+    dubs(): Promise<unknown[]>
+    saveDub(record: unknown): Promise<{ ok: true } | { ok: false; error: string }>
+    /** The spend guard: this session's estimated spend, jobs active, and the limits main enforces. */
+    spending(): Promise<GenerationSpending>
+    /** Preferences › AI providers. Checked and persisted by main; the renderer cannot pass limits with a call. */
+    setLimits(limits: GenerationLimits): Promise<{ ok: true; spending: GenerationSpending } | { ok: false; error: string }>
+    /** One job as it stands, or null for an id main has never seen. */
+    job(id: string): Promise<GenerationJob | null>
+    /** Every job main remembers, newest first. */
+    jobs(): Promise<GenerationJob[]>
+  }
+
+  /**
    * HTML compositions — HyperFrames pages, rendered as a source of pictures.
    *
    * Lives in main rather than the renderer even though the renderer is itself a browser, for
@@ -459,9 +581,20 @@ export interface BayApi {
    * many, over minutes, and the panel renders them as they land.
    */
   agent: {
-    /** Returns the runtime id, or a reason it could not start. */
-    start(): Promise<{ ok: true; id: string } | { ok: false; error: string }>
-    send(text: string): Promise<{ ok: boolean; error?: string }>
+    /**
+     * Returns the runtime id, or a reason it could not start. `provider` is the Settings choice
+     * (Claude when omitted); `BAY_AGENT_RUNTIME` in main's environment overrides it. Starting
+     * with a provider other than the running conversation's replaces that conversation.
+     */
+    start(options?: { provider?: AgentProvider }): Promise<{ ok: true; id: string } | { ok: false; error: string }>
+    /** Which providers' CLIs this machine has, and what each still needs before it can start. */
+    providers(): Promise<AgentProviderStatus[]>
+    /**
+     * One message. `attachments` — images and video the user added — cross as bytes or as a
+     * project asset; main checks them (`validateAttachments`) and writes what the model sees into
+     * its own folder. A message whose attachments are refused is not sent.
+     */
+    send(text: string, attachments?: AgentAttachmentInput[]): Promise<{ ok: boolean; error?: string }>
     /** Abandon the running turn. Safe when nothing is running. */
     stop(): Promise<void>
     dispose(): Promise<void>
@@ -669,12 +802,15 @@ export const IPC = {
   appPlatform: 'app:platform',
   appMediaToolsReady: 'app:media-tools-ready',
   appStorageReady: 'app:storage-ready',
+  appRepairStorage: 'app:repair-storage',
+  appSetMcpClients: 'app:set-mcp-clients',
   appMcpReady: 'app:mcp-ready',
   appMenuCommand: 'app:menu-command',
   appMetrics: 'app:metrics',
 
   /** renderer -> main: start, drive and stop the in-app agent. */
   agentStart: 'agent:start',
+  agentProviders: 'agent:providers',
   agentSend: 'agent:send',
   agentStop: 'agent:stop',
   agentDispose: 'agent:dispose',
@@ -694,6 +830,7 @@ export const IPC = {
 
   mediaImportDialog: 'media:import-dialog',
   mediaImportPaths: 'media:import-paths',
+  mediaImportUrl: 'media:import-url',
   mediaProbe: 'media:probe',
   mediaThumbnail: 'media:thumbnail',
   mediaTranscribe: 'media:transcribe',
@@ -705,9 +842,19 @@ export const IPC = {
   whisperInstall: 'whisper:install',
   /** main -> renderer: one `WhisperDownload`, pushed as it changes. */
   whisperProgress: 'whisper:progress',
+  visionStatus: 'vision:status',
+  visionDownload: 'vision:download',
+  visionCancelDownload: 'vision:cancel-download',
+  visionDelete: 'vision:delete',
+  visionIndex: 'vision:index',
+  visionCancelIndex: 'vision:cancel-index',
+  visionSearch: 'vision:search',
+  /** main -> renderer: the new `VisionStatus`, whenever the download or the indexing job moves. */
+  visionChanged: 'vision:changed',
   mediaFilmstrip: 'media:filmstrip',
   mediaWaveform: 'media:waveform',
   mediaBeats: 'media:beats',
+  mediaCuts: 'media:cuts',
   mediaReveal: 'media:reveal',
   mediaStat: 'media:stat',
   mediaLocate: 'media:locate',
@@ -715,6 +862,23 @@ export const IPC = {
   mediaReadCaptions: 'media:read-captions',
   mediaSaveCaptions: 'media:save-captions',
   mediaFreezeFrame: 'media:freeze-frame',
+
+  /**
+   * renderer -> main: AI generation (the fourth network exception). Keys in, set/not-set out;
+   * jobs are started and read here and nowhere else.
+   */
+  generationKeys: 'generation:keys',
+  generationSetKey: 'generation:set-key',
+  generationClearKey: 'generation:clear-key',
+  generationStart: 'generation:start',
+  generationJob: 'generation:job',
+  generationJobs: 'generation:jobs',
+  generationSpending: 'generation:spending',
+  generationSetLimits: 'generation:set-limits',
+  generationReserve: 'generation:reserve',
+  generationRelease: 'generation:release',
+  generationDubs: 'generation:dubs',
+  generationSaveDub: 'generation:save-dub',
 
   compositionInspect: 'composition:inspect',
   compositionWrite: 'composition:write',

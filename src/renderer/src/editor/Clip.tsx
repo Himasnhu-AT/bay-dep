@@ -30,6 +30,45 @@ const TRIM_HANDLE_CLASS =
   'in-data-[trim-hint=slip]:cursor-ew-resize! in-data-[trim-hint=slide]:cursor-ew-resize! in-data-[trim-hint=roll]:cursor-ew-resize!'
 
 /**
+ * The name band along a clip's top, in the clip kind's colour: the part of the clip that says
+ * what kind of object it is whatever the footage looks like. Without it a clip's colour was its
+ * filmstrip's, and two video clips on neighbouring tracks — one bright footage, one dark — read
+ * as two different kinds of thing. Drawn only on a clip tall enough to keep a picture under it.
+ */
+const BAND_HEIGHT = 15
+const BAND_MIN_CLIP_HEIGHT = 30
+
+/**
+ * One body colour and one edge colour per kind of clip, as Resolve does: picture blue, sound
+ * green, titles purple, motion graphics and compositions amber. Video and audio are the theme's
+ * tokens; titles and motion read tokens the stylesheet may define, with a fallback of the same
+ * depth as the others, since these are media colours that do not change with the theme.
+ */
+type ClipTint = 'video' | 'audio' | 'title' | 'motion'
+
+const TINTS: Record<ClipTint, { body: string; edge: string }> = {
+  video: { body: 'var(--color-clip-video)', edge: 'var(--color-clip-video-edge)' },
+  audio: { body: 'var(--color-clip-audio)', edge: 'var(--color-clip-audio-edge)' },
+  title: { body: 'var(--color-clip-title)', edge: 'var(--color-clip-title-edge)' },
+  motion: { body: 'var(--color-clip-motion)', edge: 'var(--color-clip-motion-edge)' }
+}
+
+/**
+ * The picture or waveform sits this far inside the clip's sides and bottom, so the kind's body
+ * colour frames it. Edge to edge, a filmstrip covered the body entirely and a clip's colour was
+ * its footage's: a still and a video on neighbouring tracks, one bright and one dark, read as two
+ * kinds of object with only the thin band to say otherwise.
+ */
+const PICTURE_INSET = 2
+
+function tintOf(asset: Asset | undefined, audio: boolean): ClipTint {
+  if (audio) return 'audio'
+  if (asset?.kind === 'text') return 'title'
+  if (asset?.kind === 'brf' || asset?.kind === 'html') return 'motion'
+  return 'video'
+}
+
+/**
  * Filmstrip frames are requested at this many *device* pixels tall.
  *
  * It was 36, and that was measured to be wrong: a 1080x1920 source came back as 20x36 and
@@ -58,6 +97,8 @@ export interface ClipProps {
   dragging: boolean
   /** The blade tool is in hand: the clip is a cut target, so its drag handles are hidden. */
   blade?: boolean
+  /** The Trim tool is in hand: every drag trims, so the fade corners and volume line step aside. */
+  trimTool?: boolean
   /** The item is passed back so the timeline can keep one stable handler for every clip —
    * a fresh closure per clip per render would defeat the `memo` below. */
   onPointerDownBody(event: React.PointerEvent, item: Item): void
@@ -116,7 +157,7 @@ function Filmstrip({
   const columns = Math.min(48, Math.max(1, Math.round(width / naturalColumn)))
 
   return (
-    <div aria-hidden="true" className="absolute inset-0 flex overflow-hidden opacity-55">
+    <div aria-hidden="true" className="absolute inset-0 flex overflow-hidden opacity-70">
       {Array.from({ length: columns }, (_, column) => {
         const localFrames = (column / columns) * item.durationInFrames
         const sourceUs = item.sourceStartUs + (localFrames / fps) * US_PER_SECOND * item.speed
@@ -211,6 +252,7 @@ function ClipImpl({
   previewDuration,
   dragging,
   blade = false,
+  trimTool = false,
   onPointerDownBody,
   onPointerDownTrim,
   onContextMenu
@@ -223,6 +265,10 @@ function ClipImpl({
   const disabled = item.disabled === true
   const innerHeight = height - 8
   const showThumbs = width >= THUMBS_MIN_WIDTH
+  const tint = TINTS[tintOf(asset, audio)]
+  const band = innerHeight >= BAND_MIN_CLIP_HEIGHT ? BAND_HEIGHT : 0
+  // The border is 1px each side; the picture's own box is what the filmstrip and waveform fill.
+  const pictureHeight = Math.max(0, innerHeight - 2 - band - PICTURE_INSET)
 
   const strip = useFilmstrip(asset, STRIP_FRAMES, STRIP_HEIGHT, showThumbs && !audio)
   // A still has no filmstrip; its lane repeats the poster. 220 is the media tile's size (long
@@ -265,7 +311,7 @@ function ClipImpl({
   // (once detached, the sound's own clip has the line). Not offered while volume is keyframed: the
   // keys decide the level then, and a line that wrote the static field would draw nowhere.
   const volumeKeyed = Boolean(item.keyframes?.volume?.length)
-  const showVolume = !blade && Boolean(asset?.hasAudio) && !volumeKeyed && !item.audioDetached && innerHeight >= 24
+  const showVolume = !blade && !trimTool && Boolean(asset?.hasAudio) && !volumeKeyed && !item.audioDetached && innerHeight >= 24
   // On a picture clip the line runs through the middle of the clip, where people click to select
   // and drag to move: an always-live strip there turned a move into a volume change. So on a video
   // track it takes the pointer only once the clip is selected — click to select, then drag the
@@ -302,12 +348,8 @@ function ClipImpl({
         height: height - 8,
         top: 4,
         cursor: blade && !locked ? BLADE_CURSOR : undefined,
-        backgroundColor: audio ? 'var(--color-clip-audio)' : 'var(--color-clip-video)',
-        borderColor: selected
-          ? 'var(--color-accent)'
-          : audio
-            ? 'var(--color-clip-audio-edge)'
-            : 'var(--color-clip-video-edge)'
+        backgroundColor: tint.body,
+        borderColor: selected ? 'var(--color-accent)' : tint.edge
       }}
       aria-disabled={disabled || undefined}
       title={disabled ? 'Disabled — plays no picture or sound' : hidden ? 'On a hidden track — not in the picture' : undefined}
@@ -318,7 +360,7 @@ function ClipImpl({
           : !blade &&
               // Holding ⌥ (or a trim mode armed from the menu) shows what a drag will do: the
               // timeline puts the mode on `data-trim-hint`, so no clip re-renders for it.
-              'cursor-grab active:cursor-grabbing in-data-[trim-hint=slip]:cursor-ew-resize! in-data-[trim-hint=slide]:cursor-move! in-data-[trim-hint=roll]:cursor-ew-resize!',
+              'cursor-grab active:cursor-grabbing in-data-[trim-hint=slip]:cursor-ew-resize! in-data-[trim-hint=slide]:cursor-move! in-data-[trim-hint=roll]:cursor-ew-resize! in-data-[trim-hint=ripple]:cursor-col-resize!',
         selected && 'ring-1 ring-accent',
         dragging && 'z-10 opacity-85 shadow-pop',
         // Disabled (⇧E): still on the timeline, drawn and heard nowhere. A hidden track's clips
@@ -326,18 +368,19 @@ function ClipImpl({
         (hidden || disabled) && !dragging && 'opacity-40'
       )}
     >
-      {asset && !audio && showThumbs && (
-        <Filmstrip
-          frames={lane}
-          item={item}
-          asset={asset}
-          fps={fps}
-          width={width}
-          height={height - 8}
-        />
-      )}
-      {asset && audio && showThumbs && (
-        <Waveform peaks={peaks} item={item} asset={asset} fps={fps} height={height - 8} />
+      {/* The picture or the sound, under the name band. */}
+      {asset && showThumbs && (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute overflow-hidden rounded-xs"
+          style={{ top: band, left: PICTURE_INSET, right: PICTURE_INSET, bottom: PICTURE_INSET }}
+        >
+          {audio ? (
+            <Waveform peaks={peaks} item={item} asset={asset} fps={fps} height={pictureHeight} />
+          ) : (
+            <Filmstrip frames={lane} item={item} asset={asset} fps={fps} width={width - 2 * PICTURE_INSET} height={pictureHeight} />
+          )}
+        </div>
       )}
 
       {/* Fades are geometry on the clip, the way they read in every editor: a wedge. */}
@@ -371,15 +414,19 @@ function ClipImpl({
         </div>
       )}
 
-      <div className="pointer-events-none relative flex h-full items-start gap-1 px-1.5 py-1">
-        <Icon aria-hidden="true" className="mt-px size-3 shrink-0 text-on-media/70" />
+      <div
+        className={cn('pointer-events-none relative flex gap-1 px-1.5', band > 0 ? 'items-center' : 'h-full items-start py-1')}
+        style={band > 0 ? { height: band, backgroundColor: tint.edge } : undefined}
+      >
+        <Icon aria-hidden="true" className={cn('size-3 shrink-0 text-on-media/70', band === 0 && 'mt-px')} />
         {/* Over a filmstrip the name gets the same dark backing as the speed badge: a text
             shadow alone left it unreadable over bright frames (white on colour bars, sky). */}
         <span
           className={cn(
             'truncate text-[11px] leading-tight font-medium text-on-media [text-shadow:0_1px_2px_rgb(0_0_0/0.65)]',
             disabled && 'line-through',
-            !audio &&
+            band === 0 &&
+              !audio &&
               showThumbs &&
               (asset?.kind === 'video' || asset?.kind === 'image' || asset?.kind === 'gif') &&
               '-mx-0.5 rounded-xs bg-black/55 px-0.5'
@@ -447,7 +494,7 @@ function ClipImpl({
 
       {/* Fade handles: a corner square at the top, where the wedge meets the clip's top edge.
           Shown on hover and while selected, so they do not crowd an unfocused timeline. */}
-      {!locked && !blade && width >= 24 && (
+      {!locked && !blade && !trimTool && width >= 24 && (
         <>
           {(['in', 'out'] as const).map((edge) => {
             const x = edge === 'in' ? Math.max(8, fadeIn) : Math.min(width - 8, width - fadeOut)
@@ -498,7 +545,7 @@ function ClipImpl({
               event.stopPropagation()
               onPointerDownTrim(event, item, 'start')
             }}
-            title="Drag to trim the start. ⌥-drag rolls this cut."
+            title={trimTool ? undefined : 'Drag to trim the start. ⌥-drag rolls this cut.'}
             className={TRIM_HANDLE_CLASS + ' left-0'}
           />
           <div
@@ -507,7 +554,7 @@ function ClipImpl({
               event.stopPropagation()
               onPointerDownTrim(event, item, 'end')
             }}
-            title="Drag to trim the end. ⌥-drag rolls this cut."
+            title={trimTool ? undefined : 'Drag to trim the end. ⌥-drag rolls this cut.'}
             className={TRIM_HANDLE_CLASS + ' right-0'}
           />
         </>

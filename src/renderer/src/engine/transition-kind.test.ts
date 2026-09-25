@@ -73,3 +73,17 @@ test('a transition on a hidden video track is not drawn, as its clips are not', 
   assert.equal(picture.active, null)
   assert.deepEqual(picture.items.map((i) => i.id), ['P'])
 })
+
+test('a transition is painted at its own track, under the tracks above it', () => {
+  // The video fixture with the pair moved below the picture: V1 holds the dissolve, V2 a title
+  // over the whole span. Measured before the fix: the pair was appended after every track, so
+  // the V2 picture vanished for the dissolve's whole window, in the preview and in the export.
+  const { project, timeline } = fixture('video')
+  const [picture, pair] = timeline.tracks
+  timeline.tracks = [pair!, picture!]
+  const drawn = itemsToDraw(project, timeline, 60)
+  assert.ok(drawn.active, 'the dissolve is active at its cut')
+  // The specimen is only a specimen if the higher track is really present at this frame.
+  assert.ok(drawn.items.some((i) => i.id === 'P'), 'the V2 picture is on the draw list')
+  assert.deepEqual(drawn.items.map((i) => i.id), ['M1', 'M2', 'P'], 'bottom first: the pair, then the track above it')
+})

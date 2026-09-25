@@ -1,16 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
-import { LoaderCircle, ScrollText, Scissors } from 'lucide-react'
+import { Captions, LoaderCircle, ScrollText, Scissors } from 'lucide-react'
 import { findAsset, type Item } from '@shared/project'
 import { cutRanges, findWords, speechItems, timelineWords, wordAt } from '@shared/timeline-words'
 import { defaultWhisperModel, downloadSentence, findWhisperModel, formatBytes, isCancelledDownloadError } from '@shared/whisper'
 import type { WhisperStatus } from '@shared/whisper'
-import { Button, EmptyState, IconButton, InlineAlert, Panel, ProgressBar, ScrollArea, SearchField, Select } from '@/components'
+import { Button, EmptyState, InlineAlert, ProgressBar, ScrollArea, SearchField, Select, Tabs, ToolButton } from '@/components'
 import { bay } from '@/lib/bay'
 import { hasModelFor, SUBTITLE_LANGUAGES } from '@/lib/subtitleOptions'
 import { cachedTranscript, onTranscript, transcribeSource } from '@/mcp/transcribe'
 import { removeRange } from '@/mcp/write'
 import { selectTimeline, useEditor } from '@/store/editor'
 import { cn } from '@/lib/cn'
+import { LibraryHeader } from './library/LibraryHeader'
+import { onLibraryRequest, takeLibraryRequest } from './library/librarySignals'
+import { SubtitlesSection } from './SubtitlesSection'
 
 /**
  * The timeline as its words: the transcript of every clip with speech (or of the selected ones),
@@ -52,6 +55,14 @@ export function TranscriptPanel(): ReactNode {
   const [matchAt, setMatchAt] = useState(0)
   const [range, setRange] = useState<{ anchor: number; focus: number } | null>(null)
   const list = useRef<HTMLDivElement>(null)
+  // Words, or the Subtitles made from them. Media › Subtitles asks for the second.
+  const [view, setView] = useState<'words' | 'subtitles'>('words')
+  useEffect(() => {
+    if (takeLibraryRequest('subtitles')) setView('subtitles')
+    return onLibraryRequest((request) => {
+      if (request === 'subtitles' && takeLibraryRequest('subtitles')) setView('subtitles')
+    })
+  }, [])
 
   useEffect(() => onTranscript(() => setVersion((n) => n + 1)), [])
   // Whether whisper and a model are on this Mac. A model can arrive other ways than a download
@@ -294,8 +305,8 @@ export function TranscriptPanel(): ReactNode {
     </div>
   )
 
-  return (
-    <Panel title="Transcript" className="h-full" bodyClassName="flex flex-col">
+  const words_ = (
+    <>
       {!timeline || items.length === 0 ? (
         <EmptyState
           icon={<ScrollText aria-hidden="true" className="size-6" />}
@@ -396,18 +407,49 @@ export function TranscriptPanel(): ReactNode {
                   ? `${selected.size} word${selected.size === 1 ? '' : 's'} selected — Delete cuts them from every unlocked track.`
                   : 'Click a word to jump to it. Shift-click to select a passage, then Delete to cut it.'}
               </p>
-              <IconButton
+              <ToolButton
                 label="Cut selected words"
                 shortcut="Delete"
                 icon={<Scissors className="size-3.5" />}
                 disabled={selected.size === 0}
                 onClick={cut}
+                tooltipSide="top"
               />
             </div>
           )}
         </>
       )}
-    </Panel>
+    </>
+  )
+
+  return (
+    <section aria-label="Transcript" className="flex h-full min-h-0 min-w-0 flex-col bg-surface-1">
+      <LibraryHeader
+        title="Transcript"
+        count={words.length > 0 ? `${words.length} words` : undefined}
+        actions={
+          <Tabs<'words' | 'subtitles'>
+            label="Transcript view"
+            variant="pill"
+            value={view}
+            onChange={setView}
+            items={[
+              { value: 'words', label: 'Words', icon: <ScrollText aria-hidden="true" className="size-3" /> },
+              { value: 'subtitles', label: 'Subtitles', icon: <Captions aria-hidden="true" className="size-3" /> }
+            ]}
+          />
+        }
+        menu={[{ label: 'Transcription Settings…', onSelect: () => useEditor.getState().setSettingsOpen(true) }]}
+        menuLabel="More transcript options"
+      />
+      {view === 'words' ? (
+        words_
+      ) : (
+        <ScrollArea className="min-h-0 flex-1 p-3">
+          <SubtitlesSection />
+        </ScrollArea>
+      )}
+    </section>
   )
 }
 

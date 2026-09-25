@@ -28,7 +28,7 @@ const { send, evaluate, close } = await attach()
 
 const setup = await evaluate(`(async () => {
   const { store } = window.bayEngine
-  const imported = await window.bay.media.importPaths([${JSON.stringify(process.cwd() + '/' + CLIP)}])
+  const imported = await window.bay.media.importPaths([${JSON.stringify((CLIP.startsWith('/') ? CLIP : process.cwd() + '/' + CLIP))}])
   const asset = imported[0].asset
   if (!asset.hasAudio) throw new Error('the probe clip has no audio track')
   store.getState().addAssets([asset])

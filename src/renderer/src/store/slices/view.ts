@@ -22,6 +22,10 @@ type Actions = Pick<
   | 'setPixelsPerFrame'
   | 'zoomBy'
   | 'setPanel'
+  | 'setPage'
+  | 'setInspectorTab'
+  | 'setLibraryTab'
+  | 'setAgentDocked'
   | 'setRegionHidden'
   | 'setSettingsOpen'
   | 'setAutoDownloadModels'
@@ -94,7 +98,40 @@ export function viewSlice({ set, get, currentTimeline }: StoreKit): Actions {
     },
 
     setPanel(panel) {
+      // The old left-rail ids, mapped onto the workspace so callers written against the rail
+      // (probes, the agent's own "open the transcript") still land somewhere that shows it.
+      const state = get()
+      if (panel === 'agent') {
+        if (!state.agentDocked) state.setAgentDocked(true)
+      } else if (panel === 'export') {
+        state.setPage('deliver')
+      } else {
+        const tab = panel === 'media' ? 'media' : panel === 'transcript' ? 'transcript' : 'effects'
+        // The Media page shows the media pool and nothing else of the library, so only the
+        // media tab may stay there; every other tab is on the Edit page's library.
+        if (state.page !== 'edit' && !(state.page === 'media' && tab === 'media')) state.setPage('edit')
+        set({ libraryTab: tab })
+      }
       set({ panel })
+    },
+
+    setPage(page) {
+      if (get().page === page) return
+      remember('bay.workspace.page', page)
+      set({ page })
+    },
+
+    setInspectorTab(inspectorTab) {
+      set({ inspectorTab })
+    },
+
+    setLibraryTab(libraryTab) {
+      set({ libraryTab })
+    },
+
+    setAgentDocked(agentDocked) {
+      remember('bay.workspace.agentDocked', agentDocked ? '1' : '0')
+      set({ agentDocked })
     },
 
     setRegionHidden(region, hidden) {
@@ -103,8 +140,8 @@ export function viewSlice({ set, get, currentTimeline }: StoreKit): Actions {
       set({ hiddenRegions: { ...current, [region]: hidden } })
     },
 
-    setSettingsOpen(open) {
-      set({ settingsOpen: open })
+    setSettingsOpen(open, page) {
+      set({ settingsOpen: open, settingsPage: open ? (page ?? null) : null })
     },
 
     setAutoDownloadModels(on) {
@@ -156,6 +193,7 @@ export function viewSlice({ set, get, currentTimeline }: StoreKit): Actions {
         agentTurnFiles: {},
         agentTurnEdited: false,
         agentTurnUserEdited: false,
+        agentTurnClientEdited: false,
         agentCheckpoints: {},
         agentReverts: []
       })

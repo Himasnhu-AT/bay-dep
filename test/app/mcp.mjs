@@ -18,7 +18,7 @@
 import { attach, PreconditionError, runProbe } from './cdp.mjs'
 
 const CLIP = process.env.CLIP ?? 'assets/podcast-cut/output/goodall-transcript-cut.mp4'
-const ABSOLUTE = `${process.cwd()}/${CLIP}`
+const ABSOLUTE = CLIP.startsWith('/') ? CLIP : `${process.cwd()}/${CLIP}`
 const { evaluate, close } = await attach()
 
 await runProbe(async () => {
@@ -242,9 +242,13 @@ check('  twin: a real job id reports a stage', realJob.ok === true && !!realJob.
 console.log('\n-- remaining tools --')
 
 const browsed = await call('browse_assets')
+// The clip this probe imported, not `assets[0]`: the pool keeps its import order, and a project
+// that already holds a font (`kind: 'font'`, correctly not placeable) put that first.
+const browsedClip = browsed.ok ? browsed.value.assets.find((a) => a.id === assetId) : null
 check('browse_assets lists the pool with placeability',
-  browsed.ok === true && browsed.value.assets.length >= 1 && browsed.value.assets[0].placeable === true,
-  browsed.ok ? `${browsed.value.assets.length} assets` : browsed.error)
+  browsed.ok === true && browsedClip?.placeable === true &&
+    browsed.value.assets.every((a) => typeof a.placeable === 'boolean'),
+  browsed.ok ? `${browsed.value.assets.length} assets; the imported clip ${browsedClip ? 'placeable ' + browsedClip.placeable : 'missing'}` : browsed.error)
 
 const track = await call('add_track', { kind: 'video' })
 check('add_track returns a usable id', track.ok === true && !!track.value.trackId,

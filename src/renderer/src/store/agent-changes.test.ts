@@ -11,7 +11,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Asset, Project } from '@shared/project'
-import { asAgent, emptyProject, MAX_AGENT_CHECKPOINTS, revertImpact, setAgentFileWriter, useEditor } from './editor'
+import { asAgent, asClient, emptyProject, MAX_AGENT_CHECKPOINTS, revertImpact, setAgentFileWriter, useEditor } from './editor'
 
 const state = () => useEditor.getState()
 
@@ -206,6 +206,20 @@ test('the user’s own edits during a turn are named on the card; the agent’s 
   state().renameProject('Typed by the user mid-turn') // not inside a tool call
   state().applyAgentEvent({ type: 'done', runId: 'r2', reason: 'complete' })
   assert.match(changes().at(-1)?.note ?? '', /edits you made while the agent was working/)
+})
+
+test('an MCP client’s edits during a turn are its own: named separately, not the agent’s or the user’s', async () => {
+  fresh()
+  state().applyAgentEvent({ type: 'started', runId: 'r1' })
+  await asAgent(() => state().addTrack('audio'))
+  await asClient(() => state().renameProject('Renamed from a terminal client'))
+  assert.equal(state().agentTurnClientEdited, true, 'the client edit is marked as the client’s')
+  assert.equal(state().agentTurnUserEdited, false, 'and not as the user’s')
+  state().applyAgentEvent({ type: 'done', runId: 'r1', reason: 'complete' })
+  const note = changes().at(-1)?.note ?? ''
+  assert.match(note, /an MCP client made through bay's socket/)
+  assert.doesNotMatch(note, /edits you made/)
+  assert.equal(state().agentTurnClientEdited, false, 'cleared when the turn ends')
 })
 
 test('a revert is refused while a turn is running, and works once it ends', async () => {

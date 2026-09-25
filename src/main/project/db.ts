@@ -15,6 +15,8 @@
  * merely looked empty. A failure is returned as a reason now, and the caller reports it.
  */
 
+import { existsSync, mkdirSync, renameSync, statSync } from 'node:fs'
+import { dirname } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import type { RecentProject } from '@shared/ipc'
 
@@ -159,4 +161,92 @@ export function openDatabase(path: string): OpenResult {
   }
 
   return { db, error: null }
+}
+
+export interface RepairResult {
+  /** The database opens now. */
+  ok: boolean
+  /** Why it still does not, when `ok` is false. */
+  error: string | null
+  /** What was in the way, and where it went: set aside beside the database, never deleted. */
+  movedAside: { from: string; to: string }[]
+  /** Rows read back out of the old database and written into the new one. */
+  recovered: { recents: number; state: number }
+}
+
+/**
+ * Makes the project database open again without throwing anything away.
+ *
+ * What the database holds is the recents list and a few remembered values — never a project:
+ * projects are `.bay` files and are not touched. So a repair can afford to start a fresh file,
+ * but it does so conservatively: whatever the old file still yields is read out first, the old
+ * file (and its `-wal`/`-shm`, or a directory sitting at its name) is renamed aside with a
+ * timestamp rather than deleted, and the recovered rows are written into the new one. Anything
+ * the old file would not give up is still on disk under the aside name.
+ *
+ * Returns the fresh handle alongside the report, so the caller installs exactly what it tested.
+ */
+export function repairDatabase(path: string, now: number = Date.now()): { result: RepairResult; open: OpenResult } {
+  const recents: Record<string, unknown>[] = []
+  const state: Record<string, unknown>[] = []
+  if (existsSync(path) && statSync(path).isFile()) {
+    try {
+      const old = new DatabaseSync(path, { readOnly: true })
+      try {
+        for (const row of old.prepare('SELECT file_path, id, name, updated_at, poster FROM recent_projects').all()) recents.push(row)
+      } catch {
+        // A damaged table yields nothing; the file itself is kept aside below.
+      }
+      try {
+        for (const row of old.prepare('SELECT key, value FROM app_state').all()) state.push(row)
+      } catch {
+        // As above.
+      }
+      old.close()
+    } catch {
+      // Not readable at all: nothing to recover here, and the file is still kept aside.
+    }
+  }
+
+  const movedAside: { from: string; to: string }[] = []
+  const stamp = new Date(now).toISOString().replace(/[:.]/g, '-')
+  try {
+    mkdirSync(dirname(path), { recursive: true })
+    for (const suffix of ['', '-wal', '-shm']) {
+      const from = path + suffix
+      if (!existsSync(from)) continue
+      const to = `${path}.broken-${stamp}${suffix}`
+      renameSync(from, to)
+      movedAside.push({ from, to })
+    }
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error)
+    return {
+      result: { ok: false, error: `Could not set the old database aside: ${reason}`, movedAside, recovered: { recents: 0, state: 0 } },
+      open: { db: null, error: reason }
+    }
+  }
+
+  const open = openDatabase(path)
+  if (!open.db) {
+    return { result: { ok: false, error: open.error, movedAside, recovered: { recents: 0, state: 0 } }, open }
+  }
+  let recoveredRecents = 0
+  for (const row of recents) {
+    const filePath = text(row['file_path'])
+    const id = text(row['id'])
+    if (!filePath || !id) continue
+    const poster = text(row['poster'])
+    open.db.rememberRecent({ filePath, id, name: text(row['name']) ?? '', updatedAt: integer(row['updated_at']), ...(poster ? { poster } : {}) })
+    recoveredRecents++
+  }
+  let recoveredState = 0
+  for (const row of state) {
+    const key = text(row['key'])
+    const value = text(row['value'])
+    if (key === null || value === null) continue
+    open.db.setState(key, value)
+    recoveredState++
+  }
+  return { result: { ok: true, error: null, movedAside, recovered: { recents: recoveredRecents, state: recoveredState } }, open }
 }

@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react'
-import { ArrowRightToLine, Pause, Play, Plus, Replace, X } from 'lucide-react'
+import { useSourceClip } from './timeline/sourceEdits'
+import { ArrowLeftFromLine, ArrowRightFromLine, ArrowRightToLine, Pause, Play, Plus, Replace, X } from 'lucide-react'
 import type { Asset } from '@shared/project'
 import { formatTimecode } from '@shared/timecode'
-import { Button, IconButton, Slider } from '@/components'
+import { Button, IconButton, Slider, ToolButton } from '@/components'
+import { cn } from '@/lib/cn'
 import { assetUrl } from '@/engine/mediaPool'
 import { editIntoTimeline, endOfTimeline, placeAssetRange } from '@/lib/mediaActions'
 import { revealItem } from '@/lib/revealItem'
@@ -41,13 +43,23 @@ function formatSourceFrame(frame: number, rate: number): string {
 export function SourceViewer({
   asset,
   onClose,
-  focusToken = 0
+  focusToken = 0,
+  startUs = 0,
+  variant = 'compact'
 }: {
   asset: Asset
   onClose(): void
   /** Changes each time a click opens this asset; the viewer then takes focus. */
   focusToken?: number
+  /** Where an opening asked to start (a visual search hit), in microseconds; read with `focusToken`. */
+  startUs?: number
+  /**
+   * `compact` sits over the bin in a side column; `large` fills the region it is given — the
+   * Media page's viewer — with a titled header strip, the picture taking whatever height is left.
+   */
+  variant?: 'compact' | 'large'
 }): ReactNode {
+  const large = variant === 'large'
   const notify = useEditor((state) => state.notify)
   const media = useRef<HTMLVideoElement & HTMLAudioElement>(null)
   const root = useRef<HTMLElement>(null)
@@ -81,6 +93,14 @@ export function SourceViewer({
     setAtFrame(clamped)
     if (media.current) media.current.currentTime = sourceSeekSeconds(clamped, rate)
   }
+
+  // An opening that names a moment (a search hit) starts there rather than at the first frame.
+  // After the reset above, which runs first for a new asset.
+  useEffect(() => {
+    if (focusToken > 0 && startUs > 0 && timed) seek(sourceFrameAtSeconds(startUs / 1_000_000, rate))
+    // Keyed on the opening, not on `seek`, which is a new function every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [asset.id, focusToken, startUs])
 
   // Playing up to an out mark: checked every display frame (not on `timeupdate`, ~4 a second,
   // which ran about three frames past the mark), pausing on the last kept frame and seeking back
@@ -123,6 +143,21 @@ export function SourceViewer({
     setOutFrame(Math.max(atFrame, 1))
     if (inFrame !== null && inFrame >= atFrame) setInFrame(null)
   }
+
+  // The Edit toolbar's Insert / Overwrite / Replace / Append / Place on Top act on what this
+  // viewer holds: publish the asset and marks as they change, and withdraw them on close.
+  useEffect(() => {
+    const clip = {
+      assetId: asset.id,
+      ...(inFrame !== null ? { inUs: sourceFrameStartUs(inFrame, rate) } : {}),
+      ...(outFrame !== null ? { outUs: Math.min(duration, sourceFrameStartUs(outFrame, rate)) } : {})
+    }
+    useSourceClip.getState().setSourceClip(clip)
+    return () => {
+      // Only withdraw our own clip: another viewer may have published since.
+      if (useSourceClip.getState().source?.assetId === clip.assetId) useSourceClip.getState().setSourceClip(null)
+    }
+  }, [asset.id, inFrame, outFrame, rate, duration])
 
   const place = (where: 'insert' | 'overwrite' | 'end'): void => {
     // Marks go to the timeline as the exact start of their frames.
@@ -202,14 +237,27 @@ export function SourceViewer({
       aria-label={`Source: ${asset.name}`}
       tabIndex={-1}
       onKeyDown={onKeyDown}
-      className="@container border-b border-line px-3 pt-2 pb-3 outline-none"
+      className={cn(
+        '@container outline-none',
+        large ? 'flex h-full min-h-0 flex-col bg-surface-1' : 'border-b border-line px-3 pt-2 pb-3'
+      )}
     >
-      <div className="mb-1.5 flex items-center gap-1">
-        <p className="min-w-0 flex-1 truncate text-[11px] text-ink-1" title={asset.name}>
-          {asset.name}
-        </p>
-        <IconButton label="Close source" size="xs" icon={<X className="size-3" />} onClick={onClose} />
-      </div>
+      {large ? (
+        <header className="flex h-8 shrink-0 items-center gap-2 border-b border-line bg-chrome-raised px-3">
+          <h2 className="shrink-0 text-[12px] font-semibold text-ink-0">Source</h2>
+          <p className="min-w-0 flex-1 truncate text-[12px] text-ink-2" title={asset.name}>
+            {asset.name}
+          </p>
+          <IconButton label="Close source" icon={<X className="size-3.5" />} onClick={onClose} />
+        </header>
+      ) : (
+        <div className="mb-1.5 flex items-center gap-1">
+          <p className="min-w-0 flex-1 truncate text-[11px] text-ink-1" title={asset.name}>
+            {asset.name}
+          </p>
+          <IconButton label="Close source" size="xs" icon={<X className="size-3" />} onClick={onClose} />
+        </div>
+      )}
 
       <div
         draggable
@@ -217,7 +265,10 @@ export function SourceViewer({
           event.dataTransfer.setData(ASSET_DRAG_TYPE, asset.id)
           event.dataTransfer.effectAllowed = 'copy'
         }}
-        className="relative aspect-video w-full overflow-hidden rounded-sm bg-black"
+        className={cn(
+          'relative w-full overflow-hidden bg-black',
+          large ? 'min-h-0 flex-1' : 'aspect-video rounded-sm'
+        )}
       >
         {url && (asset.kind === 'image' || asset.kind === 'gif') ? (
           <img src={url} alt="" draggable={false} crossOrigin="anonymous" className="size-full object-contain" />
@@ -245,6 +296,7 @@ export function SourceViewer({
         )}
       </div>
 
+      <div className={cn(large && 'shrink-0 border-t border-line bg-chrome px-3 pt-1 pb-2.5')}>
       {timed && (
         <>
           <div className="relative mt-2">
@@ -276,12 +328,8 @@ export function SourceViewer({
               <span className="hidden @sm:inline"> / {formatSourceFrame(endFrame, rate)}</span>
             </span>
             <span className="flex-1" />
-            <Button size="sm" variant="ghost" onClick={markIn} title="Mark in (I)">
-              Mark in
-            </Button>
-            <Button size="sm" variant="ghost" onClick={markOut} title="Mark out (O)">
-              Mark out
-            </Button>
+            <ToolButton label="Mark In" shortcut="I" icon={<ArrowRightFromLine className="size-3.5" />} onClick={markIn} />
+            <ToolButton label="Mark Out" shortcut="O" icon={<ArrowLeftFromLine className="size-3.5" />} onClick={markOut} />
           </div>
           <p className="mt-0.5 text-[10px] text-ink-2 tabular-nums">
             {marked
@@ -306,7 +354,7 @@ export function SourceViewer({
       {/* Flex, not three equal columns: "Overwrite" is wider than a third of the 300 px panel,
           and equal columns squeezed its icon to a dot. Each button now takes its own width
           plus an equal share of what is left. */}
-      <div className="mt-2 flex gap-1.5">
+      <div className={cn('mt-2 flex gap-1.5', large && 'mx-auto max-w-md')}>
         <Button
           className="flex-1"
           variant="primary"
@@ -334,6 +382,7 @@ export function SourceViewer({
         >
           Append
         </Button>
+      </div>
       </div>
     </section>
   )

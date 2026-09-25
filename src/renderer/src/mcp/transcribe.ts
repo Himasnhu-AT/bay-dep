@@ -10,6 +10,7 @@
 
 import { findAsset } from '@shared/project'
 import { segmentsToCues, segmentsToSrt, type TranscriptSegment } from '@shared/transcribe'
+import { transcriptFindings } from '@shared/findings'
 import { bay } from '@/lib/bay'
 import { useEditor } from '@/store/editor'
 import { fail, project, resolveAsset, resolveItem, timeline, ToolError, type Handlers } from './helpers'
@@ -39,6 +40,22 @@ function keyOf(path: string, language: string | undefined): string {
 /** A transcript this session already has for `path`, or undefined. Never runs whisper. */
 export function cachedTranscript(path: string, language?: string): Transcript | undefined {
   return settled.get(keyOf(path, language))
+}
+
+/**
+ * Any transcript this session has for `path`, whatever language or model made it — for labels
+ * (`frame_grid`), where words from a French transcription or last model are still the words said.
+ * Prefers the one `cachedTranscript` would return, then the newest. Never runs whisper.
+ */
+export function anyTranscriptFor(path: string): Transcript | undefined {
+  const preferred = cachedTranscript(path)
+  if (preferred) return preferred
+  let newest: Transcript | undefined
+  for (const [key, transcript] of settled) {
+    const [keyPath] = JSON.parse(key) as [string, string, unknown]
+    if (keyPath === path) newest = transcript
+  }
+  return newest
 }
 
 /** Called whenever a transcript arrives. Returns the unsubscribe. */
@@ -98,6 +115,7 @@ export async function transcribe(args: Record<string, unknown>): Promise<Record<
       itemId: found.item.id,
       lines: cues.length,
       cues,
+      findings: transcriptFindings(result.segments, cues.length),
       next:
         cues.length > 0
           ? 'These cues are in timeline frames for this clip. Pass them to add_captions as `cues` (after the user approves, if approval is on).'
@@ -108,6 +126,7 @@ export async function transcribe(args: Record<string, unknown>): Promise<Record<
     ...base,
     lines: result.segments.length,
     segments: result.segments,
+    findings: transcriptFindings(result.segments),
     srt: segmentsToSrt(result.segments),
     next: 'Lines are in seconds from the start of the file. To caption a clip, call transcribe with its itemId instead.'
   }

@@ -32,8 +32,9 @@
  * cannot miss a tool the CLI adds later.
  */
 
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
+import { existsSync, readFileSync } from 'node:fs'
 import { setPriority } from 'node:os'
 import type { AgentEvent } from '@shared/agent'
 import { TOOLS } from '@shared/mcp'
@@ -49,26 +50,79 @@ import type { HostedAgentRuntime } from './runtime'
  */
 export const AGENT_NICENESS = 10
 
+/** `pid → [ppid, pgid]` for every process on the machine, from one `ps`. Empty if `ps` fails. */
+export type ProcessTable = Map<number, { ppid: number; pgid: number }>
+
+export function processTable(): ProcessTable {
+  const table: ProcessTable = new Map()
+  const ps = existsSync('/bin/ps') ? '/bin/ps' : 'ps'
+  const out = spawnSync(ps, ['-A', '-o', 'pid=,ppid=,pgid='], { encoding: 'utf8', timeout: 5000 })
+  if (out.status !== 0 || typeof out.stdout !== 'string') return table
+  for (const line of out.stdout.split('\n')) {
+    const [pid, ppid, pgid] = line.trim().split(/\s+/).map(Number)
+    if (pid !== undefined && ppid !== undefined && pgid !== undefined && Number.isInteger(pid) && pid > 0) {
+      table.set(pid, { ppid, pgid })
+    }
+  }
+  return table
+}
+
+/** Every process below `pid` — children, their children, and so on. */
+export function descendantsOf(pid: number, table: ProcessTable): number[] {
+  const children = new Map<number, number[]>()
+  for (const [child, { ppid }] of table) {
+    const list = children.get(ppid)
+    if (list) list.push(child)
+    else children.set(ppid, [child])
+  }
+  const found: number[] = []
+  const queue = [pid]
+  while (queue.length > 0) {
+    for (const child of children.get(queue.shift()!) ?? []) {
+      if (found.includes(child) || child === pid) continue
+      found.push(child)
+      queue.push(child)
+    }
+  }
+  return found
+}
+
 /**
  * Kill a child and everything it started.
  *
  * The CLI is not one process: it spawns bay's MCP proxy, and may spawn more. Killing only the
  * pid we hold leaves those re-parented to launchd, still holding a socket connection into the
  * app — a proxy per stopped turn, accumulating. Spawning `detached` makes the child a process
- * group leader, so the negative pid reaches the whole group. Windows has no groups; there the
- * plain kill is the best available.
+ * group leader, so the negative pid reaches the whole group.
+ *
+ * **The group is not enough on its own.** Codex 0.149.1 starts each MCP server in a process
+ * group of its own — measured: bay's proxy survived `kill(-pgid)` of the codex it was started
+ * by. So the tree is read from `ps` *before* anything is signalled (after, the orphans belong to
+ * launchd and nothing links them to us) and every descendant outside the group gets the signal
+ * by pid. Windows has neither groups nor this `ps`; there the plain kill is the best available.
  */
 export function killTree(
   pid: number | undefined,
   signal: NodeJS.Signals = 'SIGTERM',
-  kill: (pid: number, signal: NodeJS.Signals) => void = process.kill
+  kill: (pid: number, signal: NodeJS.Signals) => void = process.kill,
+  table: () => ProcessTable = processTable
 ): void {
   if (pid === undefined) return
-  try {
-    kill(process.platform === 'win32' ? pid : -pid, signal)
-  } catch {
-    // Already gone — the group died between the check and the signal, which is the goal.
+  const send = (target: number): void => {
+    try {
+      kill(target, signal)
+    } catch {
+      // Already gone — it died between the check and the signal, which is the goal.
+    }
   }
+  if (process.platform === 'win32') {
+    send(pid)
+    return
+  }
+  const processes = table()
+  const outside = descendantsOf(pid, processes).filter((child) => processes.get(child)?.pgid !== pid)
+  send(-pid)
+  for (const child of outside) send(child)
 }
 
 /**
@@ -116,6 +170,8 @@ export interface CliOptions {
   /** Where the agent's own files live. Never the project directory. */
   cwd: string
   systemPrompt: string
+  /** How long a turn may run. `TURN_TIMEOUT_MS` unless a test needs to see one run out. */
+  turnTimeoutMs?: number
 }
 
 /** Bay's tools, namespaced the way the CLI reports them. */
@@ -204,6 +260,38 @@ export function cliArgs(options: CliOptions, sessionId: string, resume = false):
   ]
 }
 
+/** What an attached image file is, by the extension bay gave it (`agent/attachments.ts`). */
+export function imageMediaType(path: string): 'image/png' | 'image/jpeg' {
+  return /\.png$/i.test(path) ? 'image/png' : 'image/jpeg'
+}
+
+export type UserContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'image'; source: { type: 'base64'; media_type: 'image/png' | 'image/jpeg'; data: string } }
+
+/**
+ * One user turn as Messages API content blocks: each attached image inline as base64, then the
+ * text. Images first, the order the model reads best. Shared by both Claude runtimes; `read` is
+ * injected in tests.
+ *
+ * Measured with claude 2.1.281 over `--input-format stream-json`: a 64×64 solid #1E90FF PNG sent
+ * this way with "What colour is this image? Answer with one word." answered "Blue", and a solid
+ * #22AA22 one "Green." — the picture reached the model, rather than a guess.
+ */
+export function userContent(
+  text: string,
+  images: readonly string[] = [],
+  read: (path: string) => Buffer = (path) => readFileSync(path)
+): UserContentBlock[] {
+  return [
+    ...images.map((path) => ({
+      type: 'image' as const,
+      source: { type: 'base64' as const, media_type: imageMediaType(path), data: read(path).toString('base64') }
+    })),
+    { type: 'text' as const, text }
+  ]
+}
+
 /**
  * One conversation, backed by one long-lived `claude` process.
  *
@@ -264,7 +352,10 @@ export class CliAgentRuntime implements HostedAgentRuntime {
     }
 
     child.stdout.setEncoding('utf8')
-    child.stdout.on('data', (chunk: string) => this.#consume(chunk))
+    // A killed process's last lines are not the next turn's.
+    child.stdout.on('data', (chunk: string) => {
+      if (this.#child === child) this.#consume(chunk)
+    })
 
     // stderr is diagnostics, never protocol. Kept for the failure message rather than parsed.
     let stderr = ''
@@ -273,8 +364,15 @@ export class CliAgentRuntime implements HostedAgentRuntime {
       stderr = `${stderr}${chunk}`.slice(-4000)
     })
 
-    child.on('error', (error) => this.#fail(`claude could not be started: ${error.message}`))
+    child.on('error', (error) => {
+      if (this.#child === child) this.#fail(`claude could not be started: ${error.message}`)
+    })
     child.on('exit', (code) => {
+      // Only the current process speaks for the turn. A stopped one exits *after* the next send
+      // has spawned its successor; clearing `#child` then left the new process untracked (the
+      // next send spawned a third beside it, and no stop could reach the second) and failed the
+      // new turn with the old one's exit.
+      if (this.#child !== child) return
       this.#child = null
       if (this.#runId) {
         // Exiting mid-turn is a failure whatever the code says: the panel is waiting for an
@@ -318,8 +416,11 @@ export class CliAgentRuntime implements HostedAgentRuntime {
     if (runId) this.#emit({ type: 'done', runId, reason: 'error', message })
   }
 
-  /** Send one message. Events arrive through `onEvent`; `started` is emitted first. */
-  send(text: string): string {
+  /**
+   * Send one message. Events arrive through `onEvent`; `started` is emitted first. `images` are
+   * files bay wrote into its own attachments folder, sent inline.
+   */
+  send(text: string, images: readonly string[] = []): string {
     const runId = randomUUID()
     this.#runId = runId
     this.#stream = newStreamState()
@@ -333,17 +434,23 @@ export class CliAgentRuntime implements HostedAgentRuntime {
       return runId
     }
 
+    // Stopped means killed. Failing the turn alone told the panel it had stopped while the
+    // process carried on calling tools against the timeline, its later output landing on
+    // whatever turn came next.
+    const timeout = this.#options.turnTimeoutMs ?? TURN_TIMEOUT_MS
     this.#timer = setTimeout(
-      () => this.#fail(`The turn ran past ${Math.round(TURN_TIMEOUT_MS / 60000)} minutes and was stopped.`),
-      TURN_TIMEOUT_MS
+      () => this.#abort(`The turn ran past ${Math.round(timeout / 60000)} minutes and was stopped.`),
+      timeout
     )
 
-    child.stdin.write(
-      `${JSON.stringify({
-        type: 'user',
-        message: { role: 'user', content: [{ type: 'text', text }] }
-      })}\n`
-    )
+    let content: UserContentBlock[]
+    try {
+      content = userContent(text, images)
+    } catch (error) {
+      this.#fail(`An attachment could not be read: ${(error as Error).message}`)
+      return runId
+    }
+    child.stdin.write(`${JSON.stringify({ type: 'user', message: { role: 'user', content } })}\n`)
     return runId
   }
 
@@ -356,7 +463,11 @@ export class CliAgentRuntime implements HostedAgentRuntime {
    * session, so the conversation's context survives the stop.
    */
   stop(): void {
-    this.#fail('Stopped.')
+    this.#abort('Stopped.')
+  }
+
+  #abort(message: string): void {
+    this.#fail(message)
     killTree(this.#child?.pid)
     this.#child = null
     this.#buffer = ''

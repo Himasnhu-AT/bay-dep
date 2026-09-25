@@ -52,10 +52,17 @@
   --color-line-strong: #333333;
   --color-line-hover: #4a4a4a;
 
+  /* Chrome: the header bars, toolbars, tab strips and the page bar — one step apart from the
+     panels they head, so each region reads as its own band (Resolve's panel title bars). The
+     page bar and top bar sit on `chrome`; `chrome-raised` is a panel's own title strip. */
+  --color-chrome: #1d1d1f;
+  --color-chrome-raised: #232326;
+
   --color-accent: #d9773f;
   --color-accent-hover: #e68a55;
   --color-accent-ink: #ffffff;
-  --color-playhead: #f5f5f5;
+  /* Red, as in Resolve: the one line that must read over any clip body, light or dark. */
+  --color-playhead: #e5484d;
 
   --color-danger: #e5484d;
   --color-warning: #f2c94c;
@@ -69,6 +76,10 @@
   --color-clip-video-edge: #3d5166;
   --color-clip-audio: #25382f;
   --color-clip-audio-edge: #356047;
+  --color-clip-title: #372f48;
+  --color-clip-title-edge: #5a4a7c;
+  --color-clip-motion: #44361f;
+  --color-clip-motion-edge: #7a5c2c;
   /* The waveform has to read on top of `clip-audio`, so it is lighter than the edge. */
   --color-waveform: #5fd39a;
 
@@ -147,10 +158,13 @@
   --color-line-strong: #c6c6c6;
   --color-line-hover: #a8a8a8;
 
+  --color-chrome: #ebebeb;
+  --color-chrome-raised: #f7f7f7;
+
   --color-accent: #b8561f;
   --color-accent-hover: #9e4817;
   --color-accent-ink: #ffffff;
-  --color-playhead: #161616;
+  --color-playhead: #cc2f36;
 
   --color-danger: #cc2f36;
   --color-warning: #9a7400;

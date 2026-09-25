@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { Music2, Video } from 'lucide-react'
+import { Plus } from 'lucide-react'
 import { trimBounds } from '@shared/speed'
 import { allItems, findAsset, formatTimecode, itemEnd, textAssetName, type Asset, type Item, type Marker, type Track } from '@shared/project'
 import { shortcutOf } from '@shared/commands'
 import { planTrim, type TrimChange, type TrimMode } from '@shared/trim'
 import { linkedPartners, withLinked } from '@shared/links'
-import { Button, ContextMenu, IconButton, Kbd, type MenuEntry } from '@/components'
+import { Button, ContextMenu, Kbd, ToolButton, type MenuEntry } from '@/components'
 import { cn } from '@/lib/cn'
 import { runCommand } from '@/lib/commands'
 import {
@@ -26,7 +26,9 @@ import { useDrag } from '@/lib/useDrag'
 import { newId, selectDuration, selectTimeline, useEditor } from '@/store/editor'
 import { editingPrefs } from '@/store/editing-prefs'
 import { ASSET_DRAG_TYPE } from './MediaPanel'
-import { junctionsForTrack } from '@/lib/junctions'
+import { decodeTransitionDrag, dropJunction, TRANSITION_DRAG_TYPE } from '@/lib/transitionDrag'
+import { applyTransitionAt } from './library/transitions'
+import { junctionsForTrack, type Junction } from '@/lib/junctions'
 import { snapFrame, snapTargets } from '@/lib/snap'
 import { Clip } from './Clip'
 import { JunctionMarkers } from './JunctionMarkers'
@@ -34,27 +36,32 @@ import { TransitionDialog } from './TransitionDialog'
 import { hideCoveredRulerLabels, TimelineRuler } from './TimelineRuler'
 import { TimelineToolbar } from './TimelineToolbar'
 import { TrackHeader } from './TrackHeader'
-import { ClipDialogs, clipMenuEntries } from './ClipCommands'
+import { ClipDialogs, clipMenuEntries, rippleDeleteEntries, type ClipMenuPage } from './ClipCommands'
 import { detachToEntries, rippleDeleteThisTrack, trimModeEntries } from './clipMenuExtras'
+import { canDetachAudio, canReattachAudio, isLinked, runAudioLink } from './timeline/audioLink'
 import { bladeFrame, clipZone, nearerEdge } from '@/lib/blade'
-import { useTimelineTool } from '@/lib/timelineTool'
+import { TRIM_TOOL_MODES, useTimelineTool } from '@/lib/timelineTool'
 import { pointerHint } from '@/lib/pointerHint'
 import { planTrackShift, type TrackMove } from '@shared/track-move'
+import { applyRippleTrim, rippleHeadRoom } from './timeline/rippleTrim'
+
+const CLIP_MENU_PAGE_NAME: Record<ClipMenuPage, string> = { main: '', trim: 'Trim', audio: 'Audio', ripple: 'Ripple Delete' }
 
 /** One shared empty list, so a timeline without markers does not hand the ruler a new array each render. */
 const NO_MARKERS: readonly Marker[] = []
 
 const HEADER_WIDTH = 148
-const RULER_HEIGHT = 26
+/** `TimelineRuler`'s height: a marker lane on top, the timecode labels under it. */
+const RULER_HEIGHT = 34
 /** The marker strip along the ruler's top edge; the playhead starts below it so it never covers a flag. */
-const MARKER_STRIP = 10
+const MARKER_STRIP = 11
 /**
  * Snap tolerance in *pixels*, not frames. A frame-based threshold would be invisible when
  * zoomed in and would snap across half a minute when zoomed out.
  */
 const SNAP_PX = 8
-/** Height of `TimelineToolbar`, which sits above the scroller. */
-const TOOLBAR_HEIGHT = 30
+/** Height of `TimelineToolbar` (`h-9`), which sits above the scroller. */
+const TOOLBAR_HEIGHT = 36
 
 /**
  * "Add text here": a title clip on this track at this frame, selected so the inspector is on it.
@@ -120,6 +127,8 @@ interface TrimGesture {
   edge: 'start' | 'end'
   from: number
   durationInFrames: number
+  /** The Trim tool's ripple: later clips on the track follow the edge, and a head trim keeps the start. */
+  ripple?: boolean
 }
 
 /**
@@ -187,14 +196,20 @@ export function Timeline(): ReactNode {
   // transient dialog would be a worse trade than holding it here.
   const [junctionKey, setJunctionKey] = useState<string | null>(null)
   // The clip menu (right-click), at the pointer, in viewport coordinates.
-  const [menu, setMenu] = useState<{ itemId: string; x: number; y: number } | null>(null)
+  const [menu, setMenu] = useState<{ itemId: string; x: number; y: number; page: ClipMenuPage } | null>(null)
+  // The menu as last opened: a `›` row's page reopens it after Menu has closed it.
+  const lastMenu = useRef(menu)
+  if (menu) lastMenu.current = menu
   // The empty-lane menu: which track, which frame, and where the pointer was.
   const [laneMenu, setLaneMenu] = useState<{ trackId: string; frame: number; x: number; y: number } | null>(null)
   const [marquee, setMarquee] = useState<MarqueeGesture | null>(null)
   const [hoverGap, setHoverGap] = useState<Gap | null>(null)
+  // The cut a transition dragged from the library would land on, while it is over a lane.
+  const [dropCut, setDropCut] = useState<{ trackId: string; cutFrame: number } | null>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const tool = useTimelineTool((state) => state.tool)
   const armed = useTimelineTool((state) => state.armed)
+  const trimToolMode = useTimelineTool((state) => state.trimMode)
   const [hover, setHover] = useState<Hover | null>(null)
   // ⌥ and ⇧ as held now — for the cursor and the hint while the pointer rests on a clip.
   const [mods, setMods] = useState({ alt: false, shift: false })
@@ -228,6 +243,13 @@ export function Timeline(): ReactNode {
   const tracks = useMemo(() => timeline?.tracks ?? [], [timeline])
   // Listed top to bottom as the picture stacks: the front video layer first, audio below.
   const ordered = useMemo(() => displayOrder(tracks), [tracks])
+  // Resolve's track numbers: V1 is the first video track in the stack (drawn lowest), A1 the first audio.
+  const badges = useMemo(() => {
+    const out = new Map<string, string>()
+    const count = { video: 0, audio: 0 }
+    for (const track of tracks) out.set(track.id, `${track.kind === 'video' ? 'V' : 'A'}${++count[track.kind]}`)
+    return out
+  }, [tracks])
   const heightOf = useCallback(
     (track: Track): number => trackHeightFor(track.kind, trackSizes[track.id]),
     [trackSizes]
@@ -264,6 +286,21 @@ export function Timeline(): ReactNode {
           .find((junction) => junction.key === junctionKey) ?? null)
   const contentFrames = Math.max(duration, fps * 10) + fps * TAIL_SECONDS
   const contentWidth = Math.max(contentFrames * pixelsPerFrame, view.width - HEADER_WIDTH, 320)
+
+  /**
+   * A click on a cut: the two clips either side are selected and the Inspector shows its
+   * Transition tab, where the cut's transition is edited inline, as in Resolve. ⌥-click, or a
+   * page with no Inspector showing (only the Edit page has one), opens the transition dialog here.
+   */
+  const openJunctionAt = useCallback((junction: Junction, how: { dialog: boolean }): void => {
+    const store = useEditor.getState()
+    if (how.dialog || store.page !== 'edit' || store.hiddenRegions.inspector) {
+      setJunctionKey(junction.key)
+      return
+    }
+    store.select([junction.from.id, junction.to.id])
+    store.setInspectorTab('transition')
+  }, [])
 
   // -- geometry -------------------------------------------------------------
 
@@ -501,9 +538,12 @@ export function Timeline(): ReactNode {
         const raw = trimEdgeFrame(current.edge === 'start' ? item.from : itemEnd(item), state.dx + scrolled, pixelsPerFrame)
         const frame = state.meta ? Math.round(raw) : snap(raw, new Set([item.id]))
         // The edge stops where the footage does, so what is drawn is what the store keeps.
-        const bounds = trimBounds(item, findAsset(project, item.assetId)?.durationUs ?? 0, timeline.fps)
+        const footageUs = findAsset(project, item.assetId)?.durationUs ?? 0
+        const bounds = trimBounds(item, footageUs, timeline.fps)
         if (current.edge === 'start') {
-          const from = Math.max(bounds.earliestFrom, Math.min(frame, itemEnd(item) - 1))
+          // A ripple head keeps the clip's start, so frame 0 does not limit it; the footage does.
+          const earliest = current.ripple ? item.from - rippleHeadRoom(item, timeline.fps, footageUs > 0) : bounds.earliestFrom
+          const from = Math.max(earliest, Math.min(frame, itemEnd(item) - 1))
           return { ...current, from, durationInFrames: itemEnd(item) - from }
         }
         const end = Math.min(frame, bounds.latestEnd)
@@ -515,12 +555,13 @@ export function Timeline(): ReactNode {
       setTrim(null)
       if (!current) return
       const store = useEditor.getState()
-      store.trimItem(
-        current.itemId,
-        current.edge,
-        current.edge === 'start' ? current.from : current.from + current.durationInFrames,
-        { linked: store.linkedSelection }
-      )
+      const toFrame = current.edge === 'start' ? current.from : current.from + current.durationInFrames
+      if (current.ripple) {
+        const error = applyRippleTrim(current.itemId, current.edge, toFrame)
+        if (error) store.notify(error, 'error')
+        return
+      }
+      store.trimItem(current.itemId, current.edge, toFrame, { linked: store.linkedSelection })
     },
     onClick: () => setTrim(null)
   })
@@ -594,6 +635,24 @@ export function Timeline(): ReactNode {
     [timeline, beginTrimMode]
   )
 
+  /** Starts dragging one edge of a clip: an ordinary trim, or with `ripple` the Trim tool's ripple. */
+  const startEdgeTrim = useCallback(
+    (event: React.PointerEvent, item: Item, edge: 'start' | 'end', ripple: boolean): void => {
+      const track = tracks.find((candidate) => candidate.id === item.trackId)
+      const store = useEditor.getState()
+      if (!track) return
+      if (track.locked) {
+        store.notify(`Track ${track.name} is locked — unlock it in the track header to trim it.`)
+        return
+      }
+      store.select([item.id])
+      trimScrollAtGrab.current = scrollRef.current?.scrollLeft ?? 0
+      setTrim({ itemId: item.id, edge, from: item.from, durationInFrames: item.durationInFrames, ripple })
+      beginTrim(event)
+    },
+    [tracks, beginTrim]
+  )
+
   /** The frame a blade click at `clientX` on `item` cuts at (`lib/blade`), or null on its edge. */
   const bladeFrameAt = useCallback(
     (clientX: number, item: Item, suspendSnap: boolean): number | null => {
@@ -639,6 +698,15 @@ export function Timeline(): ReactNode {
       const tools = useTimelineTool.getState()
       if (tools.tool === 'blade') {
         bladeCut(event, item)
+        return
+      }
+      // The Trim tool: every drag is the trim picked in its menu. On the body, ripple and roll
+      // act on the nearer edge; slip and slide on the clip.
+      if (tools.tool === 'trim') {
+        const box = (event.currentTarget as HTMLElement).getBoundingClientRect()
+        const edge = nearerEdge(event.clientX - box.left, box.width)
+        if (tools.trimMode === 'ripple') startEdgeTrim(event, item, edge, true)
+        else startTrimMode(event, item, tools.trimMode, tools.trimMode === 'roll' ? edge : undefined)
         return
       }
       // A trim mode armed from the clip menu is this drag's, then it disarms. A roll needs a
@@ -689,7 +757,7 @@ export function Timeline(): ReactNode {
       })
       beginMove(event)
     },
-    [timeline, tracks, beginMove, startTrimMode, bladeCut]
+    [timeline, tracks, beginMove, startTrimMode, bladeCut, startEdgeTrim]
   )
 
   const onTrimPointerDown = useCallback(
@@ -697,6 +765,11 @@ export function Timeline(): ReactNode {
       const track = tracks.find((candidate) => candidate.id === item.trackId)
       if (!track || track.locked) return
       const tools = useTimelineTool.getState()
+      if (tools.tool === 'trim') {
+        if (tools.trimMode === 'ripple') startEdgeTrim(event, item, edge, true)
+        else startTrimMode(event, item, tools.trimMode, tools.trimMode === 'roll' ? edge : undefined)
+        return
+      }
       // An armed slip or slide acts on the clip wherever it is grabbed; an armed roll rolls this edge.
       if (tools.armed) {
         const mode = tools.armed
@@ -709,12 +782,9 @@ export function Timeline(): ReactNode {
         startTrimMode(event, item, 'roll', edge)
         return
       }
-      useEditor.getState().select([item.id])
-      trimScrollAtGrab.current = scrollRef.current?.scrollLeft ?? 0
-      setTrim({ itemId: item.id, edge, from: item.from, durationInFrames: item.durationInFrames })
-      beginTrim(event)
+      startEdgeTrim(event, item, edge, false)
     },
-    [tracks, beginTrim, startTrimMode]
+    [tracks, startTrimMode, startEdgeTrim]
   )
 
   // -- empty lanes: marquee, gaps, the lane menu ------------------------------
@@ -863,36 +933,42 @@ export function Timeline(): ReactNode {
     if (!store.selection.includes(item.id)) {
       store.select(current && store.linkedSelection ? withLinked(current, [item.id]) : [item.id])
     }
-    setMenu({ itemId: item.id, x: event.clientX, y: event.clientY })
+    setMenu({ itemId: item.id, x: event.clientX, y: event.clientY, page: 'main' })
   }, [])
 
   const menuItem = menu && timeline ? allItems(timeline).find((item) => item.id === menu.itemId) : undefined
   const menuTrack = menuItem ? tracks.find((track) => track.id === menuItem.trackId) : undefined
-  const menuAsset = menuItem ? findAsset(project, menuItem.assetId) : undefined
-  const menuLinked = menuItem && timeline ? linkedPartners(timeline, menuItem.id).length > 0 : false
-  const canDetach = Boolean(
-    menuItem &&
-      menuTrack?.kind === 'video' &&
-      !menuItem.audioDetached &&
-      menuAsset?.hasVideo &&
-      menuAsset.hasAudio &&
-      !menuAsset.error
-  )
-  const canReattach = Boolean(
-    menuItem && (menuItem.audioDetached || (timeline && linkedPartners(timeline, menuItem.id).some((p) => p.audioDetached)))
+  const menuLinked = menuItem && timeline ? isLinked(timeline, menuItem.id) : false
+  const canDetach = Boolean(menuItem && timeline && canDetachAudio(project, timeline, menuItem.id))
+  const canReattach = Boolean(menuItem && timeline && canReattachAudio(timeline, menuItem.id))
+  const menuLocked = menuTrack?.locked ?? true
+  // A `›` row closes the menu (Menu dismisses before it runs a row) and this reopens it, on the
+  // row's page, at the same point.
+  const openMenuPage = useCallback(
+    (page: ClipMenuPage): void => setMenu(lastMenu.current ? { ...lastMenu.current, page } : null),
+    []
   )
 
-  const runMenu = (action: 'detach' | 'unlink' | 'reattach'): void => {
-    const target = menu?.itemId
-    if (!target) return
-    const store = useEditor.getState()
-    if (action === 'unlink') {
-      store.unlinkItems([target])
-      return
+  const menuPageEntries = (): MenuEntry[] => {
+    if (!menuItem || !menu || !timeline) return []
+    const back: MenuEntry[] = [{ label: '‹ Back', onSelect: () => openMenuPage('main') }, { kind: 'separator' }]
+    switch (menu.page) {
+      case 'main':
+        return clipMenuEntries(menuItem, menu, openMenuPage)
+      case 'trim':
+        return [...back, { kind: 'label', label: 'Next drag on the clip' }, ...trimModeEntries(menuLocked)]
+      case 'ripple':
+        return [...back, ...rippleDeleteEntries(menuLocked, rippleDeleteThisTrack)]
+      case 'audio':
+        return [
+          ...back,
+          { label: 'Detach Audio', disabled: !canDetach, onSelect: () => runAudioLink('detach', [menuItem.id]) },
+          ...detachToEntries(menuItem, timeline, canDetach),
+          { kind: 'separator' },
+          { label: 'Unlink', disabled: !menuLinked, onSelect: () => runAudioLink('unlink', [menuItem.id]) },
+          { label: 'Reattach Audio', disabled: !canReattach, onSelect: () => runAudioLink('reattach', [menuItem.id]) }
+        ]
     }
-    const refused =
-      action === 'detach' ? store.detachAudio([target]).refused : store.reattachAudio([target]).refused
-    if (refused.length > 0) store.notify(refused.map((r) => r.forPerson).join(' '), 'error')
   }
 
   // -- render ---------------------------------------------------------------
@@ -916,7 +992,9 @@ export function Timeline(): ReactNode {
       ref={panelRef}
       // What a drag on a clip will do right now, for the clips' cursors (`Clip.tsx` reads it with
       // `in-data-[trim-hint=…]`, so holding ⌥ re-renders no clip).
-      data-trim-hint={armed ?? (mods.alt && tool === 'select' ? (mods.shift ? 'slide' : 'slip') : undefined)}
+      data-trim-hint={
+        tool === 'trim' ? trimToolMode : (armed ?? (mods.alt && tool === 'select' ? (mods.shift ? 'slide' : 'slip') : undefined))
+      }
       className="relative flex min-h-0 flex-1 flex-col border-t border-line bg-surface-1"
     >
       <TimelineToolbar fps={fps} />
@@ -965,7 +1043,13 @@ export function Timeline(): ReactNode {
                   className="sticky left-0 z-30 shrink-0 border-r border-line bg-surface-1"
                   style={{ width: HEADER_WIDTH }}
                 >
-                  <TrackHeader track={track} height={height} size={trackSizes[track.id] ?? 'medium'} removable={removable} />
+                  <TrackHeader
+                    track={track}
+                    badge={badges.get(track.id) ?? ''}
+                    height={height}
+                    size={trackSizes[track.id] ?? 'medium'}
+                    removable={removable}
+                  />
                 </div>
                 <div
                   // A lane really is a list of selectable things, and saying so is what
@@ -985,11 +1069,37 @@ export function Timeline(): ReactNode {
                   }}
                   onContextMenu={(event) => onLaneContextMenu(event, track)}
                   onDragOver={(event) => {
+                    if (event.dataTransfer.types.includes(TRANSITION_DRAG_TYPE)) {
+                      const cut = timeline ? dropJunction(project, timeline, track.id, frameAtClientX(event.clientX), pixelsPerFrame) : null
+                      if (!cut) {
+                        if (dropCut) setDropCut(null)
+                        return
+                      }
+                      event.preventDefault()
+                      event.dataTransfer.dropEffect = 'copy'
+                      if (dropCut?.trackId !== track.id || dropCut.cutFrame !== cut.cutFrame) setDropCut({ trackId: track.id, cutFrame: cut.cutFrame })
+                      return
+                    }
                     if (!event.dataTransfer.types.includes(ASSET_DRAG_TYPE)) return
                     event.preventDefault()
                     event.dataTransfer.dropEffect = 'copy'
                   }}
+                  onDragLeave={() => {
+                    if (dropCut?.trackId === track.id) setDropCut(null)
+                  }}
                   onDrop={(event) => {
+                    const transition = decodeTransitionDrag(event.dataTransfer.getData(TRANSITION_DRAG_TYPE))
+                    if (transition) {
+                      event.preventDefault()
+                      setDropCut(null)
+                      if (transition.trackKind !== track.kind) {
+                        useEditor.getState().notify(`${transition.label} is ${transition.trackKind === 'video' ? 'a picture transition' : 'an audio transition'}; drop it on a cut on ${transition.trackKind === 'video' ? 'a video' : 'an audio'} track.`)
+                        return
+                      }
+                      const cut = timeline ? dropJunction(project, timeline, track.id, frameAtClientX(event.clientX), pixelsPerFrame) : null
+                      if (cut) applyTransitionAt(cut, transition.kind, transition.label)
+                      return
+                    }
                     const assetId = event.dataTransfer.getData(ASSET_DRAG_TYPE)
                     if (!assetId) return
                     event.preventDefault()
@@ -1013,6 +1123,14 @@ export function Timeline(): ReactNode {
                 >
                   {/* The gap under the pointer, and the selected one. Pointer-transparent, so a
                       press still lands on the lane and can start a rubber band. */}
+                  {dropCut?.trackId === track.id && (
+                    // Where the dragged transition will land: the cut, lit.
+                    <div
+                      aria-hidden="true"
+                      className="pointer-events-none absolute inset-y-0 z-30 w-1 -translate-x-1/2 rounded-full bg-accent shadow-[0_0_0_3px_color-mix(in_srgb,var(--color-accent)_35%,transparent)]"
+                      style={{ left: dropCut.cutFrame * pixelsPerFrame }}
+                    />
+                  )}
                   {laneGaps.map((gap) => {
                     const selectedHere = sameGap(gap, selectedGap)
                     const width = Math.max(2, (gap.to - gap.from) * pixelsPerFrame)
@@ -1061,10 +1179,13 @@ export function Timeline(): ReactNode {
                         locked={track.locked}
                         hidden={track.kind === 'video' && track.hidden}
                         trackKind={track.kind}
-                        previewFrom={trimming ? trim.from : item.from}
+                        // A ripple head keeps the clip's start: the frames come off (or go on) at
+                        // the head of the footage, and the clip's end moves instead.
+                        previewFrom={trimming && !(trim.ripple && trim.edge === 'start') ? trim.from : item.from}
                         previewDuration={trimming ? trim.durationInFrames : item.durationInFrames}
                         dragging={(movingIds?.has(item.id) ?? false) || trimMode?.itemId === item.id}
                         blade={tool === 'blade'}
+                        trimTool={tool === 'trim'}
                         onPointerDownBody={onClipPointerDown}
                         onPointerDownTrim={onTrimPointerDown}
                         onContextMenu={onClipContextMenu}
@@ -1082,7 +1203,7 @@ export function Timeline(): ReactNode {
                       track={track}
                       pixelsPerFrame={pixelsPerFrame}
                       height={height}
-                      onOpen={(junction) => setJunctionKey(junction.key)}
+                      onOpen={openJunctionAt}
                     />
                   )}
                 </div>
@@ -1090,28 +1211,43 @@ export function Timeline(): ReactNode {
             )
           })}
 
-          <div className="flex">
+          {/* Pinned to the bottom of the scroller while the lanes overflow it: at the default
+              Edit layout three tracks already fill the panel, and the row sat half under its
+              bottom edge ("+ Video + Audio" cut off), reachable only by scrolling. Scrolled to
+              the end it rests after the last lane as before. Only the header cell is opaque;
+              the lane side lets the last lane show and takes no pointer. */}
+          <div className="pointer-events-none sticky bottom-0 z-[36] flex">
             <div
-              className="sticky left-0 z-30 flex shrink-0 items-center gap-1 border-r border-b border-line bg-surface-1 px-2 py-1.5"
+              className="pointer-events-auto sticky left-0 z-30 flex shrink-0 items-center gap-1 border-t border-r border-b border-line bg-surface-1 px-2 py-1.5"
               style={{ width: HEADER_WIDTH }}
             >
-              <span className="mr-auto text-[10px] text-ink-2">Add track</span>
-              <IconButton
-                size="xs"
-                tooltipSide="top"
+              {/* Words, not two bare glyphs: a camera and a note read as media, not as tracks. */}
+              <ToolButton
                 label="Add video track"
-                icon={<Video className="size-3" />}
+                icon={
+                  <span className="flex items-center gap-1 text-[11px]">
+                    <Plus className="size-3" /> Video
+                  </span>
+                }
+                showLabel={false}
+                tooltipSide="top"
+                className="h-6 w-auto! flex-1 px-1.5!"
                 onClick={() => useEditor.getState().addTrack('video')}
               />
-              <IconButton
-                size="xs"
-                tooltipSide="top"
+              <ToolButton
                 label="Add audio track"
-                icon={<Music2 className="size-3" />}
+                icon={
+                  <span className="flex items-center gap-1 text-[11px]">
+                    <Plus className="size-3" /> Audio
+                  </span>
+                }
+                showLabel={false}
+                tooltipSide="top"
+                className="h-6 w-auto! flex-1 px-1.5!"
                 onClick={() => useEditor.getState().addTrack('audio')}
               />
             </div>
-            <div className="border-b border-line" style={{ width: contentWidth, height: 30 }} />
+            <div style={{ width: contentWidth, height: 30 }} />
           </div>
 
           {move && timeline && (
@@ -1170,13 +1306,15 @@ export function Timeline(): ReactNode {
             />
           )}
 
+          {/* Red, as in Resolve, 2px, with a dark outline: the white 1px line vanished over a light
+              clip. `danger` is the theme's red; the line is centred on the frame's left edge. */}
           <div
             ref={playheadRef}
             aria-hidden="true"
-            className="pointer-events-none absolute bottom-0 left-0 z-40 w-px bg-playhead"
+            className="pointer-events-none absolute bottom-0 left-0 z-40 -ml-px w-0.5 bg-danger shadow-[0_0_0_1px_rgb(0_0_0/0.5)]"
             style={{ top: MARKER_STRIP }}
           >
-            <div className="absolute -top-px -left-[5px] size-0 border-x-[5px] border-t-[7px] border-x-transparent border-t-playhead" />
+            <div className="absolute -top-px left-1/2 h-2.5 w-[13px] -translate-x-1/2 bg-danger [clip-path:polygon(0_0,100%_0,100%_55%,50%_100%,0_55%)] drop-shadow-[0_0_1px_rgb(0_0_0/0.8)]" />
           </div>
         </div>
       </div>
@@ -1217,7 +1355,8 @@ export function Timeline(): ReactNode {
               const delta = original ? trim.durationInFrames - original.durationInFrames : 0
               return (
                 <>
-                  Trim {trim.edge === 'start' ? 'start' : 'end'} {formatDelta(trim.edge === 'start' ? -delta : delta)}
+                  {trim.ripple ? 'Ripple trim' : 'Trim'} {trim.edge === 'start' ? 'start' : 'end'}{' '}
+                  {formatDelta(trim.edge === 'start' ? -delta : delta)}
                   <span className="ml-2 text-ink-2">duration {formatTimecode(trim.durationInFrames, fps, true)}</span>
                 </>
               )
@@ -1229,7 +1368,13 @@ export function Timeline(): ReactNode {
       {/* Before any drag: what the tool in hand, an armed trim, or ⌥ over a clip will do. The
           gestures have no other visible affordance, so this is where they are learned. */}
       {!move && !trim && !trimMode && !marquee && (() => {
-        const hint = pointerHint(tool, armed, mods, hover, fps)
+        const hint =
+          tool === 'trim'
+            ? (() => {
+                const mode = TRIM_TOOL_MODES.find((option) => option.mode === trimToolMode)
+                return mode ? `Trim tool, ${mode.label}: ${mode.detail}. A or Escape for Select.` : null
+              })()
+            : pointerHint(tool, armed, mods, hover, fps)
         return hint ? (
           <div
             className="pointer-events-none absolute top-[3px] left-1/2 z-50 max-w-[50%] -translate-x-1/2 truncate rounded-sm border border-line bg-surface-2 px-2 py-1 text-[11px] text-ink-0 tabular-nums shadow-pop"
@@ -1260,22 +1405,15 @@ export function Timeline(): ReactNode {
       )}
 
       <ContextMenu
+        // A page is a fresh menu, so it takes focus and is placed as one.
+        key={menu?.page ?? 'main'}
         // `menu` itself, not a fresh `{ x, y }`: the timeline re-renders every frame while playing.
         at={menuItem ? menu : null}
         onClose={() => setMenu(null)}
-        label="Clip"
-        items={[
-          ...(menuItem && menu ? clipMenuEntries(menuItem, menu) : []),
-          // Directly under Ripple Delete: the other ripple, which closes only this track's gap.
-          { label: 'Ripple Delete (This Track Only)', disabled: menuTrack?.locked ?? true, danger: true, onSelect: rippleDeleteThisTrack },
-          { kind: 'separator' },
-          ...trimModeEntries(menuTrack?.locked ?? true),
-          { kind: 'separator' },
-          { label: 'Detach audio', disabled: !canDetach, onSelect: () => runMenu('detach') },
-          ...(menuItem && timeline ? detachToEntries(menuItem, timeline, canDetach) : []),
-          { label: 'Unlink', disabled: !menuLinked, onSelect: () => runMenu('unlink') },
-          { label: 'Reattach audio', disabled: !canReattach, onSelect: () => runMenu('reattach') }
-        ]}
+        label={menu?.page === 'main' || !menu ? 'Clip' : `Clip ${CLIP_MENU_PAGE_NAME[menu.page]}`}
+        // 15 rows on the main page: the default 24rem cap would scroll the last two.
+        className="max-h-[min(30rem,calc(100vh-16px))]"
+        items={menuPageEntries()}
       />
 
       <ContextMenu at={laneMenuTrack ? laneMenu : null} onClose={() => setLaneMenu(null)} label="Timeline" items={laneMenuItems} />

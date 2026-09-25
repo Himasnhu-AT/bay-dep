@@ -11,7 +11,7 @@
 import type { Item, Project, Timeline } from '@shared/project'
 import { US_PER_SECOND, effectiveSpeed, findAsset, playableTimeline, sourceTimeAt, trackAudible } from '@shared/project'
 import type { CompositionSound } from '@shared/composition'
-import { audibleSpan, itemAudioGainAt, panGains } from '@shared/audio-gain'
+import { audibleSpan, itemAudioGainAt, panGains, routedPanGains } from '@shared/audio-gain'
 import { volumeMayBeAudible } from '@shared/keyframes'
 import { scheduleCompositionSounds, type ScheduledSound } from '@shared/composition-audio'
 
@@ -69,7 +69,11 @@ function atempoChain(speed: number): string[] {
  * written with `=`, which ffmpeg applies as given; `<` would renormalise them.
  */
 export function panFilter(pan: number | undefined): string | null {
-  const { left, right } = panGains(pan)
+  return panFilterFor(panGains(pan))
+}
+
+/** The `pan` filter for per-channel gains — a clip's pan and its track's, composed (`routedPanGains`). */
+export function panFilterFor({ left, right }: { left: number; right: number }): string | null {
   if (left === 1 && right === 1) return null
   return `pan=stereo|c0=${left.toFixed(6)}*c0|c1=${right.toFixed(6)}*c1`
 }
@@ -338,7 +342,7 @@ export function buildAudioGraph(
     else if (first !== 1) steps.push(`volume=${first.toFixed(6)}`)
     // After the COMMON_FORMAT up-mix, so a mono source pans as two identical channels — as in the
     // preview, whose channel gains follow a two-channel up-mix of the same kind.
-    const pan = panFilter(item.pan)
+    const pan = panFilterFor(routedPanGains(timeline, item))
     if (pan) steps.push(pan)
 
     const label = `a${index}`
@@ -369,7 +373,7 @@ export function buildAudioGraph(
         : `volume='${volumeExpression(candidate.envelope)}':eval=frame`
     )
     // A composition's sounds are the item's sound: they pan with it, as they do in the preview.
-    const pan = panFilter(candidate.item.pan)
+    const pan = panFilterFor(routedPanGains(timeline, candidate.item))
     if (pan) steps.push(pan)
 
     const label = `a${index}`

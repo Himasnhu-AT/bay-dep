@@ -59,3 +59,37 @@ test('a running export claims nothing about completeness yet', () => {
   const status = exportStatus({ ...done, stage: 'rendering', progress: 0.5, framesDone: 60 }, '/out.mp4', null)
   assert.equal(status.complete, undefined)
 })
+
+test('main’s read-back findings reach the agent, and a blocking one means not complete', () => {
+  const noAudio = { severity: 'blocking' as const, message: 'The timeline has sound, but the exported file has no audio stream.' }
+  const status = exportStatus({ ...done, findings: [{ severity: 'warn', message: 'length unknown' }, noAudio] }, '/out.mp4', null)
+  assert.equal(status.complete, false)
+  assert.match(String(status.warning), /no audio stream/)
+  // Blocking first, whatever order main sent them in.
+  assert.deepEqual((status.findings as { severity: string }[]).map((f) => f.severity), ['blocking', 'warn'])
+  // The control: a warning alone leaves the export complete.
+  const warned = exportStatus({ ...done, findings: [{ severity: 'warn', message: 'length unknown' }] }, '/out.mp4', null)
+  assert.equal(warned.complete, true)
+  assert.equal((warned.findings as unknown[]).length, 1)
+})
+
+test('a done export that wrote zero frames is not complete, though main found nothing wrong with the file', () => {
+  const empty = exportStatus({ ...done, framesDone: 0, findings: [] }, '/out.mp4', null)
+  assert.equal(empty.complete, false)
+  assert.match(String(empty.warning), /zero frames/)
+  assert.ok((empty.findings as { severity: string }[]).some((f) => f.severity === 'blocking'))
+  // Positive control: the same export with its frames is complete.
+  assert.equal(exportStatus({ ...done, findings: [] }, '/out.mp4', null).complete, true)
+})
+
+test('frames written with something missing are a blocking finding too', () => {
+  const incomplete = describeIncomplete([{ frame: 3, missing: ['Title'], gradeIssues: [] }])
+  const status = exportStatus({ ...done, findings: [] }, '/out.mp4', incomplete)
+  const findings = status.findings as { severity: string; message: string }[]
+  assert.equal(findings.length, 1)
+  assert.equal(findings[0]!.severity, 'blocking')
+  assert.match(findings[0]!.message, /"Title"/)
+  // Clean: an empty list, said explicitly — and nothing before the job is done.
+  assert.deepEqual(exportStatus({ ...done, findings: [] }, '/out.mp4', null).findings, [])
+  assert.equal(exportStatus({ ...done, stage: 'encoding' }, '/out.mp4', null).findings, undefined)
+})

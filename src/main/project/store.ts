@@ -24,7 +24,7 @@ import {
   type Bounds
 } from '../window-state'
 import { adoptAssets } from '../media/import'
-import { describeStorage, openDatabase, type AppDatabase } from './db'
+import { describeStorage, openDatabase, repairDatabase, type AppDatabase } from './db'
 import { menuRecents, parseHidden, RECENT_MENU_HIDDEN_KEY, unhide } from './recent-menu'
 import {
   EXTENSION,
@@ -65,6 +65,72 @@ function database(): AppDatabase | null {
   // version returned null in silence, which is what let a dead subsystem pass for an empty one.
   if (report.message) console.error(`[bay] ${report.message}`)
   return handle
+}
+
+export interface StorageRepair {
+  ready: boolean
+  error: string | null
+  /** Where what was in the way went (renamed aside, never deleted). */
+  movedAside: string[]
+  /** Recent projects in the new database: carried over, plus any found in the projects folder. */
+  recents: number
+}
+
+/**
+ * Settings › Storage's and the projects screen's "Repair": makes the database open again with
+ * nothing lost. The old file is set aside with what it still yields carried over
+ * (`repairDatabase`), and every `.bay` in the projects folder is listed again, so a database
+ * that yielded nothing still comes back with its recents. Projects themselves are files and are
+ * never touched.
+ */
+export async function repairStorage(): Promise<StorageRepair> {
+  handle?.close()
+  handle = null
+  const { result, open } = repairDatabase(appDbPath())
+  handle = open.db
+  status = { ready: result.ok, error: result.error }
+  if (!result.ok) {
+    console.error(`[bay] storage repair failed: ${result.error}`)
+    return { ready: false, error: result.error, movedAside: result.movedAside.map((m) => m.to), recents: 0 }
+  }
+  console.log(`[bay] storage repaired: ${result.movedAside.length} set aside, ${result.recovered.recents} recent project(s) carried over`)
+  const dir = projectsDir()
+  let names: string[] = []
+  try {
+    names = (await readdir(dir)).filter((name) => name.endsWith('.bay'))
+  } catch {
+    // No projects folder yet: nothing to list.
+  }
+  // Listing a project also marks it the last one opened; the recovered answer is the true one.
+  const last = handle?.getState(LAST_PROJECT_KEY) ?? null
+  for (const name of names) {
+    try {
+      rememberRecent(await readProjectFile(join(dir, name)))
+    } catch {
+      // A file that does not read as a project is not listed; it stays where it is.
+    }
+  }
+  if (last) handle?.setState(LAST_PROJECT_KEY, last)
+  recentsChanged()
+  return { ready: true, error: null, movedAside: result.movedAside.map((m) => m.to), recents: handle?.listRecent(200).length ?? 0 }
+}
+
+const MCP_CLIENTS_KEY = 'mcpClients'
+
+/**
+ * Whether clients other than the in-app agent may drive bay over its MCP socket (a terminal
+ * agent, another app). Off unless the user turned it on in Preferences › Agent; `BAY_MCP_CLIENTS=1`
+ * turns it on for a run (the probes and `./run.sh` use it). Kept in main's database rather than
+ * the renderer's storage because main opens the socket before any window exists. A database that
+ * will not open reads as off — the safe answer for a door into the user's projects.
+ */
+export function mcpClientsEnabled(): boolean {
+  if (process.env['BAY_MCP_CLIENTS'] === '1') return true
+  return database()?.getState(MCP_CLIENTS_KEY) === '1'
+}
+
+export function setMcpClientsEnabled(on: boolean): void {
+  database()?.setState(MCP_CLIENTS_KEY, on ? '1' : '0')
 }
 
 /** For the UI's degraded-state indicator, beside the ffmpeg warning. */

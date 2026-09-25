@@ -13,9 +13,11 @@ import {
 import type { Project } from '@shared/project'
 import type { RecentProject } from '@shared/ipc'
 import {
+  BayMark,
   Button,
   ContextMenu,
   IconButton,
+  InlineAlert,
   Menu,
   Modal,
   SearchField,
@@ -28,6 +30,7 @@ import { call } from '@/lib/bay'
 import { formatShortcut, runCommand, shortcutOf } from '@/lib/commands'
 import { cn } from '@/lib/cn'
 import { useEditor } from '@/store/editor'
+import { STORAGE_REPAIRED_EVENT, StorageRepairButton, useStorageStatus } from '@/editor/StorageRepair'
 
 /**
  * The projects screen: what bay shows at launch, and what the Home button goes back to.
@@ -100,7 +103,13 @@ export function ProjectsHome(): ReactNode {
 
   useEffect(() => {
     void load()
+    // A repair lists the projects folder again; show what it found.
+    const reload = (): void => void load()
+    window.addEventListener(STORAGE_REPAIRED_EVENT, reload)
+    return () => window.removeEventListener(STORAGE_REPAIRED_EVENT, reload)
   }, [load])
+  // An empty list here looks the same broken or new; this is what tells them apart.
+  const storage = useStorageStatus()
 
   const open = async (work: () => Promise<Project | null>): Promise<void> => {
     if (busy) return
@@ -182,6 +191,7 @@ export function ProjectsHome(): ReactNode {
     if (!busy) runCommand('file.newProject')
   }
   const createHint = `Create new project (${formatShortcut(shortcutOf('file.newProject') ?? '')})`
+  const openFile = (): void => void open(() => call('Open project', (api) => api.project.open()))
 
   return (
     <div className="flex h-full w-full flex-col bg-surface-0 text-ink-0">
@@ -191,7 +201,10 @@ export function ProjectsHome(): ReactNode {
       <div className="flex min-h-0 flex-1 justify-center px-8 pb-8">
         <section className="flex min-h-0 w-full max-w-[1200px] flex-col overflow-hidden rounded-xl border border-line bg-surface-1">
           <header className="flex shrink-0 items-center gap-2 border-b border-line px-4 py-3">
-            <h1 className="mr-2 text-[13px] font-semibold text-ink-0">bay</h1>
+            <h1 className="mr-2 flex items-center gap-2 text-[14px] font-semibold tracking-tight text-ink-0">
+              <BayMark variant="tile" size={22} />
+              bay
+            </h1>
             <SearchField
               label="Search projects"
               placeholder="Search projects…"
@@ -202,7 +215,7 @@ export function ProjectsHome(): ReactNode {
             <div className="flex-1" />
             <button
               type="button"
-              onClick={() => void open(() => call('Open project', (api) => api.project.open()))}
+              onClick={openFile}
               className="t-fast flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[12px] text-ink-1 hover:bg-surface-3 hover:text-ink-0"
             >
               <FolderOpen aria-hidden="true" className="size-3.5" />
@@ -244,9 +257,20 @@ export function ProjectsHome(): ReactNode {
               onClick={() => useEditor.getState().setSettingsOpen(true)}
             />
           </header>
+          {storage && !storage.ready && (
+            <InlineAlert tone="danger" className="m-3 mb-0 items-center">
+              <span className="flex-1">
+                <b className="font-semibold">Storage unavailable</b> — recent projects cannot be listed or remembered.
+                Your projects are files and are safe. {storage.error ? <span className="text-ink-2">({storage.error})</span> : null}
+              </span>
+              <StorageRepairButton />
+            </InlineAlert>
+          )}
 
           <div className="min-h-0 flex-1 overflow-y-auto p-4">
-            {view === 'grid' ? (
+            {recents !== null && recents.length === 0 ? (
+              <Welcome busy={busy} hint={createHint} onCreate={createProject} onOpen={openFile} />
+            ) : view === 'grid' ? (
               <div className="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-x-4 gap-y-5">
                 <CreateTile busy={busy} hint={createHint} onCreate={createProject} />
                 {shown.map((recent) => (
@@ -287,11 +311,6 @@ export function ProjectsHome(): ReactNode {
               </div>
             )}
 
-            {recents !== null && recents.length === 0 && (
-              <p className="mt-6 text-center text-[12px] text-ink-2">
-                Projects you create or open show up here.
-              </p>
-            )}
             {recents !== null && recents.length > 0 && shown.length === 0 && (
               <p className="mt-6 text-center text-[12px] text-ink-2">
                 No project matches “{query.trim()}”.
@@ -447,6 +466,46 @@ function TrashDialog({
         You can restore it from the Trash in Finder.
       </p>
     </Modal>
+  )
+}
+
+/**
+ * The first screen of a new install: the mark, the name, what bay is — an editor with an agent
+ * in it, which nothing else on this screen would say — and the two ways in. It replaces the
+ * lone "+" tile until there is a project to list.
+ */
+function Welcome({
+  busy,
+  hint,
+  onCreate,
+  onOpen
+}: {
+  busy: boolean
+  hint: string
+  onCreate: () => void
+  onOpen: () => void
+}): ReactNode {
+  return (
+    <div className="flex min-h-full flex-col items-center justify-center gap-5 px-6 py-12 text-center">
+      <BayMark variant="tile" size={88} title="bay" />
+      <div className="flex flex-col items-center gap-2">
+        <p aria-hidden="true" className="text-[28px] leading-none font-semibold tracking-tight text-ink-0">
+          bay
+        </p>
+        <p className="max-w-[420px] text-[13px] leading-relaxed text-pretty text-ink-1">
+          A video editor with an agent built in. Cut, grade and export by hand, or tell the agent what you want
+          and review every change it makes.
+        </p>
+      </div>
+      <div className="flex flex-wrap items-center justify-center gap-2">
+        <Button variant="primary" size="md" disabled={busy} title={hint} icon={<Plus className="size-3.5" />} onClick={onCreate}>
+          New Project
+        </Button>
+        <Button size="md" disabled={busy} icon={<FolderOpen className="size-3.5" />} onClick={onOpen}>
+          Open…
+        </Button>
+      </div>
+    </div>
   )
 }
 

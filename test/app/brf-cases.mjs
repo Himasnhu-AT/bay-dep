@@ -27,7 +27,7 @@
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { attach, check, checksPassed, PreconditionError, runProbe } from './cdp.mjs'
+import { attach, check, checksPassed, PreconditionError, runProbe, showInspector } from './cdp.mjs'
 
 const PORT = Number(process.env.PORT ?? 9222)
 const CASES = (process.env.CASES ?? 'playback,undo,variables,heavy').split(',')
@@ -151,10 +151,11 @@ await runProbe(async () => {
       // Scrub with the mouse across the ruler, over the clip's first 4 s.
       const ruler = await evaluate(`(() => {
         const s = window.bayEngine.store.getState()
-        const cands = [...document.querySelectorAll('*')].filter((e) => e.children.length > 3 && /0:00/.test(e.textContent) && /0:01/.test(e.textContent) && !/TIMELINE/.test(e.textContent))
-        cands.sort((a, b) => a.getBoundingClientRect().height * a.getBoundingClientRect().width - b.getBoundingClientRect().height * b.getBoundingClientRect().width)
-        const r = cands[0]?.getBoundingClientRect()
-        const labels = [...(cands[0]?.querySelectorAll('*') ?? [])].filter((e) => /^0:0[0-4]$/.test(e.textContent.trim())).map((e) => ({ t: e.textContent.trim(), x: e.getBoundingClientRect().left }))
+        // The ruler by its own name. The smallest element reading "0:00" and "0:01" used to be
+        // the ruler; the transport bar now shows 00:00:00:00 / 00:00:01:00 and is smaller.
+        const ruler = document.querySelector('[aria-label="Playhead — drag to scrub"]')
+        const r = ruler?.getBoundingClientRect()
+        const labels = [...(ruler?.querySelectorAll('*') ?? [])].filter((e) => /^0:0[0-4]$/.test(e.textContent.trim())).map((e) => ({ t: e.textContent.trim(), x: e.getBoundingClientRect().left }))
         return r ? { left: r.left, top: r.top, width: r.width, height: r.height, labels } : null
       })()`)
       if (!ruler) throw new PreconditionError('could not find the timeline ruler', 'the DOM changed?')
@@ -264,6 +265,8 @@ await runProbe(async () => {
       const itemIds = await state(`tl.tracks.flatMap((t) => t.items).filter((i) => i.assetId === ${JSON.stringify(assetId)}).map((i) => i.id)`)
       verify('two placements', itemIds.length, 2)
       await evaluate(`window.bayEngine.store.getState().select([${JSON.stringify(itemIds[0])}]); window.bayEngine.store.getState().setPlayhead(45); true`)
+      // A .brf's variables are on the Inspector's Title tab (the tabbed Inspector shows one tab).
+      verify('the Inspector shows the Title tab', await showInspector(evaluate, 'title'), true)
       await sleep(600)
       const fields = await evaluate(`(() => {
         const labels = [...document.querySelectorAll('label')].map((l) => ({ text: l.querySelector('span')?.textContent?.trim(), input: l.querySelector('input')?.type })).filter((l) => l.input)

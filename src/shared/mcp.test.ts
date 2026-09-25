@@ -29,11 +29,19 @@ import {
 import { validateArgs } from './validate'
 
 const status = (patch: Partial<AgentSurfaceStatus>): AgentSurfaceStatus => ({
+  enabled: true,
   ready: true,
   error: null,
   socketPath: '/Users/x/Library/Application Support/bay/bay-mcp.sock',
   connectionsSeen: 0,
   ...patch
+})
+
+test('clients turned off reads as a choice with where to change it, never as a failure', () => {
+  const line = summariseAgentSurface(status({ enabled: false, ready: false, error: null, socketPath: null }))
+  assert.match(line, /off/)
+  assert.match(line, /Preferences › Agent/)
+  assert.doesNotMatch(line, /unavailable|unknown/, 'off is not broken')
 })
 
 test('a socket that did not open names the reason, so the line is actionable', () => {
@@ -80,12 +88,16 @@ test('the three states are three distinct sentences', () => {
 
 test('every write tool either dry-runs or says why it cannot', () => {
   for (const spec of TOOLS.filter((t) => !t.readOnly)) {
-    const runs = spec.dryRunnable === true
-    const why = typeof spec.dryRunRefusal === 'string' && spec.dryRunRefusal.length > 0
-    assert.ok(runs !== why, `${spec.name} must carry exactly one of dryRunnable or dryRunRefusal`)
+    const answers = [
+      spec.dryRunnable === true,
+      spec.selfValidating === true,
+      typeof spec.dryRunRefusal === 'string' && spec.dryRunRefusal.length > 0
+    ].filter(Boolean).length
+    assert.equal(answers, 1, `${spec.name} must carry exactly one of dryRunnable, selfValidating or dryRunRefusal`)
   }
   for (const spec of TOOLS.filter((t) => t.readOnly)) {
     assert.ok(!spec.dryRunnable, `${spec.name} only reads and has nothing to dry-run`)
+    assert.ok(!spec.selfValidating, `${spec.name} only reads and has nothing to validate apart`)
   }
 })
 
@@ -93,7 +105,7 @@ test('tools that reach outside the project are not dry-runnable', () => {
   // Written from the requirement, as a literal: each of these writes a file, starts a job or
   // registers a path with main, none of which a store restore can take back. Deriving this list
   // from the flag would assert nothing.
-  for (const name of ['import_media', 'write_composition', 'add_template', 'export_timeline']) {
+  for (const name of ['import_media', 'write_composition', 'add_template', 'export_timeline', 'generate_image', 'generate_video', 'track_generation']) {
     const spec = findTool(name)
     assert.ok(spec, `${name} is missing from the catalog`)
     assert.notEqual(spec.dryRunnable, true, `${name} has effects a dry run cannot undo`)
@@ -110,7 +122,7 @@ test('validateOnly is published exactly where the catalog allows it, and nowhere
       `${spec.name} spells validateOnly into its own schema; it must come from dryRunnable`
     )
     const published = publishedSchema(spec)
-    assert.equal(VALIDATE_ONLY in published.properties, spec.dryRunnable === true, spec.name)
+    assert.equal(VALIDATE_ONLY in published.properties, spec.dryRunnable === true || spec.selfValidating === true, spec.name)
     // And publishing does not mutate the catalog's own schema object.
     assert.ok(!(VALIDATE_ONLY in spec.inputSchema.properties), `${spec.name} was mutated`)
   }
@@ -154,4 +166,27 @@ test('dryRunRequest strips the flag for the handler and refuses with the reason'
   const read = dryRunRequest(findTool('read_project')!, { validateOnly: true })
   assert.equal(read.mode, 'refused')
   assert.match(read.mode === 'refused' ? read.error : '', /only reads/)
+})
+
+test('a self-validating tool receives validateOnly in its handler rather than a store dry run', () => {
+  // generate_video's effect is a paid request on a provider: a store restore cannot undo it, so
+  // the executor must not run the handler "for real" and roll back. The flag goes to the handler.
+  const spec = findTool('generate_video')!
+  assert.equal(spec.selfValidating, true)
+  assert.notEqual(spec.dryRunnable, true)
+  assert.deepEqual(dryRunRequest(spec, { model: 'veo-3.1-generate-preview', prompt: 'p', validateOnly: true }), {
+    mode: 'run',
+    args: { model: 'veo-3.1-generate-preview', prompt: 'p', validateOnly: true }
+  })
+  // false is an ordinary call with the flag removed, same as every other tool.
+  assert.deepEqual(dryRunRequest(spec, { model: 'veo-3.1-generate-preview', prompt: 'p', validateOnly: false }), {
+    mode: 'run',
+    args: { model: 'veo-3.1-generate-preview', prompt: 'p' }
+  })
+  // The validator accepts the published flag; a tool that takes none still refuses it.
+  assert.equal(validateArgs(spec, { model: 'veo-3.1-generate-preview', prompt: 'p', validateOnly: true }), null)
+  assert.match(validateArgs(findTool('track_generation')!, { jobId: 'x', validateOnly: true }) ?? '', /has no argument "validateOnly"/)
+  // And a refusal on another tool names it among the tools that take the flag.
+  const wet = dryRunRequest(findTool('import_media')!, { paths: ['/a.mp4'], validateOnly: true })
+  assert.match(wet.mode === 'refused' ? wet.error : '', /generate_video/)
 })

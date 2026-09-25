@@ -20,7 +20,7 @@ import {
   releasePath,
   writeComposition
 } from './html/compositions'
-import { disposeAgent, exportTranscript, sendToAgent, startAgent, stopAgent } from './agent/host'
+import { agentProviders, disposeAgent, exportTranscript, sendToAgent, startAgent, stopAgent } from './agent/host'
 import { mediaToolsReady } from './ffmpeg/ffmpeg'
 import { collectMetrics } from './metrics'
 import { probe } from './ffmpeg/probe'
@@ -37,20 +37,40 @@ import {
 import { homedir } from 'node:os'
 import { waveform } from './media/waveform'
 import { detectBeats } from './media/beats'
+import { detectSceneCuts } from './media/scene-cuts'
 import { sizesOf } from './media/caption-file'
 import { locate, openCaptions, readCaptions, saveCaptions } from './media/files'
 import { forgetPath, importDialog, importPaths } from './media/import'
 import { freezeFrame } from './media/freeze-frame'
+import { importFromUrl } from './media/url-import'
+import { isAllowed } from './protocol'
+import { vision } from './vision/host'
+import { checkSearchRequest, checkVisionAssets } from './vision/requests'
+import { downloadsDir } from './paths'
 import * as store from './project/store'
 import * as encode from './export/encode'
-import { mcpStatus, setExecutorReady, settleToolCall } from './mcp/server'
+import { mcpStatus, setExecutorReady, setMcpClients, settleToolCall } from './mcp/server'
 import { writeGenerated, writeTemplate } from './html/templates'
 import * as access from './auth/access'
 import * as update from './update/updater'
 import { refuseChannel } from './auth/gate'
+import {
+  clearGenerationKey,
+  generationDubs,
+  generationJob,
+  generationJobs,
+  generationKeys,
+  generationSpending,
+  setGenerationKey,
+  setGenerationLimits,
+  releaseGeneration,
+  reserveGeneration,
+  saveGenerationDub,
+  startGenerationJob
+} from './generate/service'
 
 /** Channels pushed *to* the renderer. They carry no handler, so the table excludes them. */
-type PushChannel = 'exportProgress' | 'appMenuCommand' | 'mcpToolCall' | 'agentEvent' | 'whisperProgress' | 'accessChanged' | 'updateChanged'
+type PushChannel = 'exportProgress' | 'appMenuCommand' | 'mcpToolCall' | 'agentEvent' | 'whisperProgress' | 'visionChanged' | 'accessChanged' | 'updateChanged'
 type InvokeChannel = Exclude<keyof typeof IPC, PushChannel | 'mcpToolResult' | 'mcpExecutorReady'>
 
 interface ChannelApi {
@@ -59,10 +79,13 @@ interface ChannelApi {
   appPlatform: BayApi['app']['platform']
   appMediaToolsReady: BayApi['app']['mediaToolsReady']
   appStorageReady: BayApi['app']['storageReady']
+  appRepairStorage: BayApi['app']['repairStorage']
+  appSetMcpClients: BayApi['app']['setMcpClients']
   appMcpReady: BayApi['app']['mcpReady']
 
   mediaImportDialog: BayApi['media']['importDialog']
   mediaImportPaths: BayApi['media']['importPaths']
+  mediaImportUrl: BayApi['media']['importUrl']
   mediaProbe: BayApi['media']['probe']
   mediaThumbnail: BayApi['media']['thumbnail']
   mediaTranscribe: BayApi['media']['transcribe']
@@ -72,9 +95,18 @@ interface ChannelApi {
   whisperCancel: BayApi['whisper']['cancelDownload']
   whisperDelete: BayApi['whisper']['deleteModel']
   whisperInstall: BayApi['whisper']['installEngine']
+
+  visionStatus: BayApi['vision']['status']
+  visionDownload: BayApi['vision']['download']
+  visionCancelDownload: BayApi['vision']['cancelDownload']
+  visionDelete: BayApi['vision']['deleteModel']
+  visionIndex: BayApi['vision']['index']
+  visionCancelIndex: BayApi['vision']['cancelIndex']
+  visionSearch: BayApi['vision']['search']
   mediaFilmstrip: BayApi['media']['filmstrip']
   mediaWaveform: BayApi['media']['waveform']
   mediaBeats: BayApi['media']['beats']
+  mediaCuts: BayApi['media']['cuts']
   mediaReveal: BayApi['media']['revealInFolder']
   mediaStat: BayApi['media']['stat']
   mediaLocate: BayApi['media']['locate']
@@ -98,6 +130,19 @@ interface ChannelApi {
   projectDuplicate: BayApi['project']['duplicate']
   projectTrash: BayApi['project']['trash']
 
+  generationKeys: BayApi['generation']['keys']
+  generationSetKey: BayApi['generation']['setKey']
+  generationClearKey: BayApi['generation']['clearKey']
+  generationStart: BayApi['generation']['start']
+  generationJob: BayApi['generation']['job']
+  generationJobs: BayApi['generation']['jobs']
+  generationSpending: BayApi['generation']['spending']
+  generationSetLimits: BayApi['generation']['setLimits']
+  generationReserve: BayApi['generation']['reserve']
+  generationRelease: BayApi['generation']['release']
+  generationDubs: BayApi['generation']['dubs']
+  generationSaveDub: BayApi['generation']['saveDub']
+
   compositionInspect: BayApi['composition']['inspect']
   compositionWrite: BayApi['composition']['write']
   compositionWriteTemplate: BayApi['composition']['writeTemplate']
@@ -107,6 +152,7 @@ interface ChannelApi {
   compositionRelease: BayApi['composition']['release']
 
   agentStart: BayApi['agent']['start']
+  agentProviders: BayApi['agent']['providers']
   agentSend: BayApi['agent']['send']
   agentStop: BayApi['agent']['stop']
   agentDispose: BayApi['agent']['dispose']
@@ -157,11 +203,25 @@ function windowOf(event: IpcMainInvokeEvent): BrowserWindow | null {
 }
 
 const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
-  agentStart: async () => startAgent(),
-  agentSend: async (_event, text) => sendToAgent(text),
+  agentStart: async (_event, options) => startAgent(options),
+  agentProviders: async () => agentProviders(),
+  agentSend: async (_event, text, attachments) => sendToAgent(text, attachments),
   agentStop: async () => stopAgent(),
   agentDispose: async () => disposeAgent(),
   agentExportTranscript: (_event, projectName, log) => exportTranscript(projectName, log),
+
+  generationKeys: () => generationKeys(),
+  generationSetKey: (_event, provider, fields) => setGenerationKey(provider, fields),
+  generationClearKey: (_event, provider) => clearGenerationKey(provider),
+  generationStart: (_event, request, options) => startGenerationJob(request, options),
+  generationJob: (_event, id) => generationJob(id),
+  generationJobs: () => generationJobs(),
+  generationSpending: () => generationSpending(),
+  generationSetLimits: (_event, limits) => setGenerationLimits(limits),
+  generationReserve: (_event, totalUsd) => reserveGeneration(totalUsd),
+  generationRelease: (_event, reservationId) => releaseGeneration(reservationId),
+  generationDubs: () => generationDubs(),
+  generationSaveDub: (_event, record) => saveGenerationDub(record),
 
   compositionInspect: async (_event, path, includeHtml) => inspectComposition(path, includeHtml),
   compositionWrite: async (_event, path, html) => {
@@ -196,6 +256,12 @@ const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
     return { ready: tools.ready, ffmpeg: tools.ffmpeg, ffprobe: tools.ffprobe }
   },
   appMcpReady: async () => mcpStatus(),
+  appRepairStorage: () => store.repairStorage(),
+  appSetMcpClients: async (_event, on) => {
+    const enabled = on === true
+    store.setMcpClientsEnabled(enabled)
+    return setMcpClients(enabled)
+  },
   appStorageReady: async () => {
     // Opens the database on first ask if it is not open yet, so the status is the real one
     // rather than a guess made before anything tried.
@@ -205,6 +271,8 @@ const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
 
   mediaImportDialog: (event) => importDialog(windowOf(event)),
   mediaImportPaths: (_event, paths) => importPaths(paths),
+  mediaImportUrl: (_event, url, options) =>
+    importFromUrl(url, { downloadsDir: downloadsDir(), ffmpeg: mediaToolsReady().ffmpeg }, { dryRun: options?.dryRun === true }),
   mediaProbe: (_event, path) => probe(path),
   mediaThumbnail: (_event, request) => thumbnail(request),
   mediaTranscribe: async (_event, path, language, options) => {
@@ -235,10 +303,50 @@ const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
   whisperCancel: async () => cancelWhisperDownload(),
   whisperDelete: (_event, file) => deleteWhisperModel(app.getPath('userData'), file),
   whisperInstall: () => installWhisperEngine(),
+
+  visionStatus: () => vision().status(),
+  visionDownload: async () => {
+    try {
+      await vision().downloadModel('user')
+      return { ok: true as const }
+    } catch (error) {
+      return { ok: false as const, error: error instanceof Error ? error.message : String(error) }
+    }
+  },
+  visionCancelDownload: async () => vision().cancelDownload(),
+  visionDelete: () => vision().deleteModel(),
+  visionIndex: async (_event, assets, options) => {
+    try {
+      // The renderer's paths are read only where `bay://` would serve them (vision/requests.ts).
+      const checked = checkVisionAssets(assets, isAllowed)
+      if (!checked.ok) return checked
+      return await vision().index(checked.value, { dryRun: options?.dryRun === true, download: options?.download === true })
+    } catch (error) {
+      return { ok: false as const, error: error instanceof Error ? error.message : String(error) }
+    }
+  },
+  visionCancelIndex: async () => vision().cancelIndex(),
+  visionSearch: async (_event, request) => {
+    try {
+      const checked = checkSearchRequest(request, isAllowed)
+      if (!checked.ok) return checked
+      return await vision().search(checked.value)
+    } catch (error) {
+      return { ok: false as const, error: error instanceof Error ? error.message : String(error) }
+    }
+  },
   mediaWaveform: (_event, assetId, path, buckets) => waveform(assetId, path, buckets),
   mediaBeats: async (_event, path, options) => {
     try {
       return { ok: true as const, grid: await detectBeats(path, options ?? {}) }
+    } catch (error) {
+      return { ok: false as const, error: error instanceof Error ? error.message : String(error) }
+    }
+  },
+  mediaCuts: async (_event, path, options) => {
+    try {
+      const threshold = typeof options?.threshold === 'number' && Number.isFinite(options.threshold) ? options.threshold : undefined
+      return { ok: true as const, cuts: await detectSceneCuts(String(path), threshold) }
     } catch (error) {
       return { ok: false as const, error: error instanceof Error ? error.message : String(error) }
     }
@@ -327,6 +435,13 @@ export function registerIpcHandlers(): void {
   onWhisperDownload((download) => {
     for (const window of BrowserWindow.getAllWindows()) {
       if (!window.isDestroyed()) window.webContents.send(IPC.whisperProgress, download)
+    }
+  })
+
+  // The indexing job and the model download, to every window, for the same reason.
+  vision().onChange((status) => {
+    for (const window of BrowserWindow.getAllWindows()) {
+      if (!window.isDestroyed()) window.webContents.send(IPC.visionChanged, status)
     }
   })
 

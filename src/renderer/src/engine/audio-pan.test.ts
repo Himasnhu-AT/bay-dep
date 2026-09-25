@@ -10,7 +10,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { audioRoutingAt } from './audio'
-import { panGains } from '@shared/audio-gain'
+import { panGains, routedPanGains } from '@shared/audio-gain'
 import type { Asset, Item, Project, Timeline } from '@shared/project'
 
 function asset(id: string, kind: Asset['kind']): Asset {
@@ -75,3 +75,17 @@ test('a pan moves the channels and leaves the level alone — gain is the same w
 function args({ project, timeline }: { project: Project; timeline: Timeline }): [Project, Timeline] {
   return [project, timeline]
 }
+
+test('the preview routes a clip with its track’s pan and fader too — the numbers export writes', () => {
+  const { project, timeline } = fixture(0.4, undefined)
+  const music = timeline.tracks[1]!
+  Object.assign(music, { pan: -0.6, volume: 0.5 })
+  timeline.tracks[0]!.pan = 1
+  const routed = audioRoutingAt(project, timeline, 30)
+  const video = routed.find((r) => r.item.id === 'V')!
+  const bed = routed.find((r) => r.item.id === 'M')!
+  assert.deepEqual(video.pan, routedPanGains(timeline, video.item), 'clip pan then track pan')
+  assert.notDeepEqual(video.pan, panGains(0.4), 'specimen: the track pan changes the routing')
+  assert.deepEqual(bed.pan, panGains(-0.6), 'a centred clip takes the track pan alone')
+  assert.equal(bed.gain, 0.5, 'the fader is in the gain the preview sets')
+})

@@ -22,6 +22,7 @@ import type { BrfCodeMeta, BrfDocument } from '@shared/brf'
 import type { CanvasFit } from '@shared/project'
 import type { AgentEntry, AgentEvent, AgentGate, Proposal } from '@shared/agent'
 import type { Pin } from '@shared/pins'
+import type { AgentAttachmentView } from '@shared/agent-attachments'
 import type { RippleDeleteResult } from '@shared/ripple'
 import type { OpenSpanResult } from '@shared/insert-edit'
 import type { TrackMove } from '@shared/track-move'
@@ -34,6 +35,29 @@ import type { WhisperDownload } from '@shared/whisper'
 import type { ClipboardPayload, PasteAttribute } from '@shared/clipboard'
 import type { FreezeResult } from '@shared/freeze-frame'
 import type { AgentCheckpoint, AgentRevert } from './agent-turns'
+
+/** What `placeDub` lays down: lines on one audio track, and what happens to the original sound. */
+export interface DubPlacement {
+  trackName: string
+  clips: readonly { asset: Asset; from: Frames; durationInFrames: Frames; speed: number }[]
+  original: { itemIds: readonly string[]; mode: 'duck' | 'mute' | 'keep'; amountDb: number }
+}
+
+export interface DubPlaced {
+  trackId: string
+  trackName: string
+  /** The placed lines' item ids, in the order of `clips`. */
+  itemIds: string[]
+  /** Lines already on the track that a new one replaced. */
+  replaced: number
+  /** Items whose sound was ducked or muted (a mute is the deepest duck, keyed to the dub track). */
+  ducked: string[]
+  muted: string[]
+  /** Ducks the originals already had that the dub's replaced: the item and the track it ducked under. */
+  replacedDucks: { itemId: string; keyTrackId: string; keyTrackName: string }[]
+  /** Original items left alone because their track is locked. */
+  lockedOriginals: string[]
+}
 
 /** The three regions around the preview that can be hidden. The preview itself cannot. */
 export type RegionId = 'side' | 'inspector' | 'timeline'
@@ -56,6 +80,22 @@ export type ClipDialog =
 
 export type PanelId = 'agent' | 'media' | 'text' | 'templates' | 'effects' | 'export' | 'transcript'
 
+/**
+ * The workspace pages, on DaVinci Resolve's own ⇧-digit keys so its users' hands already know
+ * them: Media ⇧2, Edit ⇧4, Color ⇧6, Audio (Resolve's Fairlight) ⇧7, Deliver ⇧8. A page is a
+ * layout over the one project, never a mode: switching changes what is shown, not what edits do.
+ * Five rather than Resolve's seven on purpose — Cut duplicates Edit here, and Fusion is `.brf`.
+ */
+export type WorkspacePage = 'media' | 'edit' | 'color' | 'audio' | 'deliver'
+
+export const WORKSPACE_PAGES: readonly WorkspacePage[] = ['media', 'edit', 'color', 'audio', 'deliver']
+
+/** The inspector's tabs, in Resolve's order. `timeline` is what shows with nothing selected. */
+export type InspectorTab = 'video' | 'title' | 'audio' | 'effects' | 'transition' | 'color' | 'file' | 'timeline'
+
+/** The library slot's tabs (top-left on the Edit page). */
+export type LibraryTab = 'media' | 'effects' | 'index' | 'transcript'
+
 export interface EditorState {
   project: Project
   /** Item ids. Multi-select is supported; most operations act on all of them. */
@@ -66,6 +106,14 @@ export interface EditorState {
   pixelsPerFrame: number
   /** Which left-hand panel is showing. */
   panel: PanelId
+  /** Which workspace page is showing. Remembered per machine (`bay.workspace.page`). */
+  page: WorkspacePage
+  /** The inspector tab last chosen; the inspector falls back when it does not apply. */
+  inspectorTab: InspectorTab
+  /** The library slot's tab. */
+  libraryTab: LibraryTab
+  /** The agent dock beside the workspace, available on every page. */
+  agentDocked: boolean
   /**
    * Which regions are hidden. View state, never project state: it is not saved in the document
    * and never lands on the undo stack — hiding the inspector is not an edit.
@@ -78,6 +126,11 @@ export interface EditorState {
   debugMode: boolean
   /** The Settings dialog. Opened from the top bar, the projects screen, or ⌘,. */
   settingsOpen: boolean
+  /**
+   * The Preferences page to show when it next opens (`'providers'`, `'agent'`…), or null for
+   * wherever it was left. Set by `setSettingsOpen(true, page)`; the dialog reads and clears it.
+   */
+  settingsPage: string | null
   /**
    * Let a transcription fetch a whisper model when this Mac has none. On by default: the user
    * asked for captions, and a download they can watch and cancel beats an error telling them to
@@ -142,6 +195,8 @@ export interface EditorState {
   agentTurnEdited: boolean
   /** Whether any of those changes came from the user rather than the agent's tool calls. */
   agentTurnUserEdited: boolean
+  /** An MCP client on bay's socket (not the agent, not the user) edited during this turn. */
+  agentTurnClientEdited: boolean
   /** What each `changes` entry can restore, by its id. Capped at `MAX_AGENT_CHECKPOINTS`. */
   agentCheckpoints: Record<string, AgentCheckpoint>
   /** Every revert still reachable by undo/redo, so the cards follow the project back and forth. */
@@ -190,7 +245,7 @@ export interface EditorActions {
   /** Begin an in-app agent session: from here writes are gated until something is approved. */
   startAgentSession(): void
   /** Append what the user typed, so it reads in order beside the replies. */
-  logUserMessage(text: string, pins?: Pin[]): void
+  logUserMessage(text: string, pins?: Pin[], attachments?: AgentAttachmentView[]): void
   /** Fold one runtime event into the conversation. */
   applyAgentEvent(event: AgentEvent): void
   /** Throw the conversation away. The gate and the session are untouched. */
@@ -387,7 +442,7 @@ export interface EditorActions {
    */
   addTrack(kind: TrackKind, index?: number): string
   removeTrack(trackId: string): void
-  patchTrack(trackId: string, patch: Partial<Pick<Track, 'locked' | 'muted' | 'hidden' | 'name' | 'solo'>>): void
+  patchTrack(trackId: string, patch: Partial<Pick<Track, 'locked' | 'muted' | 'hidden' | 'name' | 'solo' | 'volume' | 'pan'>>): void
 
   // transitions ---------------------------------------------------------------
   /**
@@ -437,6 +492,14 @@ export interface EditorActions {
    */
   placeSubtitles(sourceItemId: string, asset: Asset): { itemId: string; trackName: string; replaced: number } | { error: string }
   /**
+   * Put a dub's generated lines (`@shared/dub`) on the audio track named `trackName` (made if
+   * missing), each at its frame and speed, replacing lines already on that track where a new one
+   * lands; then duck or mute the original dialogue — the clips named, or the audio items their
+   * sound was detached onto — under that track. Assets not yet in the project are added. One undo
+   * step. Refused, changing nothing, when the dub track is locked.
+   */
+  placeDub(spec: DubPlacement): DubPlaced | { error: string }
+  /**
    * Change the canvas and re-fit what was fitted to the old one: video and images by `fit`
    * (`auto` picks cover or contain the way placement does), compositions to the full frame, text
    * kept at the same place in proportion. One undo step.
@@ -459,6 +522,21 @@ export interface EditorActions {
   /** Rename or recolour a marker. An empty label is refused; a null colour returns to the default. */
   patchMarker(markerId: string, patch: { label?: string; color?: string | null }): void
 
+  // review comments -----------------------------------------------------------
+  /**
+   * Leave a review comment on the active timeline. Returns its id, or null when there is no
+   * timeline or the text is empty. `endFrame` (exclusive, > frame) makes it about a span.
+   */
+  addComment(frame: Frames, text: string, options?: { endFrame?: Frames; author?: 'user' | 'agent' }): string | null
+  /**
+   * Change a comment's words, place or state. Empty text is ignored; `endFrame: null` makes it
+   * a moment again; `resolved: false` reopens it and drops the resolution note.
+   */
+  editComment(commentId: string, patch: { text?: string; frame?: Frames; endFrame?: Frames | null; resolved?: boolean }): void
+  /** Mark a comment done, with what was done about it. */
+  resolveComment(commentId: string, note?: string): void
+  removeComment(commentId: string): void
+
   // selection / view ---------------------------------------------------------
   select(itemIds: string[], additive?: boolean): void
   clearSelection(): void
@@ -479,11 +557,15 @@ export interface EditorActions {
   setPixelsPerFrame(pixelsPerFrame: number): void
   zoomBy(factor: number): void
   setPanel(panel: PanelId): void
+  setPage(page: WorkspacePage): void
+  setInspectorTab(tab: InspectorTab): void
+  setLibraryTab(tab: LibraryTab): void
+  setAgentDocked(docked: boolean): void
   /** Show or hide one region. */
   setRegionHidden(region: RegionId, hidden: boolean): void
   toggleRegion(region: RegionId): void
   toggleDebugMode(): void
-  setSettingsOpen(open: boolean): void
+  setSettingsOpen(open: boolean, page?: string): void
   setAutoDownloadModels(on: boolean): void
   setWhisperModel(file: string | null): void
   setWhisperDownload(download: WhisperDownload | null): void

@@ -27,7 +27,7 @@ await runProbe(async () => {
 
 await evaluate(`(async () => {
   const { store } = window.bayEngine
-  const imported = await window.bay.media.importPaths([${JSON.stringify(process.cwd() + '/' + CLIP)}])
+  const imported = await window.bay.media.importPaths([${JSON.stringify((CLIP.startsWith('/') ? CLIP : process.cwd() + '/' + CLIP))}])
   store.getState().addAssets(imported.map((e) => e.asset))
   store.getState().placeAsset(imported[0].asset.id, 0)
   return true

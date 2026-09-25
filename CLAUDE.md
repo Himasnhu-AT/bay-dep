@@ -71,9 +71,13 @@ pnpm release:signed   # sign + notarize + staple → DMG, update zip, latest-mac
 ```
 
 Environment switches worth knowing: `BAY_AGENT_RUNTIME=sdk` hosts the in-app agent on the Agent
-SDK instead of the `claude` CLI (default); `BAY_MCP_MODE=gateway` makes the proxy list three tools
+SDK instead of the `claude` CLI (default), and `=codex` on OpenAI's `codex` CLI — either overrides
+the Preferences › Agent › Model choice; `BAY_MCP_MODE=gateway` makes the proxy list three tools
 (`get_active_project`, `get_guidelines`, `execute`) instead of the whole catalog. `BAY_ACCESS=dev` skips the
 invite-only access check — **unpackaged builds only** — and `./run.sh` sets it (`--gate` does not).
+`BAY_MCP_CLIENTS=1` opens `bay-mcp.sock` for the run even though MCP clients are off by default
+(Preferences › Agent); `./run.sh` sets it too, because the socket probes need it. `BAY_GENERATION_BASE`
+points generation at a loopback stub (unpackaged only; see the generation paragraph).
 
 ## Running and testing the app
 
@@ -118,7 +122,7 @@ something saves, and nothing a probe does should.
   `--strict-mcp-config` isolates the agent to bay's tools.
 - An allow-list governs what needs approval, not what exists: with one alone, `Bash` ran `id`.
 - `--tools ListMcpResourcesTool,ReadMcpResourceTool,Skill` makes every other built-in *absent* —
-  the session's tool list is bay's catalog (33 tools as of this writing) plus those three, and a request to run `id` had nothing to
+  the session's tool list is bay's catalog (56 tools as of this writing — `src/shared/tools/index.ts` is the count) plus those three, and a request to run `id` had nothing to
   run it with. MCP tools are not built-ins, so bay's are unaffected. `--allowedTools` narrows
   `Skill` to `Skill(<slug>)` for bay's own skills, never the bare name, which would permit every
   bundled skill (`cli.test.ts` pins both).
@@ -130,6 +134,76 @@ something saves, and nothing a probe does should.
   session), which is why it went. The deny list it was paired with had gone stale: it named
   `Task` after the tool became `Agent`, and never named `Monitor`, which runs commands. A list
   of what is *allowed* cannot miss a tool the CLI adds later; a list of what is denied can.
+
+**The Codex provider has no allow-list, so its sandbox is Codex's own, and it is weaker in one
+named way** (`src/main/agent/codex.ts`, Preferences › Agent › Model; `BAY_AGENT_RUNTIME=codex`
+overrides). One `codex exec --json` per turn, `exec resume <thread>` after the first, under
+bay's own `CODEX_HOME` (`<userData>/.agent-codex`: a generated `config.toml` plus a *link* to
+the user's `auth.json`, nothing else of `~/.codex`) and a `HOME` inside it. Measured on
+codex-cli 0.149.1:
+- `codex mcp list`: the user's own home lists `chatcut_desktop`, `computer-use`, `cua_repl`,
+  `node_repl`; bay's lists `bay` only. An isolated home with default features still fetched the
+  account's ChatGPT connector catalog (136 tools: Gmail, Drive, Calendar…) and plugin cache; with
+  `apps`/`plugins` off neither cache is created.
+- `HOME` must move too: under an isolated `CODEX_HOME` the user's `~/.agents/skills` were still
+  listed to the model. `codex debug prompt-input` (no model call) is the probe, and
+  `codex.test.ts` runs it with a positive control per exclusion.
+- The model's own tool list, sandbox config in place: `exec` (code mode — the route to MCP tools;
+  `code_mode_host=false` made bay unreachable), `wait`, `request_user_input`, the
+  `collaboration.*` sub-agent tools (feature flags did not remove them; sub-agents inherit this
+  config), `apply_patch`, the three MCP resource readers, `update_plan`, and 37 `bay` tools.
+- Told to try, it could not escape: `id` — no shell tool, and `process is not defined` in `exec`;
+  `apply_patch` to the workspace and to `/tmp` — *"patch rejected: writing is blocked by read-only
+  sandbox"*, and neither file existed afterwards; reading `/etc/hosts` and any fs module —
+  *"unsupported import in exec"*; `fetch` — not defined. **Untested:** whether `read-only` would
+  let a shell *read* files, because with `shell_tool` and `unified_exec` off there is no shell to
+  try it with; a Codex update that re-adds a shell path would change that, which is why the probe
+  is a fixture (`fixtures/codex/sandbox-probe.jsonl`) and worth re-running on upgrade.
+- **bay's tools are approved by Codex and gated by bay.** `approval_policy = "never"` alone made
+  Codex *refuse* every MCP call it would otherwise have asked about — measured: `read_project` ran,
+  `add_track` came back "MCP tool call requires approval, but approval policy is never" and the
+  timeline did not change, so under Codex the agent could never edit. `default_tools_approval_mode
+  = "approve"` on `[mcp_servers.bay]` hands the decision to bay (`policy.ts`, and "Ask before
+  editing"); measured after: `add_track` landed, and `agent-panel.mjs` on Codex with the gate on is
+  12/12 with bay's refusal text intact. `codex.test.ts` only checked the config text, which is how
+  this shipped — a real turn is the test.
+- `developer_instructions` reaches the model verbatim as the first developer message;
+  `project_doc_max_bytes = 0` keeps a workspace `AGENTS.md` out. Skills cannot be loaded by
+  Codex here (it lists a `SKILL.md` but has nothing to open it with), so main inlines each named
+  skill into the message (`withSkills`) and writes none for it. `--strict-config` turns an
+  unrecognised key into a failed start rather than an isolation setting silently ignored.
+- **Stopped means killed, and killed means the whole tree.** A turn timeout used to fail the turn
+  and leave codex running; the next send then overwrote the only handle on it, so a detached
+  codex kept calling bay's tools and outlived quit. Timeout now aborts (fail + kill), `send`
+  kills any previous child whether or not a turn is still counted as running, and `dispose`
+  kills too. The CLI runtime had the same timeout, and a stopped `claude` exiting after the next
+  send had spawned its successor cleared `#child` and failed the new turn; its handlers now
+  answer only for the current process. And `kill(-pgid)` does not reach bay's proxy under
+  Codex, which starts MCP servers in a process group of their own — measured. `killTree` reads
+  the process tree from `ps` *before* signalling and sends the signal to every descendant
+  outside the group by pid, and the proxy exits the moment its stdin ends, dropping any call in
+  flight (the client is gone; nobody would read the answer). `codex.test.ts`/`cli.test.ts` run
+  fake agents (`fixtures/fake-agent.ts`) whose MCP child sits in its own group.
+- **Skill blocks are bay's alone.** Asset, clip and track names are quoted into the message, so
+  `pinText` strips `<`/`>` (to ‹ ›) and line breaks from them; `withSkills` expands only what
+  `typedText` says the user typed (a `/slug` in a pinned name loads nothing), turns any
+  `<bay-skill`/`</bay-skill` already in the message into `‹bay-skill`, and gives the real blocks a
+  random per-message `nonce` the system prompt says to require.
+- **The home is hidden, and the policy follows links.** `.agent-codex` is refused by the in-app
+  path rule like any hidden folder (the visible `agent-codex` was writable by `write_composition`
+  and `export_timeline`); the old folder is moved on first use, `sessions/` kept for transcript
+  export. `placeRule` also judges the real path (`realpathNearest`), so a visible link into a
+  hidden folder is the hidden folder. `CODEX_API_KEY`/`OPENAI_API_KEY` are removed from Codex's
+  environment — with either set it bills that key instead of the ChatGPT login — and
+  `AGENTS.override.md` is removed beside `AGENTS.md`.
+- **The one write bay makes to `~/.codex`: handing back a refreshed login.** Codex refreshes its
+  token by renaming a new file over `auth.json`, which through bay's link replaces the *link*
+  with a file holding a rotated refresh token while `~/.codex/auth.json` keeps the retired one —
+  and the user's terminal `codex` would then fail to refresh. After every turn, on stop, on
+  dispose and at the next start, `reconcileCodexAuth` checks: link intact → note the login's
+  mtime+size; a file instead, and the user's login unchanged since that note → write the new one
+  back atomically (0600) and relink; the user's login changed meanwhile (they signed in again),
+  or no note exists → theirs wins, bay's copy is dropped. Tested in temp dirs only.
 
 **bay's skills are real Claude Code skills.** `src/shared/skills.ts` defines them; main writes
 each as `.claude/skills/<slug>/SKILL.md` in the agent's working directory on every start, and the
@@ -230,6 +304,15 @@ font's ID 1 is its default instance, "Archivo SemiBold") and copies it, content-
 loading face makes text *pending*, `brfFonts` clones variation faces from the imported source, and
 composition windows get the same bytes as a `data:` `@font-face` — only files from that folder,
 with descriptors checked, since a `.bay` may be someone else's.
+
+**A placed video's sound is its own clip on A1 by default, as in Resolve** (`placeAsset`,
+Preferences › Editing › "Put a video's sound on its own track", `bay.separateClipAudio`). The one
+placement path detaches the sound in the same edit (one undo step), so every video with sound
+arrives as a linked pair. What had to follow, and must keep following: Overwrite clears the same
+span of A1 (not when the picture's own track is locked and it goes to a new lane); Replace swaps
+the whole pair rather than refusing a linked clip; `place_asset` names the sound clip it made
+(`soundItemId`), or an agent finds an item it never asked for. A test that counts "clips of this
+asset" now counts two — count pictures when that is what it means.
 
 **Detached audio is a linked item, and the picture's element is shared where it can be**
 (`@shared/links`, `detach_audio`). The picture gets `audioDetached`, the sound an audio-track item
@@ -346,6 +429,36 @@ guard that is correct can still be guarding the wrong gap. Stranded calls are no
 are reads and failed at once if they are writes (`strandedCall`); the decision is unit-tested,
 the rescue itself has not yet been caught firing, and the commit says so.
 
+**The editor is laid out as Resolve's pages, and the viewer and timeline exist once.** The bottom
+page bar switches Media ⇧2, Edit ⇧4, Color ⇧6, Audio ⇧7, Deliver ⇧8 (store `page`, commands
+`workspace.*`, Resolve's own keys; Cut and Fusion are left out on purpose). Each page is slots —
+`editor/workspace/pageContent.tsx` is the one file that says which panel goes where — and the
+`Preview` and `Timeline` are rendered **once** and moved between pages by portal
+(`workspace/hosted.tsx`), because unmounting `Preview` disposes the engine: never render a second
+one in a slot, and keep the viewer the first `<canvas>` in the document, which probes read. The
+agent is a dock on every page (`agentDocked`; `setPanel('agent')` docks it). The inspector is
+tabbed (`inspectorTab`), the library is tabbed (`libraryTab`: Media Pool, Effects, Index,
+Transcript), and Settings is **Preferences** (System/User) — a message naming a place says
+"Preferences › …", and `setSettingsOpen(true, 'providers')` opens it on a page. So a probe that
+reads the inspector or timeline sets the page and tab first (`showInspector` in
+`test/app/cdp.mjs`) and puts them back; `bay.workspace.page` persists, so the page a probe starts
+on is whatever the last session left.
+
+**Storage has a Repair, and it loses nothing** (`repairDatabase`, `repairStorage`). The database
+holds recents and a few remembered values — never a project. Repair reads out what the old file
+still yields, renames it (and `-wal`/`-shm`, or a directory at its name) aside with a timestamp —
+never deleted — opens a fresh one, writes the rows back, and lists every `.bay` in the projects
+folder again. The projects screen, the status bar and Preferences › Storage all offer it; the
+projects screen shows the warning too, because an empty list there looks the same broken or new.
+
+**A transition drags from the Effects Library onto a cut** (`lib/transitionDrag.ts`). The lane
+lights the cut nearest the pointer within 24 px and applies it there (`applyTransitionAt`, the
+click's own edit). Native drag-and-drop cannot be driven over CDP; dispatch `DragEvent`s with one
+shared `DataTransfer` from the page, and say that is what you tested.
+
+**Name a `/tmp` dir uniquely and check it is not there before you create it.** Two agents once
+picked the same name, and one's cleanup deleted the other's running profile.
+
 **Worktree agents start from `main`, not from your branch.** Every one spawned this way came up
 on an old commit without the files its task named. Tell it to `git merge --ff-only <branch>`
 first. Tools no longer share a hand-edited list: a tool is a file in `src/shared/tools/` and an
@@ -364,12 +477,18 @@ holds the compositions it rewrote, so Revert writes those back. Cards expire whe
 changes — a checkpoint of project A must never be restored into B's window, where ⌘S would write
 it over B — and after 20 turns. Edits the user makes during a turn are marked on the card
 (`asAgent` wraps tool calls; anything outside one is the user's), because a whole-project revert
-takes them too. "Ask before editing" in
-Settings turns the old gate back on: every write is refused until the user approves a
+takes them too. **A client on bay's MCP socket is neither**: the call carries its door
+(`McpToolCall.origin`), a socket call runs under `asClient`, is not held to the turn's approvals,
+and the card names it separately ("edits an MCP client made through bay's socket"). And the socket
+is **off by default**: `bay-mcp.sock` opens only when Preferences › Agent › Allow MCP clients is on
+(kept in main's database, read at launch, opened and closed live); the in-app agent has its own
+`bay-agent.sock` either way. "Ask before editing" in
+Preferences turns the old gate back on: every write is refused until the user approves a
 `propose_edit` plan, the approval is delivered as the model's next turn naming each call byte for
 byte, and each approved call runs once. Outside a session (a terminal client on the socket)
 nothing is gated. `validateOnly: true` on a dry-runnable tool passes the gate, because it changes
-nothing.
+nothing — and on a `selfValidating` one (the generate tools, whose handler receives the flag,
+checks and prices the call, and starts no paid job), for the same reason.
 
 **bay is invite-only, and main is the lock** (`src/main/auth/`, `src/shared/access.ts`). A Mac
 is `entitled` when a sign-in (system browser → the site's `/desktop/sign-in` → a one-shot POST to a
@@ -836,6 +955,12 @@ projects — indexing an array yields `T | undefined` and you must handle it.
   is a level rather than an envelope, so it multiplies. The rule lives in the shared function that
   resolves the gain, not in a comment on both sides, because a rule kept in two places is re-decided
   independently.
+- **Track faders and pan are in that function too.** `track.volume` (0..2, absent is unity)
+  multiplies in `itemAudioGainAt`; `track.pan` composes with the clip's pan per channel in
+  `routedPanGains`, which the preview's channel gains and export's `pan` filter (`panFilterFor`)
+  are both written from. Unity and centre are stored as absence, so a project that never touched
+  the mixer saves unchanged. `pan-render.test.ts` measures a clip-and-track mix through the real
+  ffmpeg per channel; it fails if export reads only the clip's pan.
 - **J/L cuts and ducking are in that same function, `itemAudioGainAt`** (`src/shared/audio-gain.ts`),
   and the preview's clip gain now reads it too — before, the preview multiplied fade × transition
   itself and so ignored the transition-wins rule above. A J/L item's sound plays from its own
@@ -890,7 +1015,7 @@ projects — indexing an array yields `T | undefined` and you must handle it.
 - **The renderer never touches the filesystem.** Media reaches it over the `bay://` protocol, which
   serves only allowlisted paths and must honour HTTP Range requests — `<video>` seeking is broken
   without them, and that is the most common way this goes wrong.
-- **Nothing reaches the network — with three exceptions, all main's.** No telemetry, no
+- **Nothing reaches the network — with five exceptions, all main's.** No telemetry, no
   analytics, no remote fonts or images. The CSP in `src/renderer/index.html` permits no remote
   origin; loosening it is a product decision, not a fix. The first exception is **access**: main
   (never the renderer) talks to `securetoken.googleapis.com` and `firestore.googleapis.com` only,
@@ -904,12 +1029,60 @@ projects — indexing an array yields `T | undefined` and you must handle it.
   renderer passes `download: true` only then). `downloadVerified` checks the size and SHA-256 from
   the redirect's `x-linked-size`/`x-linked-etag` — measured to be exactly `shasum -a 256` of the
   file — and writes to `.part` until they match, so a half-download never sits at a name the model
-  search would pick. Audio never leaves the machine. The third is **updates**
+  search would pick. Audio never leaves the machine. The same exception covers **visual search's
+  model** (`src/main/vision/`, `@shared/visual-search`, `index_footage`/`search_footage`): SigLIP's
+  four files from `Xenova/siglip-base-patch16-224` at a pinned commit, each with a pinned size and
+  SHA-256, fetched only on Download in Preferences › Visual search or when `index_footage` finds no
+  model and that same switch is on. Frames, embeddings and queries never leave the machine; the
+  model runs on onnxruntime-node in a utility process (`vision/worker.js`, nice 10). The third is **updates**
   (`src/main/update/`): electron-updater's own session (`electron-updater` partition, never the
   editor's) may reach only the origin of the feed in `@shared/update-feed`, enforced in
   `onBeforeRequest` by `allowUpdateRequest`, redirects included. The feed is **unset**, so a
-  shipped bay contacts nothing and Settings › About says "Updates: releasing soon".
-  `BAY_UPDATE_FEED` points it at a loopback feed for testing, and nothing else.
+  shipped bay contacts nothing and Preferences › About says "Updates: releasing soon".
+  `BAY_UPDATE_FEED` points it at a loopback feed for testing, and nothing else. The fourth is
+  **AI generation** (`src/main/generate/`, `@shared/generation`, `@shared/speech`, `generate_image`/
+  `generate_video`/`generate_speech`/`track_generation`), and only with a key the user set in Preferences › AI providers (sealed by
+  `safeStorage`, memory-only without a keychain, never returned to the renderer), only when a
+  generation tool starts a job or a job still running at the last quit is resumed. Hosts, per
+  provider, enforced by `providerHttp` on every hop of a redirect (manual follow; credentials
+  only to the API host): `api.openai.com`; `generativelanguage.googleapis.com` (Gemini images and
+  Veo), with Veo downloads allowed to redirect to `*.googleusercontent.com` and
+  `storage.googleapis.com`; `api-singapore.klingai.com`, with results from `*.klingai.com` and
+  `*.kling.ai`; `api.elevenlabs.io` (speech only, answered in the response body — no download
+  hosts). Speech on OpenAI (`/v1/audio/speech`) and Gemini (`/v1beta/interactions`) uses the hosts
+  above. What is sent is the prompt (for speech, the words to be spoken with the voice and style),
+  the options and the one reference picture a call names (only a file already admitted to
+  `bay://`); no audio ever leaves the machine. `estimate_speech` is local arithmetic
+  (`@shared/speech-duration`) and contacts nothing. The job row is persisted *before* the request
+  is sent, so a restart resumes polling instead of paying twice; results land content-addressed
+  in `<userData>/generated`, are ffprobed, and a file with no picture (for speech: no audio stream, or no length) is a
+  blocking finding that is never imported. The redirect hosts for Veo and Kling downloads are from the providers' docs,
+  not observed — the tests use a local stub and never a live API. `BAY_GENERATION_BASE=http://127.0.0.1:<port>` points every provider at such a stub for an in-app run, honoured only unpackaged and only for a literal loopback host, which then is the only host the fence admits (`generate/local-base.ts`). The fifth is **`import_url`**
+  (`src/main/media/url-import.ts`, `@shared/url-import`): the *user's own* `yt-dlp`, found like
+  `claude` (`search-dirs.ts`), never shipped or fetched by bay — missing, the tool says
+  `brew install yt-dlp`. It runs only when that tool is called, on one `http(s)` address
+  (`checkDownloadUrl`, checked in the renderer, in main's policy and again in the downloader) that
+  is not a literal loopback, private, link-local, CGNAT or `localhost` host, as an
+  argument array with `--` before the address, and with `--ignore-config --no-config-locations
+  --no-plugin-dirs --no-exec`, no cookies, `--no-playlist --playlist-items 1`,
+  `--match-filter '!is_live'`, ≤1080p, and one download at a time (a second is refused with when
+  to retry). **The 2 GB cap is bay's, not yt-dlp's**: `--max-filesize` only refuses a size the
+  server announces — measured, the real yt-dlp took 20 MB of a chunked response under a 4 MB
+  `--max-filesize` — so main sums the download folder (parts and fragments) every second, kills
+  the process group past the cap, and measures once more at the end. 15 minutes is the other
+  limit (then the group is killed; quit kills it too). Output goes to a fresh UUID folder under
+  `<userData>/downloads`; the path yt-dlp prints is believed only inside it, and only then is a
+  `.bay-complete` marker written. A failed download's folder is removed at once; one a crash left
+  (no marker) is removed at the next startup (`sweepIncompleteDownloads`, bay's UUID folders only). Which hosts it reaches is yt-dlp's business — whatever the page and
+  its extractor need — so the guard is consent, not a host list: from the in-app agent every
+  download asks the user in a native dialog showing the whole address, the query string on its
+  own line, and a warning when that query holds another address or runs past 100 characters
+  (`downloadConfirmation`, `policy.ts`), because an injected address can carry what the agent
+  read out in its query string. The private-host refusal is literal addresses and names only; bay
+  does not resolve a public name first. Terminal clients are not asked; they have the network
+  already. `url-import.test.ts` runs the real yt-dlp against 127.0.0.1 when it is installed —
+  through a test-only allowance (`allowPrivateHostsForTests`) no tool can reach — never the
+  internet, including a chunked stream the cap must stop.
 - **Subscribe narrowly to the store** (`useEditor((s) => s.playhead)`), never wholesale, or every
   component re-renders at the frame rate during playback.
 - **Playback is driven by wall-clock elapsed time, not by counting rAF callbacks**, and composites at

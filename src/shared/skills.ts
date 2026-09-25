@@ -189,13 +189,55 @@ export const BAY_SKILLS: readonly BaySkill[] = [
     ].join('\n')
   },
   {
+    slug: 'highlights',
+    title: 'Find Highlights',
+    description: 'Use when the user wants the best moments of a long talk, podcast or interview found — marked on the timeline, cut into a highlight reel, or pulled out as shorts.',
+    body: [
+      'Find the moments in a long recording that work as short clips on their own, and mark or cut them.',
+      '',
+      '1. Read the timeline (read_project) and find the speech clip. If the user named a length, a number of clips or a focus (viral moments, or complete knowledge points), use it; otherwise 3 clips of 30–60 seconds, balanced. If they pinned a time range, work only inside it.',
+      '2. Call find_highlights with the clip\'s itemId (and fromFrame/toFrame for a range, and focus, genre, count, minSeconds, maxSeconds). It transcribes on this Mac if needed (reusing a transcript from this session) and returns numbered sentences with their frames, plus the rubric. Tell the user if it is transcribing; a first run may download a speech model.',
+      '3. Read the sentences and choose clips yourself. Each starts on a sentence\'s fromFrame and ends on the same or a later sentence\'s toFrame, opens on the start of a thought, lands its point, and makes sense to someone who never saw the rest. Score each 0–100 on hook, information, emotion and completeness, honestly, and keep only the strongest — fewer good clips beat padding.',
+      '4. Check your picks before placing anything: no two overlap, each lies inside the bounds find_highlights gave, and each length is within the target. mark_highlights checks the same things and refuses with every fault listed — fix exactly those and call again.',
+      '5. Call mark_highlights with the picks, their scores and a one-line reason each, plus the focus and minSeconds/maxSeconds. It places a start and end marker per clip, ranked by score.',
+      '6. List the clips for the user: rank, title, timecodes, length, score and why it works. Then do what they asked for:',
+      '   - Markers only: stop here.',
+      '   - A highlight reel on this timeline: remove_range each gap between the picks, starting from the last gap so earlier frames do not move, then the head and tail. Check the joins with preview_frame.',
+      '   - Separate shorts: export_timeline each range (its toFrame is inclusive, so pass the pick\'s toFrame − 1), or suggest /short-form for a vertical version.',
+      '',
+      PROPOSE
+    ].join('\n')
+  },
+  {
+    slug: 'dub',
+    title: 'Translate & Dub',
+    description: 'Use when the user wants a video translated and dubbed into another language — a voiced translation of the speech, placed in sync over the original.',
+    body: [
+      'Dub a speech clip into another language. You are the translator; bay gives you the cues, the time each line may take, and places the voiced lines.',
+      '',
+      '1. Find the speech clip with read_project. Ask the user in ONE message for anything their request leaves open, then wait: the target language, the voice model (generate_speech lists them; a key must be set in Preferences › AI providers) and voice, and whether the original should be ducked (the default), muted or kept. If they pinned a time range, work only inside it.',
+      '2. Call transcribe with the clip\'s itemId (it runs on this Mac; say so if it is slow), then plan_dub with the itemId and the target language (and fromFrame/toFrame for a range). It returns cues (ids like c@120, named by the frame each starts on), each with its slot in seconds, a budget, and the rules, plus a planId.',
+      '3. Translate every cue yourself, reading the three cues before and after it for context but translating only its own words. Keep the meaning, add no facts, drop fillers and stutters, and write numbers as they are said.',
+      '4. Check each line that looks long with estimate_speech (language, targetSeconds = its slot). Rewrite any that run over as a shorter, natural spoken line that keeps the core meaning and adds no new facts. A small overrun is fine: bay speeds a line up a little to fit.',
+      '5. Call apply_dub with validateOnly: true, the planId and all your lines. If it refuses lines as too long, shorten exactly those by the characters it names and try again. When it passes, tell the user the total estimated cost and the number of lines, and wait for their go-ahead. If it says the budget or a missing key blocks it, tell them what to change in Preferences › AI providers.',
+      '6. On their go-ahead, call apply_dub without validateOnly, then track_dub with the dubId every 15–30 seconds until it says placed. Report any warnings (lines sped up past the natural range), refused or failed lines; offer to redo those with apply_dub partial: true.',
+      '7. Look at the dubbed stretch with frame_grid, and say plainly that you cannot hear the audio, so the user should listen. If they want translated subtitles too, pass track_dub\'s captionCues to add_captions.',
+      '',
+      PROPOSE
+    ].join('\n')
+  },
+  {
     slug: 'review',
     title: 'Review My Edit',
     description: 'Use when the user wants feedback on their edit without anything being changed.',
     body: [
       'Review the edit. Change nothing.',
       '',
-      'Look at frames across the timeline with preview_frame — the start, each cut, the end — and read the structure with read_project. Report what works, and what feels off: framing, pacing, text that is hard to read, anything covering a face. Say plainly that you cannot hear the audio. Finish with the one change you would make first. Change nothing unless the user then asks for a change.'
+      '1. Read the structure with read_project. If there is dialogue, transcribe it (itemId) so the grid shows the words.',
+      '2. Watch it with frame_grid over the whole timeline (or each stretch of a long one), and go through the checklist in bay://guide/review. Look closer at anything doubtful with preview_frame.',
+      '3. Report what works, and what feels off: framing, pacing, B-roll on the wrong line, text that is hard to read or covers a face, black or stray frames at cuts. Say plainly that you cannot hear the audio. Finish with the one change you would make first.',
+      '',
+      'Change nothing unless the user then asks for a change.'
     ].join('\n')
   }
 ]

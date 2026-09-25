@@ -36,6 +36,15 @@ export interface ToolSpec {
    * so a new write tool cannot arrive with neither and answer a dry run with a bare "no".
    */
   dryRunRefusal?: string
+  /**
+   * Accepts `validateOnly: true` and answers it **in its own handler**, which receives the flag.
+   *
+   * For a tool whose real effect is outside the store — a paid job on a remote provider — so a
+   * store restore cannot make it a dry run, but whose checking needs nothing outside it: the
+   * handler validates the call and prices it, and starts nothing. Counts as the tool's answer to
+   * `dryRunnable`/`dryRunRefusal`; a tool carries exactly one of the three.
+   */
+  selfValidating?: boolean
   /** How long main waits for an answer, when longer than `MCP_CALL_TIMEOUT_MS`. */
   timeoutMs?: number
   /** JSON Schema for the arguments. Plain data so no validator leaks into `shared/`. */

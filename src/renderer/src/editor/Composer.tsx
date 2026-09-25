@@ -2,11 +2,12 @@ import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import {
   ArrowUp,
   AtSign,
-  Bot,
+  Paperclip,
   Clock,
   Film,
   Loader2,
   MessageSquarePlus,
+  Shield,
   ShieldCheck,
   Square,
   SquareStop,
@@ -25,9 +26,15 @@ import {
   type MentionCandidate,
   type Pin
 } from '@shared/pins'
+import { Tooltip } from '@/components'
 import { cn } from '@/lib/cn'
 import { selectFps, selectTimeline, useEditor } from '@/store/editor'
 import { AGENT_STARTERS } from './agentStarters'
+import type { PendingAttachment } from '@/lib/agentAttachments'
+import { IMAGE_MIME, VIDEO_EXTENSIONS } from '@shared/agent-attachments'
+
+/** What the paperclip's file picker offers. The composer checks each pick again anyway. */
+const PICKER_ACCEPT = [...Object.keys(IMAGE_MIME), 'video/*', ...VIDEO_EXTENSIONS.map((e) => `.${e}`)].join(',')
 
 /**
  * The agent's composer: the text box, what is pinned, and the `@` and `/` menus.
@@ -55,6 +62,11 @@ interface MenuRow {
 
 export interface ComposerProps {
   running: boolean
+  /**
+   * A message is on its way to main — the conversation starting, attachments being read and
+   * prepared. No second message is taken until it has been handed over.
+   */
+  sending?: boolean
   /** Send one message. Resolves once it has been handed over. */
   onSend: (text: string) => Promise<void>
   onStop: () => void
@@ -62,6 +74,11 @@ export interface ComposerProps {
   draft: string
   setDraft: (text: string) => void
   textareaRef: React.RefObject<HTMLTextAreaElement | null>
+  /** Images and video attached to the next message, shown as chips with a remove button. */
+  attachments: readonly PendingAttachment[]
+  /** Files picked with the paperclip or pasted into the box. */
+  onAddFiles: (files: readonly File[]) => void
+  onRemoveAttachment: (id: string) => void
 }
 
 const PIN_ICON: Record<Pin['kind'], LucideIcon> = { asset: Film, clip: Film, range: Clock }
@@ -136,13 +153,18 @@ function iconForCandidate(candidate: MentionCandidate, project: Project): Lucide
 
 export function Composer({
   running,
+  sending = false,
   onSend,
   onStop,
   onNewConversation,
   draft,
   setDraft,
-  textareaRef
+  textareaRef,
+  attachments,
+  onAddFiles,
+  onRemoveAttachment
 }: ComposerProps): ReactNode {
+  const picker = useRef<HTMLInputElement | null>(null)
   const project = useEditor((state) => state.project)
   const timeline = useEditor(selectTimeline)
   const fps = useEditor(selectFps)
@@ -151,7 +173,6 @@ export function Composer({
   const addPin = useEditor((state) => state.addAgentPin)
   const removePin = useEditor((state) => state.removeAgentPin)
   const approval = useEditor((state) => state.agentApproval)
-  const setApproval = useEditor((state) => state.setAgentApproval)
 
   const [caret, setCaret] = useState(0)
   const [dismissed, setDismissed] = useState<number | null>(null)
@@ -272,7 +293,7 @@ export function Composer({
 
   const send = (): void => {
     const text = draft.trim()
-    if (!text || running) return
+    if ((!text && attachments.length === 0) || running || sending) return
     void onSend(text)
   }
 
@@ -377,6 +398,35 @@ export function Composer({
           </ul>
         )}
 
+        {attachments.length > 0 && (
+          <ul aria-label="Attached" className="flex flex-wrap gap-1.5 px-2 pt-2">
+            {attachments.map((attachment) => (
+              <li
+                key={attachment.id}
+                title={attachment.name}
+                className="group relative grid size-12 place-items-center overflow-hidden rounded-md border border-line-strong bg-surface-3"
+              >
+                {attachment.thumb ? (
+                  <img src={attachment.thumb} alt={attachment.name} className="size-full object-cover" draggable={false} />
+                ) : (
+                  <Loader2 aria-label={`Preparing ${attachment.name}`} className="size-3.5 animate-spin text-ink-2" />
+                )}
+                {attachment.kind === 'video' && (
+                  <Film aria-label="video" className="absolute bottom-0.5 left-0.5 size-3 rounded-sm bg-black/60 p-px text-white" />
+                )}
+                <button
+                  type="button"
+                  aria-label={`Remove ${attachment.name}`}
+                  onClick={() => onRemoveAttachment(attachment.id)}
+                  className="t-fast absolute top-0.5 right-0.5 grid size-4 place-items-center rounded-full bg-black/70 text-white hover:bg-black"
+                >
+                  <X aria-hidden="true" className="size-3" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+
         {rangeOpen && (
           <RangeEditor
             fps={fps}
@@ -421,6 +471,13 @@ export function Composer({
             setCaret(event.target.selectionStart)
             setDismissed(null)
           }}
+          onPaste={(event) => {
+            // Pictures on the clipboard become attachments; text pastes as text.
+            const files = Array.from(event.clipboardData.files)
+            if (files.length === 0) return
+            event.preventDefault()
+            onAddFiles(files)
+          }}
           onSelect={syncCaret}
           onClick={syncCaret}
           onKeyDown={(event) => {
@@ -457,31 +514,38 @@ export function Composer({
           className="block w-full resize-none bg-transparent px-3 pt-2.5 text-[12.5px] leading-relaxed text-ink-0 outline-none placeholder:text-ink-2"
         />
 
-        <div className="flex items-center gap-1 px-2 pt-1 pb-2">
-          <span
-            className="flex items-center gap-1.5 rounded-md px-1.5 py-1 text-[11px] text-ink-1"
-            title="Claude Code, with bay's tools and nothing else"
-          >
-            <Bot aria-hidden="true" className="size-3.5" />
-            Agent
-          </span>
-          <ToolbarButton label="Pin an asset, clip or time" icon={AtSign} onClick={openMention} />
+        <div className="@container flex items-center gap-0.5 px-2 pt-1 pb-2">
+          <ToolbarButton text="Pin" label="Pin an asset, clip or time (@)" icon={AtSign} onClick={openMention} />
           <ToolbarButton
-            label={approval ? 'Ask before editing: on — the agent proposes, you approve' : 'Ask before editing: off — the agent edits, you can revert'}
-            icon={ShieldCheck}
-            pressed={approval}
-            onClick={() => setApproval(!approval)}
+            text="Attach"
+            label="Attach images or video — or paste, or drop them here"
+            icon={Paperclip}
+            onClick={() => picker.current?.click()}
+          />
+          <input
+            ref={picker}
+            type="file"
+            multiple
+            accept={PICKER_ACCEPT}
+            hidden
+            onChange={(event) => {
+              const files = Array.from(event.target.files ?? [])
+              event.target.value = ''
+              if (files.length > 0) onAddFiles(files)
+            }}
           />
           <ToolbarButton
-            label="Pin a time range"
+            text="Range"
+            label="Pin a time range — the agent changes nothing outside it"
             icon={Clock}
             pressed={rangeOpen}
             onClick={() => setRangeOpen((value) => !value)}
           />
-          {running && (
-            <span className="ml-1 flex items-center gap-1 text-[11px] text-ink-2">
+          <ApprovalBadge on={approval} />
+          {(running || sending) && (
+            <span role="status" className="ml-1 flex items-center gap-1 text-[11px] text-ink-2">
               <Loader2 aria-hidden="true" className="size-3 animate-spin" />
-              Working…
+              {running ? 'Working…' : 'Sending…'}
             </span>
           )}
           <div className="flex-1" />
@@ -499,7 +563,7 @@ export function Composer({
             <button
               type="button"
               onClick={send}
-              disabled={draft.trim().length === 0}
+              disabled={sending || (draft.trim().length === 0 && attachments.length === 0)}
               aria-label="Send"
               title="Send (Enter)"
               className="t-press grid size-7 place-items-center rounded-full bg-accent text-accent-ink hover:bg-accent-hover active:scale-[0.96] disabled:bg-surface-4 disabled:text-ink-3"
@@ -513,31 +577,71 @@ export function Composer({
   )
 }
 
+/**
+ * A composer tool: its icon, its short name when the composer is wide enough to show it, and
+ * the full sentence in the tooltip and accessible name either way. An icon alone was guesswork —
+ * the clock and the shield read as "history" and nothing.
+ */
 function ToolbarButton({
+  text,
   label,
   icon: Icon,
   onClick,
   pressed
 }: {
+  /** The visible word. */
+  text: string
+  /** The full name: tooltip and accessible name. */
   label: string
   icon: LucideIcon
   onClick: () => void
   pressed?: boolean
 }): ReactNode {
   return (
-    <button
-      type="button"
-      aria-label={label}
-      title={label}
-      aria-pressed={pressed}
-      onClick={onClick}
-      className={cn(
-        't-press grid size-7 place-items-center rounded-md hover:bg-surface-3 hover:text-ink-0 active:scale-[0.96]',
-        pressed ? 'bg-surface-3 text-ink-0' : 'text-ink-2'
-      )}
-    >
-      <Icon aria-hidden="true" className="size-3.5" />
-    </button>
+    <Tooltip label={label} side="top">
+      <button
+        type="button"
+        aria-label={label}
+        aria-pressed={pressed}
+        onClick={onClick}
+        className={cn(
+          't-press flex h-7 min-w-7 items-center justify-center gap-1 rounded-md px-1.5 text-[11px] hover:bg-surface-3 hover:text-ink-0 active:scale-[0.96]',
+          pressed ? 'bg-surface-3 text-ink-0' : 'text-ink-1'
+        )}
+      >
+        <Icon aria-hidden="true" className="size-3.5 shrink-0" />
+        <span className="hidden @[240px]:inline">{text}</span>
+      </button>
+    </Tooltip>
+  )
+}
+
+/**
+ * Whether the agent asks before editing, shown where the user is about to send — and changed in
+ * one place, Preferences › Agent. This used to be a second switch here, an unlabelled shield that
+ * changed a setting with consequences (every edit then waits for an approved plan) from a
+ * toolbar nobody read as settings. A badge keeps the state visible at the moment it matters and
+ * leaves one control for it; clicking it opens that control.
+ */
+function ApprovalBadge({ on }: { on: boolean }): ReactNode {
+  const label = on
+    ? 'Ask before editing is on: the agent proposes a plan and waits for your approval. Change it in Preferences › Agent.'
+    : 'Ask before editing is off: the agent edits directly, and every change can be reverted. Change it in Preferences › Agent.'
+  return (
+    <Tooltip label={label} side="top">
+      <button
+        type="button"
+        aria-label={label}
+        onClick={() => useEditor.getState().setSettingsOpen(true, 'agent')}
+        className={cn(
+          't-fast ml-0.5 flex h-5 items-center gap-1 rounded-full border px-1.5 text-[10.5px] whitespace-nowrap',
+          on ? 'border-accent/50 bg-accent/10 text-ink-0 hover:bg-accent/15' : 'border-line text-ink-2 hover:border-line-strong hover:text-ink-1'
+        )}
+      >
+        {on ? <ShieldCheck aria-hidden="true" className="size-3 shrink-0" /> : <Shield aria-hidden="true" className="size-3 shrink-0" />}
+        <span className="hidden @[350px]:inline">{on ? 'Asks first' : 'Edits directly'}</span>
+      </button>
+    </Tooltip>
   )
 }
 

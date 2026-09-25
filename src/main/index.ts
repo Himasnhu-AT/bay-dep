@@ -17,6 +17,7 @@ import { registerIpcHandlers } from './ipc'
 import {
   clearRecentMenu,
   closeStore,
+  mcpClientsEnabled,
   onRecentsChanged,
   readWindowBounds,
   recentForMenu,
@@ -25,8 +26,9 @@ import {
   writeWindowBounds
 } from './project/store'
 import type { RecentProject } from '@shared/ipc'
-import { cacheDir } from './paths'
+import { cacheDir, downloadsDir } from './paths'
 import { sweepStaleCaches } from './media/cache-key'
+import { VISION_CACHE_FAMILY } from './vision/cache'
 import { cancelCacheUpkeep, runCacheUpkeep } from './media/cache-upkeep'
 import { startMcpServer, stopMcpServer } from './mcp/server'
 import { isOpenableExternally } from './external'
@@ -35,8 +37,10 @@ import { cancelAll } from './export/encode'
 import { menuCommandTarget, menuTemplate } from './menu'
 import { restoreBounds, DEFAULT_HEIGHT, DEFAULT_WIDTH, MIN_HEIGHT, MIN_WIDTH } from './window-state'
 import { onAccessChange, startAccess, stopAccess } from './auth/access'
+import { startGeneration, stopGeneration } from './generate/service'
 import { startUpdates, stopUpdates } from './update/updater'
-import { disposeAgent } from './agent/host'
+import { disposeAgent, sweepAgentAttachments } from './agent/host'
+import { cancelUrlImports, sweepIncompleteDownloads } from './media/url-import'
 import { isEntitled } from '@shared/access'
 import { appNameFor } from './app-name'
 
@@ -245,19 +249,36 @@ void app.whenReady().then(() => {
   void startUpdates().catch((error: unknown) => {
     console.warn(`[bay] update: could not start: ${error instanceof Error ? error.message : String(error)}`)
   })
+  // Generation keys and jobs. Contacts nothing unless a job was still running at the last quit,
+  // in which case its polling resumes rather than paying for the clip twice.
+  void startGeneration().catch((error: unknown) => {
+    console.warn(`[bay] generation: could not start: ${error instanceof Error ? error.message : String(error)}`)
+  })
   installMenu()
   onRecentsChanged(rebuildMenu)
   rebuildMenu()
 
+  // What the user attached to a conversation that ended without `dispose` — a crash, a force
+  // quit. No conversation exists yet, so nothing is reading them.
+  sweepAgentAttachments()
+
   // Reclaims thumbnail and waveform directories left by an older cache scheme. Nothing else
   // in bay evicts, so without this a scheme change leaks its entire previous cache for the
   // life of the install. Startup is the only moment nothing is reading them.
-  void sweepStaleCaches(cacheDir()).then((removed) => {
+  // `vision` is visual search's frame index (`vision/cache.ts`), versioned the same way.
+  void sweepStaleCaches(cacheDir(), ['thumbs', 'peaks', VISION_CACHE_FAMILY]).then((removed) => {
     if (removed.length > 0) {
       console.log(
         `[bay] Reclaimed ${removed.length} stale cache director${removed.length === 1 ? 'y' : 'ies'}: ${removed.join(', ')}`
       )
     }
+  })
+
+  // A download bay was killed in the middle of (a crash, a force quit) left a folder with no
+  // completion marker; nothing will ever import it. Startup, before any download can start, is
+  // when they go. Finished downloads carry the marker and are media placed clips play from.
+  void sweepIncompleteDownloads(downloadsDir()).then((removed) => {
+    if (removed.length > 0) console.log(`[bay] Removed ${removed.length} unfinished download folder${removed.length === 1 ? '' : 's'}: ${removed.join(', ')}`)
   })
 
   // One pass at startup, before anything is in use. This is the only moment the whole cache
@@ -266,8 +287,12 @@ void app.whenReady().then(() => {
   // The agent surface. Non-fatal by construction now rather than by comment: `startMcpServer`
   // returns a status instead of throwing, and the `.catch()` is here because its absence is
   // what turned a degradation into an unhandled rejection last time.
-  void startMcpServer()
+  // Clients other than the in-app agent (a terminal, another app) only when the user allowed
+  // them in Preferences › Agent; the in-app agent's own socket opens either way.
+  const clients = mcpClientsEnabled()
+  void startMcpServer({ clients })
     .then((status) => {
+      if (!clients) return console.log('[bay] MCP clients are off (Preferences › Agent); the in-app agent has its own socket')
       const problem = describeSocket(status)
       if (problem) console.error(`[bay] ${problem}`)
       else console.log(`[bay] MCP socket listening at ${status.path}`)
@@ -294,6 +319,9 @@ app.on('window-all-closed', () => {
 
 app.on('will-quit', () => {
   stopAccess()
+  stopGeneration()
+  // A download yt-dlp is still running would otherwise write on after bay has gone.
+  cancelUrlImports()
   stopUpdates()
   cancelCacheUpkeep()
   void stopMcpServer()

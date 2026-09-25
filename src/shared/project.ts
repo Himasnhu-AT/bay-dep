@@ -609,6 +609,17 @@ export interface Track {
    * through `trackAudible`, never directly, or preview and export will disagree about it.
    */
   solo?: boolean
+  /**
+   * The track's fader: a linear gain on every sound the track plays, 0..2 (unity at 1, +6 dB at
+   * 2), after each clip's own volume. Absent is unity. Sound only; read through
+   * `trackVolume`, which the one gain function (`itemAudioGainAt`) applies for preview and export.
+   */
+  volume?: number
+  /**
+   * The track's pan, -1 (left) .. 1 (right), applied after each clip's own pan — per channel,
+   * the two gains multiply (`trackPanGains`). Absent is centre.
+   */
+  pan?: number
   items: Item[]
 }
 
@@ -684,6 +695,32 @@ export interface Marker {
   color?: string
 }
 
+/**
+ * A review note left at a point (or over a span) of the timeline — "this cut is late", "louder
+ * here" — for someone to act on and then resolve. The user leaves them for the agent
+ * (`read_feedback` → fix → `resolve_feedback`), and the agent can leave them for the user.
+ *
+ * Unlike a marker it has a lifecycle: open until resolved, and resolved notes stay (dimmed) as
+ * the record of what was asked and what was done. On the timeline for the marker's reasons: it
+ * names a moment in the program, so it moves with time edits and not with clip edits.
+ *
+ * Named `ReviewComment` rather than `Comment`, which is a DOM global in the renderer.
+ */
+export interface ReviewComment {
+  id: string
+  /** Timeline frame the note is about. */
+  frame: Frames
+  /** Exclusive end, when the note is about a span rather than a moment. Always > `frame`. */
+  endFrame?: Frames
+  text: string
+  author: 'user' | 'agent'
+  resolved: boolean
+  /** Epoch milliseconds. */
+  createdAt: number
+  /** What was done about it, written when it was resolved. */
+  resolvedNote?: string
+}
+
 export interface Timeline {
   id: string
   name: string
@@ -708,6 +745,11 @@ export interface Timeline {
    * `.bay` file written before markers existed has no such key, and must still load.
    */
   markers?: Marker[]
+  /**
+   * Review comments, in no guaranteed order. Optional so every file written before comments
+   * existed still loads; absent rather than `[]` once the last one is removed.
+   */
+  comments?: ReviewComment[]
 }
 
 export interface Project {
@@ -825,6 +867,12 @@ export function retimeTimeline(timeline: Timeline, fps: number): { nudged: numbe
     // A marker names a wall-clock moment, so it is scaled like an edge — the same rounding as
     // the clip edges above, which keeps a marker placed on a cut on that cut.
     marker.frame = Math.max(0, Math.round(marker.frame * k))
+  }
+
+  for (const comment of timeline.comments ?? []) {
+    // Scaled like a marker, for the same reason; a span keeps at least one frame.
+    comment.frame = Math.max(0, Math.round(comment.frame * k))
+    if (comment.endFrame !== undefined) comment.endFrame = Math.max(comment.frame + 1, Math.round(comment.endFrame * k))
   }
 
   timeline.fps = fps
@@ -959,6 +1007,16 @@ export function trackAudible(tracks: readonly Pick<Track, 'muted' | 'solo'>[], t
  * back short of un-hiding. An element is idle only when *neither* the compositor nor the
  * audio engine wants it.
  */
+/**
+ * The kind of track a placed asset goes on. Anything with a picture is video — a gif, an HTML
+ * composition or a .brf module included, whether or not the probe set `hasVideo` — and only
+ * sound goes on an audio track. One rule for the store's `placeAsset` and the Edit toolbar's
+ * source edits: two copies disagreed about gif/html/brf, so a Replace landed on the wrong kind.
+ */
+export function assetTrackKind(asset: Pick<Asset, 'kind' | 'hasVideo'>): TrackKind {
+  return asset.hasVideo || asset.kind !== 'audio' ? 'video' : 'audio'
+}
+
 export function itemsAtFrame(timeline: Timeline, frame: Frames, kind?: TrackKind): Item[] {
   const out: Item[] = []
   for (const track of timeline.tracks) {
@@ -1211,7 +1269,7 @@ export function placementLayout(
   timeline: Pick<Timeline, 'width' | 'height'>,
   sourceWidth: number,
   sourceHeight: number,
-  /** Settings › Editing › New clips. `auto` is the rule above; the others always cover or contain. */
+  /** Preferences › Editing › New clips. `auto` is the rule above; the others always cover or contain. */
   fit: CanvasFit = 'auto'
 ): Layout {
   if (sourceWidth <= 0 || sourceHeight <= 0) return defaultLayout(timeline)

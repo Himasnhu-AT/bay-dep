@@ -1,13 +1,15 @@
 /**
  * The timeline's shape and what sits on it besides clips: canvas and frame rate,
- * transitions, subtitles, captions, markers and scripted edits.
+ * transitions, subtitles, captions, markers, review comments and scripted edits.
  */
 
 import { CANVAS_PRESETS, checkCanvasSize, activeTimeline, allItems, placementLayout, coverLayout, containLayout, defaultLayout, findAsset, findItem, itemEnd, type Asset, type Item, type Project, type Transition, retimeTimeline } from '@shared/project'
 import { captionAssetName, captionLayout, captionStyle, checkCues } from '@shared/captions'
 import { applyScriptOps } from '@shared/script'
+import { linkedPartners } from '@shared/links'
+import { DUB_MUTE_DB } from '@shared/dub'
 import { clone, makeTrack, newId, nextMarkerName } from '../factory'
-import type { EditorActions } from '../types'
+import type { DubPlaced, EditorActions } from '../types'
 import type { StoreKit } from '../kit'
 
 type Actions = Pick<
@@ -19,6 +21,7 @@ type Actions = Pick<
   | 'applyScript'
   | 'patchTransition'
   | 'placeSubtitles'
+  | 'placeDub'
   | 'resizeCanvas'
   | 'setBackground'
   | 'addCaptions'
@@ -26,6 +29,10 @@ type Actions = Pick<
   | 'moveMarker'
   | 'removeMarker'
   | 'patchMarker'
+  | 'addComment'
+  | 'editComment'
+  | 'resolveComment'
+  | 'removeComment'
 >
 
 export function timelineSlice({ set, get, edit, editTimeline, currentTimeline }: StoreKit): Actions {
@@ -180,6 +187,106 @@ export function timelineSlice({ set, get, edit, editTimeline, currentTimeline }:
         })
       })
       return { itemId, trackName, replaced }
+    },
+
+    placeDub(spec) {
+      const timeline = currentTimeline()
+      if (!timeline) return { error: 'No timeline is open.' }
+      const existing = timeline.tracks.find((t) => t.kind === 'audio' && t.name === spec.trackName)
+      if (existing?.locked) return { error: `The track "${spec.trackName}" is locked. Unlock it, then place the dub again.` }
+      // The new lines are checked against each other as well as against what is on the track:
+      // two lines laid over one another would both play.
+      const order = [...spec.clips].sort((a, b) => a.from - b.from)
+      for (const [i, clip] of order.entries()) {
+        const next = order[i + 1]
+        if (next && clip.from + clip.durationInFrames > next.from) {
+          return {
+            error: `Two dub lines overlap: one at frame ${clip.from} runs ${clip.durationInFrames} frames, past the next at ${next.from}. Nothing was placed.`
+          }
+        }
+      }
+      const itemIds = spec.clips.map(() => newId('itm'))
+      const placed: DubPlaced = {
+        trackId: existing?.id ?? '',
+        trackName: spec.trackName,
+        itemIds,
+        replaced: 0,
+        ducked: [],
+        muted: [],
+        replacedDucks: [],
+        lockedOriginals: []
+      }
+      edit((project) => {
+        const tl = activeTimeline(project)
+        if (!tl) return
+        for (const clip of spec.clips) {
+          if (!project.assets.some((a) => a.id === clip.asset.id)) project.assets.push(clone(clip.asset))
+        }
+        let track = tl.tracks.find((t) => t.kind === 'audio' && t.name === spec.trackName)
+        if (!track) {
+          track = makeTrack('audio', tl.tracks.filter((t) => t.kind === 'audio').length + 1)
+          track.name = spec.trackName
+          tl.tracks.push(track)
+        }
+        placed.trackId = track.id
+        const before = track.items.length
+        track.items = track.items.filter(
+          (item) => !spec.clips.some((clip) => item.from < clip.from + clip.durationInFrames && itemEnd(item) > clip.from)
+        )
+        placed.replaced = before - track.items.length
+        for (const [i, clip] of spec.clips.entries()) {
+          track.items.push({
+            id: itemIds[i]!,
+            assetId: clip.asset.id,
+            trackId: track.id,
+            from: clip.from,
+            durationInFrames: clip.durationInFrames,
+            sourceStartUs: 0,
+            layout: defaultLayout(tl),
+            volume: 1,
+            fadeInFrames: 0,
+            fadeOutFrames: 0,
+            speed: clip.speed
+          })
+        }
+        track.items.sort((a, b) => a.from - b.from)
+        if (spec.original.mode === 'keep') return
+        // The sound of each original clip: its own, or the audio item it was detached onto.
+        const sounding = new Map<string, Item>()
+        for (const id of spec.original.itemIds) {
+          const item = allItems(tl).find((candidate) => candidate.id === id)
+          if (!item) continue
+          const sources = item.audioDetached ? linkedPartners(tl, item.id).filter((p) => !p.audioDetached) : [item]
+          for (const source of sources) sounding.set(source.id, source)
+        }
+        const locked = new Set(tl.tracks.filter((t) => t.locked).map((t) => t.id))
+        for (const item of sounding.values()) {
+          if (item.trackId === track.id) continue
+          if (locked.has(item.trackId)) {
+            placed.lockedOriginals.push(item.id)
+            continue
+          }
+          // A mute is a duck too — the deepest one, keyed to the dub track — so the original is
+          // silent under the dubbed lines only, and silent even when its volume is keyframed
+          // (`item.volume` is not read where keys exist; a duck multiplies after them).
+          const previous = item.duck
+          if (previous && previous.keyTrackId !== track.id) {
+            placed.replacedDucks.push({
+              itemId: item.id,
+              keyTrackId: previous.keyTrackId,
+              keyTrackName: tl.tracks.find((t) => t.id === previous.keyTrackId)?.name ?? previous.keyTrackId
+            })
+          }
+          item.duck = {
+            keyTrackId: track.id,
+            amountDb: spec.original.mode === 'mute' ? DUB_MUTE_DB : spec.original.amountDb,
+            attackFrames: Math.round(tl.fps * 0.25),
+            releaseFrames: Math.round(tl.fps * 0.5)
+          }
+          ;(spec.original.mode === 'mute' ? placed.muted : placed.ducked).push(item.id)
+        }
+      })
+      return placed
     },
 
     resizeCanvas(width, height, fit) {
@@ -342,6 +449,74 @@ export function timelineSlice({ set, get, edit, editTimeline, currentTimeline }:
         if (label) marker.label = label
         if (patch.color === null) delete marker.color
         else if (patch.color !== undefined) marker.color = patch.color
+      })
+    },
+
+    // -- review comments ----------------------------------------------------
+    addComment(frame, text, options = {}) {
+      if (!currentTimeline()) return null
+      const words = text.trim()
+      if (!words) return null
+      const at = Math.max(0, Math.round(frame))
+      const end = options.endFrame === undefined ? undefined : Math.round(options.endFrame)
+      const id = newId('cm')
+      editTimeline((tl) => {
+        const list = tl.comments ?? (tl.comments = [])
+        list.push({
+          id,
+          frame: at,
+          ...(end !== undefined && end > at ? { endFrame: end } : {}),
+          text: words,
+          author: options.author ?? 'user',
+          resolved: false,
+          createdAt: Date.now()
+        })
+      })
+      return id
+    },
+
+    editComment(commentId, patch) {
+      editTimeline((tl) => {
+        const comment = tl.comments?.find((c) => c.id === commentId)
+        if (!comment) return
+        const words = patch.text?.trim()
+        if (words && words !== comment.text) comment.text = words
+        if (patch.frame !== undefined) {
+          const at = Math.max(0, Math.round(patch.frame))
+          // A moved span keeps its length.
+          if (comment.endFrame !== undefined && patch.endFrame === undefined) comment.endFrame += at - comment.frame
+          comment.frame = at
+        }
+        if (patch.endFrame === null) delete comment.endFrame
+        else if (patch.endFrame !== undefined) {
+          const end = Math.round(patch.endFrame)
+          if (end > comment.frame) comment.endFrame = end
+          else delete comment.endFrame
+        }
+        if (patch.resolved === false && comment.resolved) {
+          comment.resolved = false
+          delete comment.resolvedNote
+        } else if (patch.resolved === true && !comment.resolved) comment.resolved = true
+      })
+    },
+
+    resolveComment(commentId, note) {
+      editTimeline((tl) => {
+        const comment = tl.comments?.find((c) => c.id === commentId)
+        if (!comment) return
+        const words = note?.trim()
+        if (comment.resolved && (!words || words === comment.resolvedNote)) return
+        comment.resolved = true
+        if (words) comment.resolvedNote = words
+      })
+    },
+
+    removeComment(commentId) {
+      editTimeline((tl) => {
+        if (!tl.comments?.some((c) => c.id === commentId)) return
+        tl.comments = tl.comments.filter((c) => c.id !== commentId)
+        // Absent rather than empty, as markers are.
+        if (tl.comments.length === 0) delete tl.comments
       })
     }
   }

@@ -76,15 +76,23 @@ test('Insert slides everything after the playhead right by the clip, on every tr
   assert.deepEqual(shape(), before)
 })
 
-test('Overwrite lands over what was there and moves nothing', () => {
+test('Overwrite lands over what was there and moves nothing; a video’s sound overwrites the same span of A1', () => {
   load()
   const placed = editIntoTimeline(asset('N'), 'overwrite', { inUs: 0, outUs: 1_000_000 })
   assert.ok(placed)
   assert.equal(byAsset('B')[0]!.from, 60, 'B did not move')
   assert.deepEqual(byAsset('A').map((i) => [i.from, i.durationInFrames]), [[0, 30]], 'A lost the overwritten half')
-  assert.deepEqual(byAsset('M').map((i) => [i.from, i.durationInFrames]), [[0, 120]], 'the sound track is untouched')
   const video = tl().tracks.find((t) => t.kind === 'video')!
   assert.deepEqual(video.items.map((i) => [i.from, i.durationInFrames]), [[0, 30], [30, 30], [60, 60]])
+  // N has sound, so it arrives as a linked pair (Preferences › Editing): its sound takes the same
+  // span of A1, which M gives up there — nothing moves, and no new track appears.
+  const audio = tl().tracks.filter((t) => t.kind === 'audio')
+  assert.equal(audio.length, 1, 'no new audio track')
+  assert.deepEqual(shape().filter((line) => line.startsWith('audio:')), ['audio:M@0+30', 'audio:N@30+30', 'audio:M@60+60'])
+  const picture = video.items.find((i) => i.id === placed)!
+  const sound = audio[0]!.items.find((i) => i.assetId === 'N')!
+  assert.ok(picture.linkId && picture.linkId === sound.linkId, 'picture and sound are linked')
+  assert.equal(picture.audioDetached, true, 'the picture plays none of its own sound')
 })
 
 test('a locked track is never overwritten: the clip goes to a lane of its own, and openSpan names the lock', () => {
@@ -95,7 +103,7 @@ test('a locked track is never overwritten: the clip goes to a lane of its own, a
   editIntoTimeline(asset('N'), 'overwrite')
   // With V1 locked the lowest unlocked video track is none, so the clip gets a lane of its own
   // and nothing on V1 changes.
-  assert.deepEqual(shape().filter((line) => !line.startsWith('video:N')), before)
+  assert.deepEqual(shape().filter((line) => !/^(video|audio):N@/.test(line)), before, 'V1 and A1 are untouched')
   const refused = s().openSpan(30, 30, 'overwrite', video.id)
   assert.equal(refused, null)
   assert.match(s().toast?.text ?? '', /V1 is locked/)
@@ -114,7 +122,7 @@ test('Add Title is one undo step: one ⌘Z takes back the clip and its asset tog
   assert.equal(byAsset(id).length, 0)
 })
 
-test('Settings › Editing › New clips frames a differently shaped clip, for the UI and place_asset alike', () => {
+test('Preferences › Editing › New clips frames a differently shaped clip, for the UI and place_asset alike', () => {
   const portrait: Asset = { ...shot('P', 5), width: 1080, height: 1920 }
   const layoutOf = (id: string | null) => tl().tracks.flatMap((t) => t.items).find((i) => i.id === id)!.layout
   const setFit = (fit: 'auto' | 'cover' | 'contain') => useEditingPrefs.setState({ newClipFit: fit })

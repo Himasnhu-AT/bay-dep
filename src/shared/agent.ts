@@ -21,9 +21,35 @@
  * not the user's attention, is what enforces it.
  */
 
-import { TOOLS, VALIDATE_ONLY, findTool, type ToolSpec } from './mcp'
+import { TOOLS, VALIDATE_ONLY, acceptsValidateOnly, findTool, type ToolSpec } from './mcp'
 import type { Pin } from './pins'
+import type { AgentAttachmentView } from './agent-attachments'
 import type { ChangeLine } from './diff'
+
+// ---------------------------------------------------------------------------
+// Who the agent is
+// ---------------------------------------------------------------------------
+
+/**
+ * Whose model drives the in-app agent: Anthropic's Claude Code or OpenAI's Codex, each the CLI
+ * already installed and signed in on this Mac. The panel and everything it renders are the same
+ * for both — only main knows which binary it spawned.
+ */
+export type AgentProvider = 'claude' | 'codex'
+
+export const AGENT_PROVIDERS: readonly AgentProvider[] = ['claude', 'codex']
+
+/** Whether a provider's CLI was found on this machine — what Preferences › Agent shows. */
+export interface AgentProviderStatus {
+  provider: AgentProvider
+  /** The binary bay would run, or null when none was found where a GUI app can look. */
+  path: string | null
+  /**
+   * What the user needs to do before this provider can start, or null when nothing: not
+   * installed, or (Codex) installed and never signed in.
+   */
+  problem: string | null
+}
 
 // ---------------------------------------------------------------------------
 // What a runtime emits
@@ -100,8 +126,11 @@ export interface AgentRuntime {
  * state rather than two that must be paired up by eye.
  */
 export type AgentEntry =
-  /** `pins` are what was pinned when it was sent, shown as chips; `text` is what was typed. */
-  | { kind: 'user'; id: string; text: string; pins?: Pin[] }
+  /**
+   * `pins` are what was pinned when it was sent, shown as chips; `text` is what was typed;
+   * `attachments` the images and video sent with it, as thumbnails.
+   */
+  | { kind: 'user'; id: string; text: string; pins?: Pin[]; attachments?: AgentAttachmentView[] }
   | { kind: 'assistant'; id: string; text: string }
   | { kind: 'thought'; id: string; text: string }
   /** How long the model thought, when its reasoning itself was not sent. */
@@ -265,10 +294,12 @@ export function checkApproval(
 
   // A dry run changes nothing, so there is nothing to approve — and gating it would forbid the
   // one move that lets an agent check a plan *before* putting it in front of the user. Only for
-  // tools the catalog marks dry-runnable: on any other tool the flag is refused by the executor,
-  // and a gate that waved it through would be trusting that refusal to happen. No `index`, so
-  // nothing is spent.
-  if (args[VALIDATE_ONLY] === true && findTool(toolName)?.dryRunnable) return { allowed: true }
+  // tools the catalog marks dry-runnable or self-validating (whose handler checks and prices a
+  // generation and starts nothing): on any other tool the flag is refused by the executor, and a
+  // gate that waved it through would be trusting that refusal to happen. No `index`, so nothing
+  // is spent.
+  const spec = findTool(toolName)
+  if (args[VALIDATE_ONLY] === true && spec && acceptsValidateOnly(spec)) return { allowed: true }
 
   const approved = gate.approved
   if (!approved) {

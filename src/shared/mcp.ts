@@ -46,6 +46,13 @@ export interface McpToolCall {
   id: string
   tool: string
   args: Record<string, unknown>
+  /**
+   * Which door the call came through: the in-app agent's socket (`'in-app'`), or a client on
+   * bay's MCP socket (`'socket'` — a terminal, another app). Only the in-app agent's edits are
+   * the agent turn's; a client's are marked as its own, and are not gated by the turn's
+   * approvals. Absent means in-app (bay's own callers).
+   */
+  origin?: 'in-app' | 'socket'
 }
 
 export type McpToolResult =
@@ -74,6 +81,8 @@ export type { ToolCategory, ToolSpec } from './tools/spec'
  * because both ends need it and neither may import the other.
  */
 export interface AgentSurfaceStatus {
+  /** MCP clients are allowed (Preferences › Agent). Off is a choice, not a failure. */
+  enabled: boolean
   ready: boolean
   error: string | null
   socketPath: string | null
@@ -97,6 +106,7 @@ export interface AgentSurfaceStatus {
  * the process boundary.
  */
 export function summariseAgentSurface(status: AgentSurfaceStatus): string {
+  if (!status.enabled) return 'MCP clients are off — turn them on in Preferences › Agent to drive bay from a terminal or another app'
   if (!status.ready) return `Agent control unavailable — ${status.error ?? 'unknown reason'}`
   if (status.connectionsSeen === 0)
     return `Agent control ready — no agent has connected yet (${status.socketPath ?? 'no socket path'})`
@@ -123,6 +133,11 @@ const validateOnlyProperty = {
     'refused the same way, so this is how to test a plan before proposing or making it.'
 }
 
+/** Whether a tool takes `validateOnly`: a store dry run, or one its own handler answers. */
+export function acceptsValidateOnly(spec: ToolSpec): boolean {
+  return spec.dryRunnable === true || spec.selfValidating === true
+}
+
 /**
  * The schema a tool is published and validated with: its own, plus `validateOnly` when the
  * catalog marks it dry-runnable.
@@ -132,7 +147,7 @@ const validateOnlyProperty = {
  * does nothing, and one that accepted it unadvertised would be one no agent finds.
  */
 export function publishedSchema(spec: ToolSpec): ToolSpec['inputSchema'] {
-  if (!spec.dryRunnable) return spec.inputSchema
+  if (!acceptsValidateOnly(spec)) return spec.inputSchema
   return {
     ...spec.inputSchema,
     properties: { ...spec.inputSchema.properties, [VALIDATE_ONLY]: validateOnlyProperty }
@@ -161,6 +176,8 @@ export function dryRunRequest(spec: ToolSpec, args: Record<string, unknown>): Dr
   const { [VALIDATE_ONLY]: _flag, ...rest } = args
   if (flag === false) return { mode: 'run', args: rest }
   if (spec.dryRunnable) return { mode: 'dry', args: rest }
+  // The handler answers the flag itself, so it reaches the handler: `run`, flag kept.
+  if (spec.selfValidating) return { mode: 'run', args: { ...rest, [VALIDATE_ONLY]: true } }
   if (spec.readOnly) {
     return {
       mode: 'refused',
@@ -172,7 +189,7 @@ export function dryRunRequest(spec: ToolSpec, args: Record<string, unknown>): Dr
     mode: 'refused',
     error:
       `${spec.name} cannot be dry-run. ${spec.dryRunRefusal ?? 'Its effects reach outside the project, where a dry run cannot put them back.'} ` +
-      `Tools that accept validateOnly: ${TOOLS.filter((t) => t.dryRunnable).map((t) => t.name).join(', ')}.`
+      `Tools that accept validateOnly: ${TOOLS.filter(acceptsValidateOnly).map((t) => t.name).join(', ')}.`
   }
 }
 
@@ -211,7 +228,8 @@ export function resolveId(
   return {
     ok: false,
     error:
-      `No id starting with "${needle}" exists here. Ids are not guessable — call read_project ` +
-      `and copy one from its output.`
+      `No id starting with "${needle}" exists here. Ids are not guessable — copy one from the ` +
+      `output of the tool that lists them (read_project for items and tracks, browse_assets for ` +
+      `assets, read_feedback for comments).`
   }
 }

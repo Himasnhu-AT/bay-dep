@@ -191,7 +191,9 @@ function importedAsset(path: string): ImportedAsset {
 ;(globalThis as { window?: unknown }).window = {
   bay: {
     media: {
-      importPaths: async (paths: string[]) => paths.map(importedAsset)
+      importPaths: async (paths: string[]) => paths.map(importedAsset),
+      // import_url's download is main's; here it has already landed.
+      importUrl: async () => ({ ok: true, path: '/downloads/one/talk [abc].mp4', ytDlp: '/opt/homebrew/bin/yt-dlp' })
     },
     composition: {
       write: async () => ({ ok: true }),
@@ -305,6 +307,19 @@ const TOOL_CASES: Record<string, ToolCase[]> = {
     }
   ],
   add_marker: [{ delta: 1, args: () => ({ frame: 45, label: 'Beat' }) }],
+  import_url: [{ delta: 1, args: () => ({ url: 'https://video.example/watch?v=abc' }) }],
+  // Two picks, each a start and an end marker: four markers, one step.
+  mark_highlights: [
+    {
+      delta: 1,
+      args: () => ({
+        highlights: [
+          { title: 'Opening', fromFrame: 0, toFrame: 40 },
+          { title: 'Answer', fromFrame: 60, toFrame: 110 }
+        ]
+      })
+    }
+  ],
   set_canvas: [{ delta: 1, args: () => ({ preset: 'vertical-1080' }) }],
   remove_marker: [
     {
@@ -313,6 +328,18 @@ const TOOL_CASES: Record<string, ToolCase[]> = {
         assert.ok(state().addMarker(45, 'Beat'), 'the fixture must accept a marker to remove')
       },
       args: () => ({ markerId: state().project.timelines[0]!.markers![0]!.id })
+    }
+  ],
+  add_comment: [{ delta: 1, args: () => ({ text: 'Check this cut', frame: 30, endFrame: 60 }) }],
+  // Two comments resolved by one call — the shape a missing `transact` would split.
+  resolve_feedback: [
+    {
+      delta: 1,
+      before: () => {
+        assert.ok(state().addComment(10, 'one'), 'the fixture must accept a comment')
+        assert.ok(state().addComment(20, 'two'), 'the fixture must accept a comment')
+      },
+      args: () => ({ commentIds: state().project.timelines[0]!.comments!.map((c) => c.id), note: 'Fixed' })
     }
   ],
   edit_asset: [{ delta: 1, args: () => ({ assetId: ASSET.id, name: 'renamed.mp4' }) }],
@@ -334,7 +361,15 @@ const TOOL_EXEMPT: Record<string, string> = {
   open_project:
     'replaces the document and starts fresh history by design — it is not an edit to undo',
   export_timeline:
-    'renders a file from the project and never edits it; its frame exporter needs a DOM canvas'
+    'renders a file from the project and never edits it; its frame exporter needs a DOM canvas',
+  generate_image: 'starts a job in main and never edits the project; generation.test.ts asserts past is untouched',
+  generate_video: 'starts a job in main and never edits the project; generation.test.ts asserts past is untouched',
+  generate_speech: 'starts a job in main and never edits the project; generation-speech.test.ts asserts past is untouched',
+  index_footage: 'starts an indexing job in main and never edits the project; footage.test.ts asserts past is untouched',
+  track_generation:
+    'reads a job from main before it imports; generation.test.ts asserts import and place are one undo step',
+  apply_dub: 'starts jobs in main and never edits the project; dub.test.ts asserts past is untouched',
+  track_dub: 'reads jobs from main before it imports; dub.test.ts asserts placement and ducking are one undo step'
 }
 
 test('every write tool in the catalog has an undo-step case or a stated exemption', () => {
@@ -492,6 +527,40 @@ const STORE_CASES: Record<string, StoreCase> = {
       assert.equal(past() - before, 1)
     }
   },
+  addComment: { delta: 1, run: () => { state().addComment(30, 'Louder here', { endFrame: 60 }) } },
+  editComment: {
+    delta: 1,
+    run: () => {
+      const id = state().addComment(30, 'Louder')
+      assert.ok(id)
+      const before = past()
+      // Words, place and span in one call are one step.
+      state().editComment(id, { text: 'Louder here', frame: 40, endFrame: 70 })
+      assert.equal(past() - before, 1)
+    }
+  },
+  resolveComment: {
+    delta: 1,
+    run: () => {
+      const id = state().addComment(30, 'Louder')
+      assert.ok(id)
+      const before = past()
+      state().resolveComment(id, 'Raised 3 dB')
+      assert.equal(past() - before, 1)
+    }
+  },
+  removeComment: {
+    delta: 1,
+    run: () => {
+      // Two, for removeMarker's reason.
+      state().addComment(10, 'a')
+      const id = state().addComment(30, 'b')
+      assert.ok(id)
+      const before = past()
+      state().removeComment(id)
+      assert.equal(past() - before, 1)
+    }
+  },
   placeAsset: { delta: 1, run: () => { state().placeAsset(ASSET.id, 300) } },
   moveItem: { delta: 1, run: (f) => state().moveItem(f.a, 200, f.v3) },
   trimItem: { delta: 1, run: (f) => state().trimItem(f.a, 'start', 10) },
@@ -574,6 +643,10 @@ const STORE_CASES: Record<string, StoreCase> = {
   setPixelsPerFrame: { delta: 0, run: () => state().setPixelsPerFrame(8) },
   zoomBy: { delta: 0, run: () => state().zoomBy(2) },
   setPanel: { delta: 0, run: () => state().setPanel('text') },
+  setPage: { delta: 0, run: () => state().setPage(state().page === 'color' ? 'edit' : 'color') },
+  setInspectorTab: { delta: 0, run: () => state().setInspectorTab('audio') },
+  setLibraryTab: { delta: 0, run: () => state().setLibraryTab('index') },
+  setAgentDocked: { delta: 0, run: () => state().setAgentDocked(!state().agentDocked) },
   notify: { delta: 0, run: () => state().notify('hello') },
   dismissToast: { delta: 0, run: () => state().dismissToast() },
   markSaved: { delta: 0, run: () => state().markSaved() },
@@ -700,6 +773,7 @@ const STORE_EXEMPT: Record<string, string> = {
   enterProject: 'opens a project: setProject plus the screen, so it resets history by design',
   revertAgentChange: 'restores a saved state as one undo step; agent-changes.test.ts covers it',
   placeSubtitles: 'needs a source clip and a composition asset; add-subtitles.test.ts covers it as one step',
+  placeDub: 'needs generated line assets and a source clip; dub.test.ts covers it as one step',
   undo: 'moves an entry from past to future',
   redo: 'moves an entry from future to past',
   transact: 'is the grouping mechanism itself; editor.test.ts covers it',
@@ -743,6 +817,9 @@ for (const [action, spec] of Object.entries(STORE_CASES)) {
       'moveMarker',
       'removeMarker',
       'patchMarker',
+      'editComment',
+      'resolveComment',
+      'removeComment',
       'reattachAudio',
       'unlinkItems',
       'closeGapAt'

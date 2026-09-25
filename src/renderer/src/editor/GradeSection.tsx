@@ -5,11 +5,11 @@ import {
   DEFAULT_HALATION_COLOR,
   DEFAULT_HALATION_RADIUS,
   DEFAULT_HALATION_THRESHOLD,
-  resolveGrade,
   type Grade,
   type GradeWheel
 } from '@shared/grade'
 import { ColorField, Field, NumberField, Section, SectionReset, Select, SliderField } from '@/components'
+import { centredRange } from '@/components/Slider'
 import { useEditor } from '@/store/editor'
 import { Disclosure } from './Disclosure'
 
@@ -59,11 +59,16 @@ const SCALARS: {
   { key: 'saturation', label: 'Grade saturation', caption: 'Saturation', min: 0, max: 4, step: 0.01, identity: 1, format: percent }
 ]
 
-/** The agent's ranges (`mcp/grade.ts`), per channel. */
-const WHEELS: { key: WheelKey; label: string; min: number; max: number; hint: string }[] = [
-  { key: 'lift', label: 'Lift', min: -1, max: 1, hint: 'shadows' },
-  { key: 'gamma', label: 'Gamma', min: -0.9, max: 4, hint: 'mid-tones' },
-  { key: 'gain', label: 'Gain', min: -1, max: 4, hint: 'highlights' }
+/**
+ * `min`/`max` are the agent's ranges, per channel, and what a channel is clamped to. `reach` is
+ * the slider's travel either side of 0: the stored ranges are lopsided (Gamma −0.9…4), and a track
+ * spanning them put the neutral 0 at a fifth of its width. Past `reach` the track stretches to
+ * show the value (`centredRange`).
+ */
+const WHEELS: { key: WheelKey; label: string; min: number; max: number; reach: number; hint: string }[] = [
+  { key: 'lift', label: 'Lift', min: -1, max: 1, reach: 1, hint: 'shadows' },
+  { key: 'gamma', label: 'Gamma', min: -0.9, max: 4, reach: 0.9, hint: 'mid-tones' },
+  { key: 'gain', label: 'Gain', min: -1, max: 4, reach: 1, hint: 'highlights' }
 ]
 
 const CHANNELS: { key: keyof GradeWheel; label: string }[] = [
@@ -145,7 +150,6 @@ export function GradeSection({ items, luts }: { items: Item[]; luts: Asset[] }):
   }
 
   const touched = items.some((item) => item.grade)
-  const active = items.some((item) => resolveGrade(item.grade) !== null)
   const lutOptions = [{ value: '', label: 'None' }, ...luts.map((lut) => ({ value: lut.id, label: lut.name }))]
   const halation = grade.halation
   const grain = grade.grain
@@ -155,6 +159,7 @@ export function GradeSection({ items, luts }: { items: Item[]; luts: Asset[] }):
       id="inspector.grade"
       title="Grade"
       collapsible
+      hint="White balance, saturation, lift/gamma/gain, a LUT and texture, graded on the GPU identically in preview and export. Its Saturation is separate from Effects › Adjustments › Saturate, which is drawn over the graded picture."
       actions={
         <SectionReset
           show={touched}
@@ -173,8 +178,13 @@ export function GradeSection({ items, luts }: { items: Item[]; luts: Asset[] }):
             ariaLabel={control.label}
             value={grade[control.key] ?? control.identity}
             mixed={mixedOf((g) => g[control.key] ?? control.identity)}
-            min={control.min}
-            max={control.max}
+            // Saturation is 0…4 at 1: the track shows 0…2 so 100% sits mid-track.
+            {...centredRange(
+              control.identity,
+              Math.min(control.identity - control.min, control.max - control.identity),
+              grade[control.key] ?? control.identity,
+              control
+            )}
             step={control.step}
             format={control.format}
             onCommit={(next) => update((g) => ({ ...g, [control.key]: next }))}
@@ -189,8 +199,7 @@ export function GradeSection({ items, luts }: { items: Item[]; luts: Asset[] }):
             ariaLabel={`${control.label} (${control.hint}), all channels`}
             value={mean(grade[control.key])}
             mixed={mixedOf((g) => mean(g[control.key]))}
-            min={control.min}
-            max={control.max}
+            {...centredRange(0, control.reach, mean(grade[control.key]), control)}
             step={0.005}
             format={signed(3)}
             onCommit={(next) => setWheel(control.key, next)}
@@ -221,9 +230,8 @@ export function GradeSection({ items, luts }: { items: Item[]; luts: Asset[] }):
               ))}
             </div>
           ))}
-          <p className="text-[10px] leading-relaxed text-ink-2">
-            Equal red, green and blue is a brightness move; unequal is a cast. Curves are set by
-            the agent (edit_item grade.curves).
+          <p className="text-[10px] text-ink-2" title="Equal red, green and blue is a brightness move; unequal is a cast.">
+            Curves are set by the agent.
           </p>
         </div>
       </Disclosure>
@@ -247,9 +255,7 @@ export function GradeSection({ items, luts }: { items: Item[]; luts: Asset[] }):
           />
         </Field>
         {luts.length === 0 && (
-          <p className="text-[10px] leading-relaxed text-ink-2">
-            No LUT in this project yet. Import a .cube file in the Media panel and it appears here.
-          </p>
+          <p className="text-[10px] text-ink-2">Import a .cube file to add a LUT.</p>
         )}
         {grade.lut && (
           <SliderField
@@ -341,11 +347,6 @@ export function GradeSection({ items, luts }: { items: Item[]; luts: Asset[] }):
           </div>
         </Disclosure>
       )}
-      <p className="mt-2 text-[10px] leading-relaxed text-ink-2">
-        {active
-          ? 'Graded on the GPU, identically in preview and export.'
-          : 'No grade — the clip draws untouched, at no extra cost.'}
-      </p>
     </Section>
   )
 }

@@ -82,3 +82,22 @@ export function stepChannel(
 export function formatDb(db: number): string {
   return Number.isFinite(db) ? `${db.toFixed(1)} dB` : '−∞ dB'
 }
+
+/** The marks a tall meter prints beside its bars, in dBFS. Denser near the top, where mixing happens. */
+export const METER_SCALE_DB: readonly number[] = [0, -6, -12, -18, -24, -36, -48, -60]
+
+/** Each scale mark with where it sits on the meter (0 bottom, 1 top), for a DOM scale beside a canvas. */
+export function meterTicks(marks: readonly number[] = METER_SCALE_DB): { db: number; label: string; position: number }[] {
+  return marks.map((db) => ({ db, label: db === 0 ? '0' : `−${Math.abs(db)}`, position: meterPosition(db) }))
+}
+
+/**
+ * The loudest of several channels' held peaks, as the number a mixer strip prints under its
+ * meter: `−6.0`, `−∞`. A strip with one bar and a strip with two read the same way.
+ */
+export function heldPeakText(channels: readonly Pick<ChannelMeter, 'peakDb'>[]): string {
+  const loudest = channels.reduce((max, channel) => Math.max(max, channel.peakDb), Number.NEGATIVE_INFINITY)
+  if (!Number.isFinite(loudest)) return '−∞'
+  const text = Math.abs(loudest).toFixed(1)
+  return loudest < 0 && text !== '0.0' ? `−${text}` : text
+}

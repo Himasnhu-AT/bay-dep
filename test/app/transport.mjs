@@ -15,6 +15,7 @@
  * the probe reports success for that, it is not observing the click.
  */
 
+import { resolve } from 'node:path'
 import { attach } from './cdp.mjs'
 
 const CLIP = process.env.CLIP ?? 'assets/podcast-cut/output/goodall-transcript-cut.mp4'
@@ -22,7 +23,7 @@ const { send, evaluate, close } = await attach()
 
 await evaluate(`(async () => {
   const { store } = window.bayEngine
-  const imported = await window.bay.media.importPaths([${JSON.stringify(process.cwd() + '/' + CLIP)}])
+  const imported = await window.bay.media.importPaths([${JSON.stringify(resolve(CLIP))}])
   const asset = imported[0].asset
   store.getState().addAssets([asset])
   store.getState().placeAsset(asset.id, 0)
@@ -47,7 +48,8 @@ const READ = `(() => {
     playhead: store.getState().playhead,
     playing: store.getState().playing,
     ticks: s.ticks, pictures: s.pictures, skipped: s.skippedFrames,
-    timecodes: nodes.filter(t => /^\\d+:\\d{2}:\\d{2}$/.test(t)),
+    // HH:MM:SS:FF (or ;FF for drop-frame) is what the transport shows; H:MM:SS was an older form.
+    timecodes: nodes.filter(t => /^\\d+:\\d{2}:\\d{2}(?:[:;]\\d{2})?$/.test(t)),
     playLabel: (() => { const b = [...document.querySelectorAll('button')]
       .find(x => ['Play','Pause'].includes((x.getAttribute('aria-label')||'').trim()))
       return b ? b.getAttribute('aria-label') : null })()

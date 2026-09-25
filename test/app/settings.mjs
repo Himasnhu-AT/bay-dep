@@ -21,7 +21,7 @@ const KEYS = ['bay.autoDownloadModels', 'bay.agentApproval']
 await runProbe(async () => {
   const S = 'window.bayEngine.store.getState()'
   const frames = () => evaluate(`new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(true))))`)
-  const DIALOG = `document.querySelector('[role="dialog"][aria-label="Settings"]')`
+  const DIALOG = `document.querySelector('[role="dialog"][aria-label="Preferences"]')`
   const saved = await evaluate(`(() => Object.fromEntries(${JSON.stringify(KEYS)}.map((k) => [k, localStorage.getItem(k)])))()`)
   const storeBefore = await evaluate(`(() => { const s = ${S}; return { auto: s.autoDownloadModels, approval: s.agentApproval } })()`)
 
@@ -40,6 +40,9 @@ await runProbe(async () => {
     await frames()
     check('the dialog is open', await evaluate(`${DIALOG} !== null`), true)
     check('and the store says so', await evaluate(`${S}.settingsOpen`), true)
+    // Preferences is paged; the store names the page to show, and the open dialog follows it.
+    await evaluate(`(${S}.setSettingsOpen(true, 'transcription'), true)`)
+    await frames()
 
     const headings = await evaluate(`[...${DIALOG}.querySelectorAll('h3')].map((h) => h.textContent.trim())`)
     check('it has a Transcription section', headings.includes('Transcription'), true)
@@ -68,7 +71,8 @@ await runProbe(async () => {
     const others = [...installedFiles].filter((f) => !WHISPER_MODELS.some((m) => whisperFileName(m.id) === f))
     const rows = await evaluate(`[...${DIALOG}.querySelectorAll('ul > li')].map((li) => ({
       label: li.querySelector('span.font-medium')?.textContent.trim(),
-      buttons: [...li.querySelectorAll('button')].map((b) => b.getAttribute('aria-label') || b.textContent.trim())
+      buttons: [...li.querySelectorAll('button')].map((b) => b.getAttribute('aria-label') || b.textContent.trim()),
+      automatic: li.textContent.includes('In use · automatic')
     }))`)
     check(`${WHISPER_MODELS.length} catalog rows plus ${others.length} found elsewhere`, rows.length, WHISPER_MODELS.length + others.length)
     // Which of the two row states this machine can exercise. With both, a list that drew every
@@ -79,11 +83,18 @@ await runProbe(async () => {
     for (const [i, spec] of WHISPER_MODELS.entries()) {
       const row = rows[i]
       const installed = installedFiles.has(whisperFileName(spec.id))
-      check(`row ${i + 1} is "${spec.label}" and shows ${installed ? 'Use/Chosen' : 'Download'}`,
+      // The model bay is already using on its own has no "Use" button, by design
+      // (TranscriptionSection: pressing it would only pin the choice bay is already making); its
+      // badge says "In use · automatic" instead. Every other installed row offers Use/Chosen.
+      const automatic = installed && row?.automatic
+      check(`row ${i + 1} is "${spec.label}" and shows ${!installed ? 'Download' : automatic ? 'the In use · automatic badge and no Use' : 'Use/Chosen'}`,
         row, (r) => r?.label === spec.label && (installed
-          ? r.buttons.some((b) => b === 'Use' || b === 'Chosen') && !r.buttons.includes('Download')
-          : r.buttons.includes('Download')))
+          ? !r.buttons.includes('Download') && (r.automatic
+            ? !r.buttons.includes('Use')
+            : r.buttons.some((b) => b === 'Use' || b === 'Chosen'))
+          : r.buttons.includes('Download') && !r.automatic))
     }
+    check('at most one row is "In use · automatic"', rows.filter((r) => r.automatic).length, (n) => n <= 1)
 
     // A switch, clicked in the dialog, then clicked back: store, localStorage and aria-checked.
     const flip = async (label, storeKey, lsKey) => {
@@ -108,6 +119,8 @@ await runProbe(async () => {
     console.log('\n── "Download models when needed"')
     await flip('Download models when needed', 'autoDownloadModels', 'bay.autoDownloadModels')
     console.log('\n── "Ask before editing"')
+    await evaluate(`(${S}.setSettingsOpen(true, 'agent'), true)`)
+    await frames()
     await flip('Ask before editing', 'agentApproval', 'bay.agentApproval')
 
     console.log('\n── Escape closes it')

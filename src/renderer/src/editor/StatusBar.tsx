@@ -6,8 +6,11 @@ import { summariseAgentSurface, type AgentSurfaceStatus } from '@shared/mcp'
 import { downloadSentence } from '@shared/whisper'
 import { Toast, Tooltip } from '@/components'
 import { bay } from '@/lib/bay'
+import { runCommand } from '@/lib/commands'
 import { catalogMismatch } from '@/mcp'
 import { selectDuration, selectFps, selectTimeline, useEditor } from '@/store/editor'
+import { AudioMeter } from './viewer/AudioMeter'
+import { useStorageRepair } from './StorageRepair'
 
 function Stat({ label, value }: { label: string; value: ReactNode }): ReactNode {
   return (
@@ -18,7 +21,8 @@ function Stat({ label, value }: { label: string; value: ReactNode }): ReactNode 
   )
 }
 
-export function StatusBar(): ReactNode {
+/** The line under every page: what the programme is, whether it is saved, and what is wrong. */
+export function StatusBar({ saving = false }: { saving?: boolean }): ReactNode {
   const toast = useEditor((state) => state.toast)
   const dismissToast = useEditor((state) => state.dismissToast)
   const timeline = useEditor(selectTimeline)
@@ -27,10 +31,12 @@ export function StatusBar(): ReactNode {
   const selectionCount = useEditor((state) => state.selection.length)
   const assetCount = useEditor((state) => state.project.assets.length)
   const debugMode = useEditor((state) => state.debugMode)
+  const dirty = useEditor((state) => state.dirty)
   const download = useEditor((state) => state.whisperDownload)
   const downloading = download?.state === 'downloading' || download?.state === 'verifying'
   const [tools, setTools] = useState<{ ready: boolean } | null>(null)
   const [storage, setStorage] = useState<{ ready: boolean; error: string | null } | null>(null)
+  const { repair: repairStorage, repairing } = useStorageRepair()
   const [agent, setAgent] = useState<AgentSurfaceStatus | null>(null)
 
   useEffect(() => {
@@ -77,25 +83,31 @@ export function StatusBar(): ReactNode {
   }, [])
 
   return (
-    <footer className="flex h-6 shrink-0 items-center gap-3 border-t border-line bg-surface-1 px-3 text-[11px]">
-      {/* What a person editing needs: how long the programme is and what is selected. The rest
-          (rate, canvas, media count, the agent socket) is in Project Settings and the Media panel,
-          and shows here only in debug mode (View › Toggle Debug Mode). */}
+    <footer className="flex h-6 shrink-0 items-center gap-3 overflow-hidden border-t border-line bg-chrome px-3 text-[11px] whitespace-nowrap">
+      {/* The programme's format, as Resolve's bottom bar reads it, and a way to change it:
+          both open Project Settings. `formatFps`, not `fps`: the stored rate is a quotient, so
+          this read `fps 29.97002997002997` the moment a project could be NTSC. */}
+      <Tooltip side="top" label="Timeline format" detail="Change it in Project Settings">
+        <button
+          type="button"
+          onClick={() => runCommand('file.projectSettings')}
+          className="t-fast flex items-baseline gap-3 rounded-sm px-1 hover:bg-surface-3"
+        >
+          <Stat label="Format" value={timeline ? `${timeline.width}×${timeline.height}` : '—'} />
+          <Stat label="fps" value={formatFps(fps)} />
+        </button>
+      </Tooltip>
       <Stat label="Duration" value={formatTimecode(duration, fps)} />
       {selectionCount > 0 && (
         <span className="text-ink-1 tabular-nums">
           {selectionCount} {selectionCount === 1 ? 'clip' : 'clips'} selected
         </span>
       )}
-      {debugMode && (
-        <>
-          {/* `formatFps`, not `fps`: the stored rate is a quotient, so this read
-              `fps 29.97002997002997` the moment a project could be NTSC. */}
-          <Stat label="fps" value={formatFps(fps)} />
-          <Stat label="canvas" value={timeline ? `${timeline.width}×${timeline.height}` : '—'} />
-          <Stat label="media" value={assetCount} />
-        </>
-      )}
+      {/* The same state as the Save button, where the eye rests at the end of a render. */}
+      <span className={dirty && !saving ? 'text-ink-1' : 'text-ink-2'}>
+        {saving ? 'Saving…' : dirty ? 'Unsaved changes' : 'All changes saved'}
+      </span>
+      {debugMode && <Stat label="media" value={assetCount} />}
 
       {/* A model download a transcription started on its own would otherwise be a tool call that
           sat for two minutes with no explanation. */}
@@ -146,11 +158,21 @@ export function StatusBar(): ReactNode {
           </span>
         </Tooltip>
       )}
+      {storage && !storage.ready && (
+        <button
+          type="button"
+          onClick={() => void repairStorage().then(() => void bay()?.app.storageReady().then(setStorage))}
+          disabled={repairing}
+          className="rounded-sm px-1 text-accent underline-offset-2 hover:underline disabled:opacity-50"
+        >
+          {repairing ? 'Repairing…' : 'Repair'}
+        </button>
+      )}
 
       {/* Not a `Stat`: the failing case is an accusation and the healthy case is a count, and
           a row that reads "agent 0" would say nothing about which of the two it is. The
           sentence comes from `@shared/mcp` so main and the bar cannot word it differently. */}
-      {agent && !agent.ready && (
+      {agent && agent.enabled && !agent.ready && (
         <Tooltip
           side="top"
           label={summariseAgentSurface(agent)}
@@ -191,8 +213,13 @@ export function StatusBar(): ReactNode {
         </Tooltip>
       )}
 
-      <div className="ml-auto flex min-w-0 items-center">
+      <div className="ml-auto flex min-w-0 items-center gap-3">
         <Toast toast={toast} onDismiss={dismissToast} />
+        {/* A meter with a name: it was an unlabelled sliver in the transport. */}
+        <span className="flex shrink-0 items-center gap-1.5">
+          <span className="text-ink-2 select-none">Master</span>
+          <AudioMeter className="w-16" />
+        </span>
       </div>
     </footer>
   )

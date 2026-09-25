@@ -44,7 +44,8 @@ export function JunctionMarkers({
   track: Track
   pixelsPerFrame: number
   height: number
-  onOpen(junction: Junction): void
+  /** `dialog`: ⌥-click, which asks for the transition dialog rather than the Inspector. */
+  onOpen(junction: Junction, how: { dialog: boolean }): void
 }): ReactNode {
   const junctions = junctionsForTrack(project, timeline, track)
   if (junctions.length === 0) return null
@@ -66,13 +67,17 @@ export function JunctionMarkers({
             }`
           : 'No transition on this cut'
 
+        // Named by what the cut has. A cut carrying a transition was read out as "…Click to add
+        // one", which offers a person the thing they already have.
         const detail = broken
           ? 'Stored, but nothing is drawing here.'
           : clamped
             ? `Asked for ${stored?.durationInFrames}, playing ${resolved?.durationInFrames} — ${resolved?.clampedBecause}.`
-            : noRoom !== null
-              ? 'This cut cannot take one — click to see why.'
-              : `Room for up to ${junction.capacityInFrames} frames. Click to add one.`
+            : stored
+              ? 'Click to change or remove it in the Inspector, ⌥-click for a dialog.'
+              : noRoom !== null
+                ? 'This cut cannot take one — click to see why.'
+                : `Room for up to ${junction.capacityInFrames} frames. Click to add one in the Inspector, ⌥-click for a dialog.`
 
         // A transition that plays is drawn over the window it occupies, centred on the cut and
         // labelled, the way editors draw one — a 14px "20" badge read as a glyph, not an edit.
@@ -82,14 +87,14 @@ export function JunctionMarkers({
           const name = KIND_LABEL[stored.kind] ?? stored.kind
           const band = junctionTarget(0, height)
           return (
-            <Tooltip key={junction.key} side="top" label={label} detail={clamped ? detail : 'Click to change or remove.'}>
+            <Tooltip key={junction.key} side="top" label={label} detail={detail}>
               <button
                 type="button"
                 aria-label={`Transition at frame ${junction.cutFrame}. ${label}. ${detail}`}
                 onPointerDown={(event) => event.stopPropagation()}
                 onClick={(event) => {
                   event.stopPropagation()
-                  onOpen(junction)
+                  onOpen(junction, { dialog: event.altKey })
                 }}
                 className={cn(
                   't-fast absolute z-20 flex items-center justify-center gap-1 overflow-hidden rounded-xs border px-1 text-[10px] leading-none whitespace-nowrap',
@@ -121,7 +126,7 @@ export function JunctionMarkers({
               onPointerDown={(event) => event.stopPropagation()}
               onClick={(event) => {
                 event.stopPropagation()
-                onOpen(junction)
+                onOpen(junction, { dialog: event.altKey })
               }}
               className={cn(
                 // A short pill in the middle of the lane (`junctionTarget`): the top and bottom

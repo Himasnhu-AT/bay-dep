@@ -1,71 +1,52 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import {
-  House,
-  Monitor,
-  Moon,
+  Bot,
+  Check,
+  LoaderCircle,
   PanelBottom,
   PanelLeft,
   PanelRight,
   Redo2,
+  Save,
   Settings,
-  Sun,
   Undo2,
   Upload
 } from 'lucide-react'
-import { Button, IconButton, Tooltip } from '@/components'
+import { BayMark, Button, IconButton, Tooltip, ToolButton } from '@/components'
 import { cn } from '@/lib/cn'
-import { shortcutOf } from '@/lib/commands'
-import { bayTheme, NEXT_THEME, type ThemePreference } from '@/lib/theme'
-import { useEditor } from '@/store/editor'
+import { runCommand, shortcutOf } from '@/lib/commands'
+import { useElementSize } from '@/lib/useElementSize'
+import { useEditor, type RegionId } from '@/store/editor'
 
 export interface TopBarProps {
-  /** Back to the projects screen. The caller handles unsaved work. */
-  onHome(): void
+  /** Export the timeline now (the quick export dialog). */
   onExport(): void
   saving: boolean
+  /** Which regions the current page has; a toggle for one it lacks is greyed, not hidden. */
+  regions: Record<RegionId, boolean>
 }
 
 /**
- * The window's title bar. It is the drag region, so every interactive child has to opt
- * out with `.no-drag` — a button inside a drag region is not a button, it is a handle.
+ * The window's title bar, laid out like Resolve's interface toolbar: the mark, then the panel
+ * toggles with their names, the project name centred with its save state, and the actions that
+ * apply everywhere at the right.
  *
- * The 80px of left padding is the macOS traffic lights. They are drawn by the system at a
- * fixed offset and nothing may sit under them.
+ * It is the drag region, so every interactive child has to opt out with `.no-drag` — a button
+ * inside a drag region is not a button, it is a handle. The 80px of left padding is the macOS
+ * traffic lights, drawn by the system at a fixed offset; nothing may sit under them.
+ *
+ * When the window narrows, the "bay" wordmark goes first (the mark stays), then the toggle labels
+ * (the icons stay, each keeping its name as its tooltip and accessible name). Measured with a
+ * short project name: labelled toggles and the wordmark need 370px of the left column, 337px
+ * without the wordmark, and a 1024px window gives the column 349px.
  */
-const THEME_ICON: Record<ThemePreference, ReactNode> = {
-  dark: <Moon className="size-4" />,
-  light: <Sun className="size-4" />,
-  system: <Monitor className="size-4" />
-}
 
-/** Names the current state and what a click does, since the icon alone shows only the first. */
-const THEME_LABEL: Record<ThemePreference, string> = {
-  dark: 'Theme: dark — switch to light',
-  light: 'Theme: light — switch to system',
-  system: 'Theme: system — switch to dark'
-}
-
-/** A region toggle's "on" state: a neutral fill, overriding IconButton's accent `active`. */
+/** A panel toggle's "on" state: a neutral fill. The accent is for state that needs noticing. */
 const REGION_ON = 'aria-pressed:bg-surface-3 aria-pressed:text-ink-0 aria-pressed:hover:bg-surface-4'
 
-export function TopBar({ onHome, onExport, saving }: TopBarProps): ReactNode {
+function ProjectName(): ReactNode {
   const name = useEditor((state) => state.project.name)
-  const dirty = useEditor((state) => state.dirty)
-  const canUndo = useEditor((state) => state.past.length > 0)
-  const canRedo = useEditor((state) => state.future.length > 0)
   const renameProject = useEditor((state) => state.renameProject)
-  const undo = useEditor((state) => state.undo)
-  const redo = useEditor((state) => state.redo)
-  const hidden = useEditor((state) => state.hiddenRegions)
-  const toggleRegion = useEditor((state) => state.toggleRegion)
-
-  const [theme, setTheme] = useState<ThemePreference>(() => bayTheme()?.get() ?? 'dark')
-  const cycleTheme = (): void => {
-    const next = NEXT_THEME[theme]
-    bayTheme()?.set(next)
-    setTheme(next)
-  }
-
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(name)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -85,22 +66,145 @@ export function TopBar({ onHome, onExport, saving }: TopBarProps): ReactNode {
     setEditing(false)
   }
 
-  return (
-    // The project name is centred on the window, not on the space left over: it is the title of
-    // the window, and a title that drifts as the controls either side change width looks broken.
-    <header className="drag-region relative flex h-11 shrink-0 items-center gap-3 border-b border-line bg-surface-1 pr-3 pl-[80px]">
-      <IconButton
-        label="All projects"
-        icon={<House className="size-4" />}
-        onClick={onHome}
-        className="no-drag"
-      />
-      <span className="shrink-0 text-[13px] font-semibold tracking-tight text-ink-0 select-none">
-        bay
-      </span>
-      <span aria-hidden="true" className="h-3 w-px shrink-0 bg-line-strong" />
+  return editing ? (
+    <input
+      ref={inputRef}
+      value={draft}
+      aria-label="Project name"
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter') commit()
+        if (event.key === 'Escape') {
+          setDraft(name)
+          setEditing(false)
+        }
+      }}
+      className="no-drag h-7 w-56 rounded-sm border border-accent/70 bg-surface-2 px-2 text-[12px] text-ink-0 outline-none"
+    />
+  ) : (
+    <Tooltip label="Rename project">
+      <button
+        type="button"
+        onClick={() => {
+          setDraft(name)
+          setEditing(true)
+        }}
+        className="no-drag t-fast min-w-0 truncate rounded-sm px-2 py-1 text-[13px] font-medium text-ink-0 hover:bg-surface-3"
+      >
+        {name}
+      </button>
+    </Tooltip>
+  )
+}
 
-      <div className="no-drag flex items-center gap-0.5">
+/**
+ * Save as a button that shows its own state: "Save" while there is something to save, "Saved"
+ * (greyed, with a tick) when there is not. It was a status line before, and ⌘S was the only
+ * way to act on it.
+ */
+function SaveButton({ saving }: { saving: boolean }): ReactNode {
+  const dirty = useEditor((state) => state.dirty)
+  const label = saving ? 'Saving…' : dirty ? 'Save' : 'Saved'
+  return (
+    <Tooltip
+      label={saving ? 'Saving' : dirty ? 'Save changes' : 'Everything is saved'}
+      detail={dirty && !saving ? 'This project has changes that are not saved yet.' : undefined}
+      shortcut={shortcutOf('file.save')}
+    >
+      <button
+        type="button"
+        aria-label={saving ? 'Saving' : dirty ? 'Save — unsaved changes' : 'Saved'}
+        disabled={saving}
+        onClick={() => runCommand('file.save')}
+        className={cn(
+          'no-drag t-press inline-flex h-6 w-[76px] shrink-0 items-center justify-center gap-1 rounded-sm border text-[11px] font-medium',
+          dirty
+            ? 'border-accent/50 bg-accent/12 text-ink-0 hover:bg-accent/20'
+            : 'border-line bg-transparent text-ink-2 hover:bg-surface-3 hover:text-ink-1'
+        )}
+      >
+        {saving ? (
+          <LoaderCircle aria-hidden="true" className="size-3 animate-spin" />
+        ) : dirty ? (
+          <Save aria-hidden="true" className="size-3" />
+        ) : (
+          <Check aria-hidden="true" className="size-3" />
+        )}
+        <span>{label}</span>
+      </button>
+    </Tooltip>
+  )
+}
+
+/** Widths of the bar's content box (the window less the 92px of padding) that each keeps. */
+const WORDMARK_FROM = 980
+const LABELS_FROM = 930
+
+export function TopBar({ onExport, saving, regions }: TopBarProps): ReactNode {
+  const canUndo = useEditor((state) => state.past.length > 0)
+  const canRedo = useEditor((state) => state.future.length > 0)
+  const undo = useEditor((state) => state.undo)
+  const redo = useEditor((state) => state.redo)
+  const hidden = useEditor((state) => state.hiddenRegions)
+  const toggleRegion = useEditor((state) => state.toggleRegion)
+  const agentDocked = useEditor((state) => state.agentDocked)
+  const setAgentDocked = useEditor((state) => state.setAgentDocked)
+
+  const barRef = useRef<HTMLElement>(null)
+  const { width } = useElementSize(barRef)
+  // 0 before the first measurement: show labels, which is right for any window bay opens at.
+  const labels = width === 0 || width >= LABELS_FROM
+  const wordmark = width === 0 || width >= WORDMARK_FROM
+
+  const region = (id: RegionId, name: string, icon: ReactNode, command: 'workspace.toggleLibrary' | 'workspace.toggleInspector' | 'workspace.toggleTimeline'): ReactNode => (
+    <ToolButton
+      label={name}
+      showLabel={labels}
+      shortcut={shortcutOf(command)}
+      icon={icon}
+      active={regions[id] && !hidden[id]}
+      disabled={!regions[id]}
+      className={REGION_ON}
+      onClick={() => toggleRegion(id)}
+    />
+  )
+
+  return (
+    // Three columns, the middle one centred on the window: the project name is the window's
+    // title, and a title that drifts as the controls either side change width looks broken.
+    <header
+      ref={barRef}
+      className="drag-region grid h-11 shrink-0 grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)] items-center gap-3 border-b border-line bg-chrome pr-3 pl-[80px]"
+    >
+      <div className="flex min-w-0 items-center gap-2">
+        <div className="flex shrink-0 items-center gap-1.5 select-none">
+          <BayMark size={18} />
+          {wordmark && <span className="text-[14px] font-semibold tracking-tight text-ink-0">bay</span>}
+        </div>
+        <span aria-hidden="true" className="h-4 w-px shrink-0 bg-line-strong" />
+        <div role="group" aria-label="Panels" className="no-drag flex min-w-0 items-center gap-0.5">
+          {region('side', 'Library', <PanelLeft className="size-4" />, 'workspace.toggleLibrary')}
+          {region('inspector', 'Inspector', <PanelRight className="size-4" />, 'workspace.toggleInspector')}
+          {region('timeline', 'Timeline', <PanelBottom className="size-4" />, 'workspace.toggleTimeline')}
+          <ToolButton
+            label="Agent"
+            showLabel={labels}
+            shortcut={shortcutOf('workspace.toggleAgent')}
+            icon={<Bot className="size-4" />}
+            active={agentDocked}
+            className={REGION_ON}
+            onClick={() => setAgentDocked(!agentDocked)}
+          />
+        </div>
+      </div>
+
+      <div className="flex min-w-0 max-w-[36vw] items-center gap-2">
+        <ProjectName />
+        <SaveButton saving={saving} />
+      </div>
+
+      <div className="no-drag flex min-w-0 items-center justify-end gap-0.5">
         <IconButton
           label="Undo"
           shortcut={shortcutOf('edit.undo')}
@@ -115,115 +219,27 @@ export function TopBar({ onHome, onExport, saving }: TopBarProps): ReactNode {
           disabled={!canRedo}
           onClick={redo}
         />
-      </div>
-
-      <div className="flex-1" />
-      <div className="pointer-events-none absolute inset-x-0 flex justify-center">
-        <div className="pointer-events-auto">
-          {editing ? (
-            <input
-              ref={inputRef}
-              value={draft}
-              aria-label="Project name"
-              onChange={(event) => setDraft(event.target.value)}
-              onBlur={commit}
-              onKeyDown={(event) => {
-                if (event.key === 'Enter') commit()
-                if (event.key === 'Escape') {
-                  setDraft(name)
-                  setEditing(false)
-                }
-              }}
-              className="no-drag h-7 w-56 rounded-sm border border-accent/70 bg-surface-2 px-2 text-[12px] text-ink-0 outline-none"
-            />
-          ) : (
-            <button
-              type="button"
-              onClick={() => {
-                setDraft(name)
-                setEditing(true)
-              }}
-              title="Rename project"
-              className="no-drag t-fast max-w-[40ch] truncate rounded-sm px-2 py-1 text-[13px] font-medium text-ink-0 hover:bg-surface-3"
-            >
-              {name}
-            </button>
-          )}
-        </div>
-      </div>
-
-
-      {/* Lit while the region is showing, like a toggle in any editor's View menu — but lit
-          neutrally. In the accent, all three were orange in the normal layout and outshouted
-          Export, the one primary action in the bar; the accent is for state that needs noticing. */}
-      <div className="no-drag flex items-center gap-0.5">
-        <IconButton
-          label={hidden.side ? 'Show side panel' : 'Hide side panel'}
-          icon={<PanelLeft className="size-4" />}
-          active={!hidden.side}
-          className={REGION_ON}
-          onClick={() => toggleRegion('side')}
+        <span aria-hidden="true" className="mx-1 h-4 w-px shrink-0 bg-line-strong" />
+        {/* Named "Settings", as its dialog is; Resolve calls the same thing Preferences. */}
+        <ToolButton
+          label="Settings"
+          showLabel={labels}
+          shortcut={shortcutOf('app.settings')}
+          icon={<Settings className="size-4" />}
+          onClick={() => useEditor.getState().setSettingsOpen(true)}
         />
-        <IconButton
-          label={hidden.timeline ? 'Show timeline' : 'Hide timeline'}
-          icon={<PanelBottom className="size-4" />}
-          active={!hidden.timeline}
-          className={REGION_ON}
-          onClick={() => toggleRegion('timeline')}
-        />
-        <IconButton
-          label={hidden.inspector ? 'Show inspector' : 'Hide inspector'}
-          icon={<PanelRight className="size-4" />}
-          active={!hidden.inspector}
-          className={REGION_ON}
-          onClick={() => toggleRegion('inspector')}
-        />
+        <Tooltip label="Export" detail="Render the timeline to a file" shortcut={shortcutOf('file.export')}>
+          <Button
+            variant="primary"
+            size="sm"
+            icon={<Upload className="size-3.5" />}
+            onClick={onExport}
+            className="no-drag ml-1.5"
+          >
+            Export
+          </Button>
+        </Tooltip>
       </div>
-      <span aria-hidden="true" className="h-3 w-px shrink-0 bg-line-strong" />
-
-      <IconButton
-        label={THEME_LABEL[theme]}
-        icon={THEME_ICON[theme]}
-        onClick={cycleTheme}
-        disabled={!bayTheme()}
-      />
-      <IconButton
-        label="Settings"
-        shortcut={shortcutOf('app.settings')}
-        icon={<Settings className="size-4" />}
-        onClick={() => useEditor.getState().setSettingsOpen(true)}
-        className="no-drag"
-      />
-
-      {/* The save state is a status, not a button: it read as text and was one, so nothing said
-          it could be pressed. Save is ⌘S and File › Save; the tooltip names the key. The slot is
-          a fixed width, right-aligned, so "Saved" ↔ "Unsaved changes" moves nothing beside it. */}
-      <Tooltip
-        label={saving ? 'Saving' : dirty ? 'Not saved yet' : 'Everything is saved'}
-        shortcut={dirty && !saving ? shortcutOf('file.save') : undefined}
-      >
-        <span
-          role="status"
-          className={cn(
-            'no-drag inline-block w-24 shrink-0 truncate text-right text-[11px] tabular-nums select-none',
-            dirty ? 'text-ink-1' : 'text-ink-2'
-          )}
-        >
-          {saving ? 'Saving…' : dirty ? 'Unsaved changes' : 'Saved'}
-        </span>
-      </Tooltip>
-
-      <Tooltip label="Export" shortcut={shortcutOf('file.export')}>
-        <Button
-          variant="primary"
-          size="sm"
-          icon={<Upload className="size-3.5" />}
-          onClick={onExport}
-          className="no-drag"
-        >
-          Export
-        </Button>
-      </Tooltip>
     </header>
   )
 }

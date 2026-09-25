@@ -18,7 +18,12 @@ import {
   exportRequestFields,
   isAudioOnly,
   loudnessTarget,
+  EXPORT_PRESETS,
+  exportAspectMismatch,
+  matchExportPreset,
   resolveExportRange,
+  resolveExportSize,
+  type ExportPreset,
   type ExportRangeChoice,
   type ExportSettings
 } from '@shared/export-presets'
@@ -27,12 +32,13 @@ import { parseTime } from '@shared/pins'
 import { FrameExporter } from '@/engine'
 import { bay, call } from '@/lib/bay'
 import { useEditor, type EditorStore } from '@/store/editor'
+import { addRecord, applyProgress, markIncomplete, type RenderRecord } from './deliver/queue'
 
 export const TERMINAL: readonly ExportProgress['stage'][] = ['done', 'failed', 'cancelled']
 
 export type RangeKind = ExportRangeChoice['kind']
 
-interface ExportSession {
+export interface ExportSession {
   settings: ExportSettings
   rangeKind: RangeKind
   /** The custom range's bounds as typed, so a half-typed value survives closing the dialog. */
@@ -43,10 +49,22 @@ interface ExportSession {
   /** Frames written with something missing. Apart from `progress`, which main's `done` replaces. */
   incomplete: IncompleteFrames | null
   starting: boolean
+  /**
+   * Every export this window has run since it opened — this form's and those started by the `export_timeline` tool — newest
+   * first, for the Deliver page's render queue. `progress` above is only this form's current job.
+   */
+  history: readonly RenderRecord[]
   setSettings(next: ExportSettings): void
   setRangeKind(kind: RangeKind): void
   setCustom(bounds: { start?: string; end?: string }): void
   setOutputPath(path: string | null): void
+  /**
+   * The Deliver page's first look: while the settings are still the untouched defaults (which
+   * match no preset, so the cards would light Custom), choose the first preset that fits the
+   * canvas. Anything the user has set, even back to the default values, is left alone, and ⌘E on
+   * its own never calls this. Returns whether it chose one.
+   */
+  adoptFittingPreset(canvasWidth: number, canvasHeight: number): boolean
   start(): Promise<void>
   cancel(): void
 }
@@ -86,13 +104,63 @@ export function exportBlocker(
   return null
 }
 
+/**
+ * What the export form reads from the session — the settings, the range, the destination and
+ * whether a job is running — and nothing that changes while frames are written. `progress` and
+ * `history` change on every frame; a form subscribed to them redrew the whole Deliver settings
+ * column per frame. Compared shallowly (`useShallow`), so a frame's progress leaves it equal.
+ */
+export function exportFormFields(state: ExportSession) {
+  return {
+    settings: state.settings,
+    rangeKind: state.rangeKind,
+    customStart: state.customStart,
+    customEnd: state.customEnd,
+    outputPath: state.outputPath,
+    starting: state.starting,
+    running: state.progress !== null && !TERMINAL.includes(state.progress.stage)
+  }
+}
+
+/**
+ * The first preset whose picture is the canvas's shape — YouTube 1080p for 16:9, the vertical
+ * preset for 9:16, the square one for 1:1 — so a default never letterboxes the picture. Master
+ * (canvas size) when no frame preset fits; the podcast preset is never a default for a picture.
+ */
+export function firstFittingPreset(canvasWidth: number, canvasHeight: number): ExportPreset {
+  const pictures = EXPORT_PRESETS.filter((preset) => !isAudioOnly(preset.settings.format))
+  const fits = pictures.find(
+    (preset) => preset.settings.size.kind === 'frame' && exportAspectMismatch(preset.settings, canvasWidth, canvasHeight) === null
+  )
+  return fits ?? pictures.find((preset) => preset.settings.size.kind === 'timeline') ?? pictures[0]!
+}
+
+/**
+ * Starts listening for export progress, once per window. The render queue calls it on mount so
+ * a tool's exports show up even before this form has run one.
+ */
+export function watchExports(): void {
+  subscribe()
+}
+
+/** The settings in a few words, for a queue row: the preset's name, else container and size. */
+function summarise(settings: ExportSettings, width: number, height: number): string {
+  const preset = EXPORT_PRESETS.find((candidate) => candidate.id === matchExportPreset(settings))
+  if (preset) return preset.label
+  const container = settings.format === 'png-sequence' ? 'PNG sequence' : settings.format.toUpperCase()
+  if (isAudioOnly(settings.format)) return `${container} · audio only`
+  const size = resolveExportSize(settings.size, width, height)
+  return `${container} · ${size.width} × ${size.height}`
+}
+
 function subscribe(): void {
   if (subscribed) return
   const api = bay()
   if (!api) return
   subscribed = true
   api.export.onProgress((update) => {
-    // Other windows and the agent export too; only this session's job drives this view.
+    useExportSession.setState((state) => ({ history: applyProgress(state.history, update, Date.now()) }))
+    // A tool call (`export_timeline`) exports from this window too; only this form's job drives this view.
     if (update.jobId !== jobId) return
     useExportSession.setState({ progress: update })
     const notify = useEditor.getState().notify
@@ -110,6 +178,7 @@ export const useExportSession = create<ExportSession>((set, get) => ({
   progress: null,
   incomplete: null,
   starting: false,
+  history: [],
 
   setSettings(next) {
     const before = get().settings
@@ -125,6 +194,14 @@ export const useExportSession = create<ExportSession>((set, get) => ({
   },
   setOutputPath(path) {
     set({ outputPath: path })
+  },
+  adoptFittingPreset(canvasWidth, canvasHeight) {
+    const session = get()
+    // By identity: the defaults object is replaced by the first `setSettings`, whatever it sets.
+    if (session.settings !== DEFAULT_EXPORT_SETTINGS || session.starting) return false
+    if (session.progress && !TERMINAL.includes(session.progress.stage)) return false
+    get().setSettings(firstFittingPreset(canvasWidth, canvasHeight).settings)
+    return true
   },
 
   async start() {
@@ -171,15 +248,25 @@ export const useExportSession = create<ExportSession>((set, get) => ({
     set({ starting: false })
     if (!job) return
     jobId = job.jobId
-    set({
-      progress: {
+    const first: ExportProgress = {
+      jobId: job.jobId,
+      progress: null,
+      framesDone: 0,
+      framesTotal: range.toFrame - range.fromFrame + 1,
+      stage: 'preparing'
+    }
+    set((state) => ({
+      progress: first,
+      history: addRecord(state.history, {
         jobId: job.jobId,
-        progress: null,
-        framesDone: 0,
-        framesTotal: range.toFrame - range.fromFrame + 1,
-        stage: 'preparing'
-      }
-    })
+        origin: 'you',
+        outputPath: target,
+        summary: summarise(session.settings, timeline.width, timeline.height),
+        startedAt: Date.now(),
+        progress: first,
+        incomplete: null
+      })
+    }))
 
     // A WAV or MP3 has no pictures to push; main muxes those from the project alone.
     if (isAudioOnly(fields.format)) return
@@ -196,15 +283,14 @@ export const useExportSession = create<ExportSession>((set, get) => ({
         const previous = get().progress
         // Main owns the terminal stages; a late frame callback must not reopen a finished job.
         if (previous && TERMINAL.includes(previous.stage)) return
-        set({
-          progress: {
-            jobId: job.jobId,
-            stage: 'rendering',
-            framesDone: report.framesDone,
-            framesTotal: report.framesTotal,
-            progress: report.progress
-          }
-        })
+        const update: ExportProgress = {
+          jobId: job.jobId,
+          stage: 'rendering',
+          framesDone: report.framesDone,
+          framesTotal: report.framesTotal,
+          progress: report.progress
+        }
+        set((state) => ({ progress: update, history: applyProgress(state.history, update, Date.now()) }))
       }
     })
     exporter = running
@@ -212,22 +298,22 @@ export const useExportSession = create<ExportSession>((set, get) => ({
       const outcome = await running.run()
       // Main says `done` because the file closed; only the exporter knows what the frames held.
       if (outcome.incomplete) {
-        set({ incomplete: outcome.incomplete })
+        const wrong = outcome.incomplete
+        set((state) => ({ incomplete: wrong, history: markIncomplete(state.history, job.jobId, wrong) }))
         notify(outcome.incomplete.message, 'error')
       }
     } catch (error) {
       const previous = get().progress
       const message = error instanceof Error ? error.message : 'Export failed.'
-      set({
-        progress: {
-          jobId: job.jobId,
-          stage: 'failed',
-          framesDone: previous?.framesDone ?? 0,
-          framesTotal: previous?.framesTotal ?? null,
-          progress: previous?.progress ?? null,
-          error: message
-        }
-      })
+      const failed: ExportProgress = {
+        jobId: job.jobId,
+        stage: 'failed',
+        framesDone: previous?.framesDone ?? 0,
+        framesTotal: previous?.framesTotal ?? null,
+        progress: previous?.progress ?? null,
+        error: message
+      }
+      set((state) => ({ progress: failed, history: applyProgress(state.history, failed, Date.now()) }))
       notify(message, 'error')
     } finally {
       if (exporter === running) exporter = null

@@ -18,6 +18,7 @@ import { playbackCommands } from './playback'
 import { timelineCommands } from './timeline'
 import { COMMAND_GROUPS, SEPARATOR, type CommandEntry, type CommandGroup, type CommandSpec } from './types'
 import { viewCommands } from './view'
+import { workspaceCommands } from './workspace'
 
 export { COMMAND_GROUPS, SEPARATOR, type CommandEntry, type CommandGroup, type CommandSpec }
 
@@ -30,6 +31,7 @@ const BY_GROUP = {
   Timeline: timelineCommands,
   Playback: playbackCommands,
   View: viewCommands,
+  Workspace: workspaceCommands,
   Help: helpCommands
 } as const satisfies Record<CommandGroup, readonly CommandEntry[]>
 

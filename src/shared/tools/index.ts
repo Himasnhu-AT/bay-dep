@@ -3,37 +3,56 @@
 
 import type { ToolSpec } from './spec'
 import { tool as addCaptions } from './add-captions'
+import { tool as addComment } from './add-comment'
 import { tool as addMarker } from './add-marker'
 import { tool as addSubtitles } from './add-subtitles'
 import { tool as addTemplate } from './add-template'
 import { tool as addTrack } from './add-track'
 import { tool as addTransition } from './add-transition'
+import { tool as applyDub } from './apply-dub'
 import { tool as applyScript } from './apply-script'
 import { tool as browseAssets } from './browse-assets'
 import { tool as deleteItems } from './delete-items'
 import { tool as detachAudio } from './detach-audio'
 import { tool as detectBeats } from './detect-beats'
+import { tool as detectCuts } from './detect-cuts'
 import { tool as editAsset } from './edit-asset'
 import { tool as editItem } from './edit-item'
+import { tool as estimateSpeech } from './estimate-speech'
 import { tool as exportTimeline } from './export-timeline'
+import { tool as fillPromptKit } from './fill-prompt-kit'
+import { tool as findHighlights } from './find-highlights'
+import { tool as frameGrid } from './frame-grid'
+import { tool as generateImage } from './generate-image'
+import { tool as generateSpeech } from './generate-speech'
+import { tool as generateVideo } from './generate-video'
 import { tool as importMedia } from './import-media'
+import { tool as importUrl } from './import-url'
+import { tool as indexFootage } from './index-footage'
 import { tool as inspectItem } from './inspect-item'
 import { tool as listProjects } from './list-projects'
+import { tool as markHighlights } from './mark-highlights'
 import { tool as openProject } from './open-project'
 import { tool as placeAsset } from './place-asset'
+import { tool as planDub } from './plan-dub'
 import { tool as previewFrame } from './preview-frame'
 import { tool as proposeEdit } from './propose-edit'
 import { tool as readBrf } from './read-brf'
 import { tool as readComposition } from './read-composition'
+import { tool as readFeedback } from './read-feedback'
 import { tool as readProject } from './read-project'
 import { tool as readScript } from './read-script'
 import { tool as removeMarker } from './remove-marker'
 import { tool as removeRange } from './remove-range'
 import { tool as removeTransition } from './remove-transition'
+import { tool as resolveFeedback } from './resolve-feedback'
+import { tool as searchFootage } from './search-footage'
 import { tool as setCanvas } from './set-canvas'
 import { tool as setPlayhead } from './set-playhead'
 import { tool as splitAt } from './split-at'
+import { tool as trackDub } from './track-dub'
 import { tool as trackExport } from './track-export'
+import { tool as trackGeneration } from './track-generation'
 import { tool as transcribe } from './transcribe'
 import { tool as trimItem } from './trim-item'
 import { tool as undo } from './undo'
@@ -45,11 +64,16 @@ export const TOOLS: ToolSpec[] = [
   listProjects,
   openProject,
   transcribe,
+  findHighlights,
   detectBeats,
+  detectCuts,
+  indexFootage,
+  searchFootage,
   readProject,
   browseAssets,
   inspectItem,
   previewFrame,
+  frameGrid,
   readScript,
   proposeEdit,
   writeBrf,
@@ -58,6 +82,7 @@ export const TOOLS: ToolSpec[] = [
   addTemplate,
   readComposition,
   importMedia,
+  importUrl,
   placeAsset,
   editAsset,
   editItem,
@@ -74,9 +99,22 @@ export const TOOLS: ToolSpec[] = [
   setCanvas,
   addCaptions,
   addMarker,
+  markHighlights,
   removeMarker,
+  readFeedback,
+  resolveFeedback,
+  addComment,
   setPlayhead,
   undo,
   exportTimeline,
   trackExport,
+  fillPromptKit,
+  generateImage,
+  generateVideo,
+  generateSpeech,
+  estimateSpeech,
+  planDub,
+  applyDub,
+  trackDub,
+  trackGeneration,
 ]

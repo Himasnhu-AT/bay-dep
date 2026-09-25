@@ -31,11 +31,21 @@ function revealAsset(assetId: string): void {
   })
 }
 
+/** The clip menu's pages: the main list, and the rows each `›` row opens in its place. */
+export type ClipMenuPage = 'main' | 'trim' | 'audio' | 'ripple'
+
 /**
- * The editing rows of the clip menu for `item`, opened at `at`. The caller appends its own rows
- * (detach, unlink) after these.
+ * The main page of the clip menu for `item`, opened at `at`. It was one flat list of 22 rows,
+ * taller than the window; now the rarer rows sit behind `›` rows (Trim, Audio, Ripple Delete)
+ * that reopen the menu on their page at the same point. `Menu` has no nested submenus, and a
+ * page in place keeps the keyboard contract a nested menu would need rebuilt. `openPage` is the
+ * timeline's, which owns where the menu is.
  */
-export function clipMenuEntries(item: Item, at: { x: number; y: number }): MenuEntry[] {
+export function clipMenuEntries(
+  item: Item,
+  at: { x: number; y: number },
+  openPage: (page: ClipMenuPage) => void
+): MenuEntry[] {
   const state = useEditor.getState()
   const timeline = selectTimeline(state)
   const run = (id: CommandId) => () => void runCommand(id, 'ui')
@@ -44,6 +54,12 @@ export function clipMenuEntries(item: Item, at: { x: number; y: number }): MenuE
     onSelect: run(id),
     ...(shortcutOf(id) ? { shortcut: shortcutOf(id) } : {}),
     ...extra
+  })
+  const page = (label: string, to: ClipMenuPage, disabled = false): MenuEntry => ({
+    label,
+    submenu: true,
+    disabled,
+    onSelect: () => openPage(to)
   })
   const selected = timeline ? allItems(timeline).filter((i) => state.selection.includes(i.id)) : []
   const playheadInside = selected.some((i) => state.playhead > i.from && state.playhead < itemEnd(i))
@@ -77,16 +93,34 @@ export function clipMenuEntries(item: Item, at: { x: number; y: number }): MenuE
     row('clip.duplicate', 'Duplicate', { disabled: locked }),
     row('clip.freezeFrame', 'Add Freeze Frame', { disabled: locked || !freezable || !playheadOver }),
     row('clip.toggleEnabled', item.disabled ? 'Enable Clip' : 'Disable Clip', { disabled: locked }),
-    row('clip.addTransition', 'Add Transition at Nearest Cut'),
     {
       label: 'Speed…',
       disabled: locked,
       onSelect: () => useEditor.getState().setClipDialog({ kind: 'speed', itemId: item.id, x: at.x, y: at.y })
     },
+    row('clip.addTransition', 'Add Transition at Nearest Cut'),
+    { kind: 'separator' },
+    page('Trim', 'trim', locked),
+    page('Audio', 'audio'),
     { label: 'Reveal in Media', onSelect: () => revealAsset(item.assetId) },
     { kind: 'separator' },
     row('clip.delete', 'Delete', { disabled: locked }),
-    row('clip.rippleDelete', 'Ripple Delete', { disabled: locked, danger: true })
+    page('Ripple Delete', 'ripple', locked)
+  ]
+}
+
+/** The ripple-delete page: across every track (⇧⌫), or closing only this track's gap. */
+export function rippleDeleteEntries(locked: boolean, thisTrackOnly: () => void): MenuEntry[] {
+  const shortcut = shortcutOf('clip.rippleDelete')
+  return [
+    {
+      label: 'Ripple Delete',
+      danger: true,
+      disabled: locked,
+      ...(shortcut ? { shortcut } : {}),
+      onSelect: () => void runCommand('clip.rippleDelete', 'ui')
+    },
+    { label: 'Ripple Delete (This Track Only)', danger: true, disabled: locked, onSelect: thisTrackOnly }
   ]
 }
 

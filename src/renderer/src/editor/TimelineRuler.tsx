@@ -3,6 +3,7 @@ import { formatTimecode, type Marker } from '@shared/project'
 import { useDrag } from '@/lib/useDrag'
 import { useEditor } from '@/store/editor'
 import { RulerMarkers } from './TimelineMarkers'
+import { RulerComments } from './TimelineComments'
 
 /** A label starts this far right of its tick (`left-1`). */
 const LABEL_INSET = 4
@@ -118,7 +119,7 @@ export function TimelineRuler({
       // re-render the whole ruler 30 times a second during playback.
       tabIndex={-1}
       onPointerDown={onPointerDown}
-      className="relative h-[26px] shrink-0 cursor-ew-resize border-b border-line bg-surface-1 select-none"
+      className="relative h-[34px] shrink-0 cursor-ew-resize border-b border-line bg-surface-1 select-none"
       style={{ width: contentWidth }}
     >
       {/*
@@ -136,6 +137,9 @@ export function TimelineRuler({
         viewStart={viewStart}
         viewEnd={viewEnd}
       />
+      {/* Review comments share the strip as round pins, after the flags so an open note on a
+          marker's frame is the one on top. */}
+      <RulerComments fps={fps} pixelsPerFrame={pixelsPerFrame} viewStart={viewStart} viewEnd={viewEnd} />
       {ticks.map((frame) => {
         const major = frame % labelStep === 0
         return (
@@ -149,7 +153,7 @@ export function TimelineRuler({
             {major && (
               <span
                 data-ruler-label={frame * pixelsPerFrame + LABEL_INSET}
-                className="absolute bottom-[11px] left-1 text-[10px] whitespace-nowrap text-ink-2 tabular-nums"
+                className="absolute bottom-[10px] left-1 text-[10px] leading-3 whitespace-nowrap text-ink-2 tabular-nums"
               >
                 {formatTimecode(frame, fps, withFrames)}
               </span>

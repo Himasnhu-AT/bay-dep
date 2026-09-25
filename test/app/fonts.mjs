@@ -16,9 +16,13 @@
  * - a composition in Archivo at font-stretch 62% against 125% must differ, beside the same pair in
  *   a family that is not imported (falls back to a monospace with no width axis), which must not.
  *
- * Phase 1 (default) imports, measures and saves the project, printing FONTS_EXPECT. Restart the
- * app, then run phase 2 with FONTS_REOPEN=<the .bay path> FONTS_EXPECT=<ink> to open the saved
- * project in a fresh process and measure again.
+ * Phase 1 (default) works in a NEW scratch project (`project.create()`, a `.bay` under
+ * ~/Movies/bay), imports, measures and saves that scratch project, printing FONTS_EXPECT. Restart
+ * the app, then run phase 2 with FONTS_REOPEN=<the .bay path> FONTS_EXPECT=<ink> to open the saved
+ * project in a fresh process and measure again; delete the scratch file afterwards. It used to
+ * work in, and save, whatever project was open — deleting every clip on its timeline first — so on
+ * the app someone was using it wrote a probe's timeline over their file. The open project is put
+ * back by `runProbe` as always.
  *
  *   PORT=9275 node test/app/fonts.mjs
  *   PORT=9275 FONTS_REOPEN=/path/to/project.bay FONTS_EXPECT=0.2345 node test/app/fonts.mjs
@@ -106,6 +110,11 @@ await runProbe(async () => {
   if (!existsSync(ARCHIVO)) throw new PreconditionError(`no font at ${ARCHIVO}`, 'set ARCHIVO to a variable font with a wdth axis')
   if (REOPEN) return reopen()
   check('Archivo is not installed on this machine (the whole point)', installed(), (list) => list.length === 0)
+
+  // Never the open project: everything below, the save included, happens in a scratch one.
+  const scratchProject = await evaluate(`window.bay.project.create().then((p) => { window.bayEngine.store.getState().setProject(p); return p.filePath })`)
+  if (!scratchProject) throw new PreconditionError('project.create() gave no file', 'the scratch project is where phase 1 saves')
+  console.log('    scratch project:', scratchProject)
 
   const stale = await evaluate(`(() => {
     const s = window.bayEngine.store.getState()
@@ -273,6 +282,7 @@ await runProbe(async () => {
   await evaluate(`(() => { window.bayEngine.store.getState().patchLayout(${JSON.stringify(itemId)}, { opacity: 1 }); return true })()`)
   await setVar('wdth', 62)
   const saved = await evaluate(`(async () => (await window.bay.project.save(window.bayEngine.store.getState().project)).filePath)()`)
+  check('saved to the scratch project, not the one that was open', saved, scratchProject)
   console.log(`\nsaved to ${saved}\nrestart the app, then:\n  PORT=${process.env.PORT ?? 9222} FONTS_REOPEN=${JSON.stringify(saved)} FONTS_EXPECT=${w62} node test/app/fonts.mjs`)
   check('Archivo is still not installed on this machine', installed(), (list) => list.length === 0)
   return true

@@ -27,7 +27,7 @@ const skipPlacement = process.env.VERIFY_PRECONDITION === '1'
 if (process.env.SEED_ITEM === '1') {
   await evaluate(`(async () => {
     const { store } = window.bayEngine
-    const imported = await window.bay.media.importPaths([${JSON.stringify(process.cwd() + '/' + CLIP)}])
+    const imported = await window.bay.media.importPaths([${JSON.stringify((CLIP.startsWith('/') ? CLIP : process.cwd() + '/' + CLIP))}])
     store.getState().addAssets([imported[0].asset])
     store.getState().placeAsset(imported[0].asset.id, 0)
     return true
@@ -39,7 +39,10 @@ if (process.env.SEED_ITEM === '1') {
 // Placing nothing is not enough: against a seeded project that already has an item under the
 // playhead the precondition is satisfied before the probe does anything, and the mode proves
 // nothing while looking like it passed. So it empties the timeline explicitly.
-if (skipPlacement) {
+// It empties the timeline before placing, too: the canvas is measured as a whole, so an item
+// the project already had (a title, another clip) would widen the lit extent, and `items[0]`
+// would read that item's layout instead of the clip's. Restored by `runProbe` like every edit.
+if (skipPlacement || process.env.SEED_ITEM !== '1') {
   await evaluate(`(() => {
     const { store } = window.bayEngine
     const st = store.getState()
@@ -55,7 +58,7 @@ const placed = skipPlacement
   ? { assetId: null, source: ['-', '-'] }
   : await evaluate(`(async () => {
       const { store } = window.bayEngine
-      const imported = await window.bay.media.importPaths([${JSON.stringify(process.cwd() + '/' + CLIP)}])
+      const imported = await window.bay.media.importPaths([${JSON.stringify((CLIP.startsWith('/') ? CLIP : process.cwd() + '/' + CLIP))}])
       if (!imported.length) throw new Error('import returned nothing')
       const asset = imported[0].asset
       store.getState().addAssets([asset])
@@ -98,7 +101,8 @@ const result = await evaluate(`(() => {
   const { store } = window.bayEngine
   const st = store.getState()
   const tl = st.project.timelines.find(t => t.id === st.project.activeTimelineId)
-  const item = tl.tracks.flatMap(t => t.items)[0]
+  const items = tl.tracks.flatMap(t => t.items)
+  const item = items.find(i => i.id === ${JSON.stringify(placed.itemId ?? null)}) ?? items[0]
   const c = document.querySelector('canvas')
   const scale = c.width / tl.width
   const L = item.layout

@@ -112,6 +112,13 @@ let session = null
 /** Keys of the editor store a probe may move and must put back. Every `agent*` key joins them. */
 const RESTORED_KEYS = ['project', 'past', 'future', 'dirty', 'playhead', 'selection', 'playing', 'panel', 'debugMode']
 const APPROVAL_KEY = 'bay.agentApproval'
+/**
+ * Whether the agent is docked is remembered per machine. `setPanel('agent')` docks it through
+ * `setAgentDocked`, which writes this key; putting `agentDocked` back with `setState` restores
+ * the store and leaves the key at '1', so the user's next launch opened with the agent docked
+ * while the restore line said everything was back. The raw value is kept and put back instead.
+ */
+const DOCK_KEY = 'bay.workspace.agentDocked'
 
 /**
  * Connects, enables the probe surface, brings the window to front, and waits for the engine.
@@ -222,7 +229,12 @@ export async function attach(port = Number(process.env.PORT ?? 9222)) {
     let approval = null
     try { approval = localStorage.getItem(${JSON.stringify(APPROVAL_KEY)}) } catch {}
     const leftover = !!window.__bayProbeSnapshot
-    window.__bayProbeSnapshot = { state, approval }
+    // The workspace page and the Inspector/Library tabs are remembered per machine, so they are
+    // put back through their own setters (which write the remembered value), not by setState.
+    let dockRemembered = null
+    try { dockRemembered = localStorage.getItem(${JSON.stringify(DOCK_KEY)}) } catch {}
+    const workspace = { page: st.page, inspectorTab: st.inspectorTab, libraryTab: st.libraryTab, dockRemembered }
+    window.__bayProbeSnapshot = { state, approval, workspace }
     window.__bayProbePatches = window.__bayProbePatches || []
     return { leftover, fingerprint: ${FINGERPRINT}, project: JSON.stringify(st.project),
              dirty: st.dirty, playhead: st.playhead }
@@ -267,6 +279,23 @@ export async function attach(port = Number(process.env.PORT ?? 9222)) {
   return { send: cdp.send, evaluate, close, patch, reloaded, opened }
 }
 
+/**
+ * Shows the Edit page with the Inspector on `tab` ('video' | 'audio' | 'effects' | 'color' | …).
+ *
+ * The Inspector is tabbed and the workspace page is remembered per machine, so a probe that
+ * reads an Inspector section must ask for the page and tab it reads rather than assume the app
+ * was left on them. `attach()` records both, and the restore puts them back.
+ */
+export async function showInspector(evaluate, tab) {
+  return evaluate(`(async () => {
+    const st = window.bayEngine.store
+    if (st.getState().page !== 'edit') st.getState().setPage('edit')
+    st.getState().setInspectorTab(${JSON.stringify(tab)})
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
+    return st.getState().page === 'edit' && st.getState().inspectorTab === ${JSON.stringify(tab)}
+  })()`)
+}
+
 /** What a restore is checked against: identity-free, so it also works after a JSON fallback. */
 const FINGERPRINT = `(() => {
   const st = window.bayEngine.store.getState()
@@ -276,7 +305,8 @@ const FINGERPRINT = `(() => {
   return { project: h, filePath: st.project.filePath ?? null, past: st.past.length,
            future: st.future.length, dirty: st.dirty, playhead: st.playhead,
            playing: st.playing, screen: st.screen, gate: st.agentGate === null ? null : 'set',
-           approval: st.agentApproval }
+           approval: st.agentApproval, docked: st.agentDocked,
+           dockRemembered: (() => { try { return localStorage.getItem(${JSON.stringify(DOCK_KEY)}) } catch { return null } })() }
 })()`
 
 /** Methods the probes are known to sabotage; after a restore each must be native again. */
@@ -320,6 +350,17 @@ async function restoreSession() {
       const { playing, ...rest } = snap.state
       store.setState(rest)
       if (playing) store.getState().setPlaying(true)
+      const ws = snap.workspace
+      if (ws) {
+        const now = store.getState()
+        if (ws.page && now.page !== ws.page) now.setPage(ws.page)
+        if (ws.inspectorTab && store.getState().inspectorTab !== ws.inspectorTab) store.getState().setInspectorTab(ws.inspectorTab)
+        if (ws.libraryTab && store.getState().libraryTab !== ws.libraryTab) store.getState().setLibraryTab(ws.libraryTab)
+        try {
+          if (ws.dockRemembered === null) localStorage.removeItem(${JSON.stringify(DOCK_KEY)})
+          else localStorage.setItem(${JSON.stringify(DOCK_KEY)}, ws.dockRemembered)
+        } catch {}
+      }
       try {
         if (snap.approval === null) localStorage.removeItem(${JSON.stringify(APPROVAL_KEY)})
         else localStorage.setItem(${JSON.stringify(APPROVAL_KEY)}, snap.approval)

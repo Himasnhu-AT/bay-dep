@@ -12,7 +12,7 @@ import type { StoreApi } from 'zustand'
 import { activeTimeline, type Project, type Timeline } from '@shared/project'
 import { normaliseLinks } from '@shared/links'
 import { clone, newId } from './factory'
-import { agentActingDepth, agentFileWriterNow } from './agent-turns'
+import { agentActingDepth, agentFileWriterNow, clientActingDepth } from './agent-turns'
 import type { EditorState, EditorStore } from './types'
 
 export const HISTORY_LIMIT = 100
@@ -108,7 +108,9 @@ export function createKit(set: Set, get: Get): StoreKit {
    */
   function turnMarks(state: EditorState): Partial<EditorState> {
     if (!state.agentRunning) return {}
-    return agentActingDepth() > 0 ? { agentTurnEdited: true } : { agentTurnEdited: true, agentTurnUserEdited: true }
+    if (agentActingDepth() > 0) return { agentTurnEdited: true }
+    if (clientActingDepth() > 0) return { agentTurnEdited: true, agentTurnClientEdited: true }
+    return { agentTurnEdited: true, agentTurnUserEdited: true }
   }
 
   /**

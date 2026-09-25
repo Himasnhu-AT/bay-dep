@@ -81,3 +81,21 @@ test('arguments are still validated against the catalog, and a refusal comes bac
   assert.equal(broken.ok, false)
   assert.match(broken.ok ? '' : broken.error, /Nothing was changed/)
 })
+
+test('an MCP client on bay’s socket is not held to the agent’s approvals, and its edit is its own', async () => {
+  fresh()
+  useEditor.setState({ agentGate: { approved: null } })
+  state().applyAgentEvent({ type: 'started', runId: 'client-run' })
+  try {
+    // The pair: the same call, from the in-app agent, is refused by the turn's gate.
+    const agent = await executeToolCall({ id: 'a', tool: 'add_track', args: { kind: 'video' }, origin: 'in-app' })
+    assert.equal(agent.ok, false, 'specimen: the in-app agent is gated')
+    const client = await executeToolCall({ id: 'c', tool: 'add_track', args: { kind: 'video' }, origin: 'socket' })
+    assert.equal(client.ok, true, client.ok ? '' : client.error)
+    assert.equal(state().agentTurnClientEdited, true, 'marked as the client’s edit')
+    assert.equal(state().agentTurnUserEdited, false)
+  } finally {
+    state().applyAgentEvent({ type: 'done', runId: 'client-run', reason: 'complete' })
+    useEditor.setState({ agentGate: null })
+  }
+})

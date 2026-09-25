@@ -9,7 +9,7 @@ import { selectDuration, selectFps, useEditor } from '@/store/editor'
  * (seconds), `15f`, or a signed distance from the playhead (`+2s`, `-15f`). Enter jumps, Escape or leaving cancels;
  * something that is not a time says so and keeps what was typed.
  */
-export function TimecodeField(): ReactNode {
+export function TimecodeField({ showDuration = true }: { showDuration?: boolean }): ReactNode {
   const playhead = useEditor((state) => state.playhead)
   const duration = useEditor(selectDuration)
   const fps = useEditor(selectFps)
@@ -79,11 +79,11 @@ export function TimecodeField(): ReactNode {
           inputClassName="text-center text-[13px] font-medium tabular-nums"
         />
       )}
-      {/* The length is the transport's third thing to go when the row is short (see the
-          priority list in Transport.tsx); the status bar shows it too. */}
-      <span className="hidden text-[11px] whitespace-nowrap text-ink-2 @3xl:inline">
-        / {formatTimecode(duration, fps)}
-      </span>
+      {/* The length goes first when the row is short (Transport.tsx's slots); the status bar
+          shows it too. */}
+      {showDuration && (
+        <span className="text-[11px] whitespace-nowrap text-ink-2">/ {formatTimecode(duration, fps)}</span>
+      )}
     </div>
   )
 }

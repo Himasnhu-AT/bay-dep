@@ -46,7 +46,7 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import type { Options, SDKMessage } from '@anthropic-ai/claude-agent-sdk'
+import type { Options, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { AgentEvent } from '@shared/agent'
 import {
   allowedToolNames,
@@ -54,13 +54,32 @@ import {
   BUILT_IN_TOOLS,
   TURN_TIMEOUT_MS,
   type CliOptions,
-  childEnv
+  childEnv,
+  userContent,
+  type UserContentBlock
 } from './cli'
 import type { HostedAgentRuntime } from './runtime'
 import { newStreamState, toAgentEvents } from './stream'
 
 /** The SDK's `query`, narrowed to the part bay uses. Injected in tests. */
-export type QueryFn = (params: { prompt: string; options?: Options }) => AsyncIterable<SDKMessage>
+export type QueryFn = (params: { prompt: string | AsyncIterable<SDKUserMessage>; options?: Options }) => AsyncIterable<SDKMessage>
+
+/**
+ * A turn's prompt: the plain string when nothing is attached — the path every turn took before
+ * attachments, left as it was — and otherwise the SDK's streaming input, one user message whose
+ * content is the same blocks the CLI runtime writes (`userContent`), images inline as base64.
+ *
+ * Takes the blocks already read, never paths: the SDK iterates this generator whenever it gets to
+ * it, and by then the attachment folder may be gone (a dispose sweeps it). `send` reads the files
+ * before it returns, the way the CLI runtime writes them to stdin before it returns.
+ */
+export async function* promptWithContent(content: UserContentBlock[]): AsyncGenerator<SDKUserMessage> {
+  yield {
+    type: 'user',
+    message: { role: 'user', content },
+    parent_tool_use_id: null
+  }
+}
 
 export interface SdkOptions extends Omit<CliOptions, 'binary'> {
   /**
@@ -220,7 +239,7 @@ export class SdkAgentRuntime implements HostedAgentRuntime {
   }
 
   /** Send one message. Events arrive through `onEvent`; `started` is emitted first. */
-  send(text: string): string {
+  send(text: string, images: readonly string[] = []): string {
     // A turn still running is abandoned rather than raced: two queries resuming one session at
     // once would each append to the same transcript.
     if (this.#runId) this.#interrupt('Interrupted by a new message.')
@@ -237,17 +256,28 @@ export class SdkAgentRuntime implements HostedAgentRuntime {
       abort.abort()
     }, timeout)
 
-    void this.#run(runId, text, abort)
+    // Read now, before returning: the files are bay's to remove once `send` has handed them over.
+    let content: UserContentBlock[] | null = null
+    if (images.length > 0) {
+      try {
+        content = userContent(text, images)
+      } catch (error) {
+        this.#fail(runId, `An attachment could not be read: ${(error as Error).message}`)
+        return runId
+      }
+    }
+
+    void this.#run(runId, content ?? text, abort)
     return runId
   }
 
-  async #run(runId: string, text: string, abort: AbortController): Promise<void> {
+  async #run(runId: string, prompt: string | UserContentBlock[], abort: AbortController): Promise<void> {
     try {
       const query = this.#options.query ?? (await import('@anthropic-ai/claude-agent-sdk')).query
       if (runId !== this.#runId) return
       const stream = newStreamState()
       const messages = query({
-        prompt: text,
+        prompt: typeof prompt === 'string' ? prompt : promptWithContent(prompt),
         options: sdkOptions(this.#options, { resume: this.#sessionId, abortController: abort })
       })
       for await (const message of messages) {
