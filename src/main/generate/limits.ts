@@ -1,5 +1,5 @@
 /**
- * The spend guard's limits, as the user set them in Settings › Providers, kept in
+ * The spend guard's limits, as the user set them in Preferences › AI providers, kept in
  * `<userData>/generation-limits.json`.
  *
  * Main holds them, not the renderer: the guard is enforced by `GenerationJobs.start`, and a limit

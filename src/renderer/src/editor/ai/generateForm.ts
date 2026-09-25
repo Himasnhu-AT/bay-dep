@@ -134,7 +134,7 @@ export function checkForm(form: GenerateForm): FormCheck {
 
 /**
  * Why a generation cannot start now, as the user reads it, or null when it can. `providers` is
- * true when the fix is in Settings › Providers, so the form shows the way there.
+ * true when the fix is in Preferences › AI providers, so the form shows the way there.
  *
  * The order is the order of the fix: without a key nothing else matters; a full queue clears on
  * its own; a budget only the user can raise.
@@ -154,8 +154,8 @@ export function startBlocker(input: {
     return {
       reason: 'no-key',
       text: status?.problem
-        ? `The ${label} key saved earlier could not be read (${status.problem}). Set it again in Settings › Providers.`
-        : `No ${label} key is set. Add one in Settings › Providers; bay never asks for keys in chat.`,
+        ? `The ${label} key saved earlier could not be read (${status.problem}). Set it again in Preferences › AI providers.`
+        : `No ${label} key is set. Add one in Preferences › AI providers; bay never asks for keys in chat.`,
       providers: true
     }
   }
@@ -167,7 +167,7 @@ export function startBlocker(input: {
       reason: 'room',
       text:
         `${spending.active} generation${spending.active === 1 ? ' is' : 's are'} already running, the most at once. ` +
-        'This can start when one finishes, or raise “Jobs at once” in Settings › Providers.',
+        'This can start when one finishes, or raise “Jobs at once” in Preferences › AI providers.',
       providers: true
     }
   }
@@ -177,7 +177,7 @@ export function startBlocker(input: {
     text:
       `This (~${usd(estimatedCostUsd)}) would pass this session’s generation budget: ${usd(spending.spentUsd)} spent` +
       (reserved > 0 ? `, ${usd(reserved)} held for a dub` : '') +
-      ` of ${usd(spending.budgetUsd)}. Raise the budget in Settings › Providers to go on.`,
+      ` of ${usd(spending.budgetUsd)}. Raise the budget in Preferences › AI providers to go on.`,
     providers: true
   }
 }

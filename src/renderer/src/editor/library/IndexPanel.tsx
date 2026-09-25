@@ -368,7 +368,7 @@ interface Hit {
  * Find a shot by describing it. The index and the model are main's (`index_footage` and
  * `search_footage` run the same functions, so a person and the agent see the same hits); a hit on
  * the timeline moves the playhead to it, and any hit opens in the source viewer at that moment.
- * The model is fetched only as Settings › Visual search allows — the "Download models when needed"
+ * The model is fetched only as Preferences › Visual search allows — the "Download models when needed"
  * switch, or its Download button — never from here on its own.
  */
 function VisualSearch(): ReactNode {
@@ -461,14 +461,14 @@ function VisualSearch(): ReactNode {
             label="Settings"
             icon={<Settings2 className="size-3.5" />}
             onClick={() => useEditor.getState().setSettingsOpen(true)}
-            title="Settings › Visual search: the model and its download"
+            title="Preferences › Visual search: the model and its download"
           />
         </div>
         {status && !status.installed && !downloading && (
           <p className="text-[11px] leading-relaxed text-pretty text-ink-2">
             {autoDownload
               ? `The visual search model (${formatModelBytes(VISION_MODEL_BYTES)}) is not on this Mac yet; Index Footage downloads it first.`
-              : `The visual search model (${formatModelBytes(VISION_MODEL_BYTES)}) is not on this Mac. Download it in Settings › Visual search, or turn on “Download models when needed” there.`}
+              : `The visual search model (${formatModelBytes(VISION_MODEL_BYTES)}) is not on this Mac. Download it in Preferences › Visual search, or turn on “Download models when needed” there.`}
           </p>
         )}
         {downloading && download && (

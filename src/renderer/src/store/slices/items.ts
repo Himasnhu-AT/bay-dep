@@ -130,7 +130,7 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
         ? 'video'
         : 'audio'
 
-      // A still has no duration of its own, so it gets the default from Settings › Editing.
+      // A still has no duration of its own, so it gets the default from Preferences › Editing.
       const naturalFrames =
         asset.durationUs > 0 ? usToFrames(asset.durationUs, timeline.fps) : stillDurationFrames(timeline.fps)
       // A marked part of the source is placed at its own length, so the room looked for is the
@@ -153,7 +153,7 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
         }
         // Cover or contain, decided by how much of the source cover would crop. A phone video
         // on a landscape timeline keeps under a third of its picture under cover, and arriving
-        // as a band out of the middle reads as bay having mangled the clip. Settings › Editing
+        // as a band out of the middle reads as bay having mangled the clip. Preferences › Editing
         // can fix it to always Fit or always Fill; this is the one placement path, so the
         // setting reaches `place_asset`, a drop, a double-click and the source viewer alike.
         const layout =

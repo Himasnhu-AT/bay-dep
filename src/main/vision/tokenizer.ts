@@ -63,7 +63,7 @@ export function loadTokenizer(json: string | TokenizerJson): Tokenizer {
   const parsed: TokenizerJson = typeof json === 'string' ? (JSON.parse(json) as TokenizerJson) : json
   const model = parsed.model
   if (model?.type !== 'Unigram' || !Array.isArray(model.vocab) || model.vocab.length === 0) {
-    throw new Error('The visual search tokenizer file is not a SentencePiece Unigram model. Delete the model in Settings › Visual search and download it again.')
+    throw new Error('The visual search tokenizer file is not a SentencePiece Unigram model. Delete the model in Preferences › Visual search and download it again.')
   }
   const unkId = model.unk_id ?? 2
   const ids = new Map<string, number>()

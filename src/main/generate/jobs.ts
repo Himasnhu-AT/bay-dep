@@ -232,7 +232,7 @@ export class GenerationJobs {
     if (!credentials) {
       return {
         ok: false,
-        error: `No ${PROVIDERS[provider].label} key is set. Ask the user to add one in Settings › Providers — never ask for a key in chat.`,
+        error: `No ${PROVIDERS[provider].label} key is set. Ask the user to add one in Preferences › AI providers — never ask for a key in chat.`,
         reason: 'other'
       }
     }

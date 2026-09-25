@@ -263,7 +263,7 @@ function GenerateSection(): ReactNode {
             )}
             <div className="flex-1" />
             {spending && (
-              <Tooltip label="Estimated spend this session, against the budget set in Settings › Providers">
+              <Tooltip label="Estimated spend this session, against the budget set in Preferences › AI providers">
                 <span className="text-ink-2 tabular-nums">
                   {usd(spending.spentUsd)} of {usd(spending.budgetUsd)} used
                 </span>

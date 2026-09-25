@@ -72,6 +72,6 @@ test('characters no piece covers become one <unk>, however many there are', () =
 })
 
 test('a file that is not a Unigram model is refused, saying how to repair it', () => {
-  assert.throws(() => loadTokenizer({ model: { type: 'BPE', vocab: [] } }), /Settings › Visual search/)
+  assert.throws(() => loadTokenizer({ model: { type: 'BPE', vocab: [] } }), /Preferences › Visual search/)
   assert.throws(() => loadTokenizer('{}'), /not a SentencePiece Unigram model/)
 })

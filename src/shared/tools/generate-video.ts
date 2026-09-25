@@ -7,13 +7,13 @@ export const tool: ToolSpec = {
   name: 'generate_video',
   description:
     'Generate a short video clip with an AI video model (Veo on Gemini, or Kling), using the key ' +
-    'the user set in Settings › Providers. It costs the user real money, priced per second: run ' +
+    'the user set in Preferences › AI providers. It costs the user real money, priced per second: run ' +
     'it with validateOnly: true first to check the options and see the estimated cost. Returns a ' +
     'jobId at once; a clip takes minutes. **Call track_generation with that jobId, polling every ' +
     '15–30 seconds, before your final answer** — it imports the clip as an asset when it lands ' +
     '(and places it, if asked). Pass referenceAssetId (an image asset) to animate a picture from ' +
     'that first frame. An option the model does not take is refused with the values it does; ' +
-    'nothing is narrowed silently. If no key is set, tell the user to add one in Settings › ' +
+    'nothing is narrowed silently. If no key is set, tell the user to add one in Preferences › ' +
     'Providers — never ask for a key in chat. Models: ' +
     describeModels('video') + ' For a common shot, fill_prompt_kit writes a tested prompt (bay://guide/prompt-kits).',
   category: 'write',

@@ -216,7 +216,7 @@ export function UpdateBanner(): ReactNode {
               <button
                 type="button"
                 aria-label="Not now"
-                title="Not now: Settings › About keeps it"
+                title="Not now: Preferences › About keeps it"
                 className="no-drag -m-1 rounded-sm p-1 text-ink-2 hover:bg-surface-3 hover:text-ink-0"
                 onClick={() => setDismissed(status.next)}
               >
@@ -237,7 +237,7 @@ export function UpdateBanner(): ReactNode {
   )
 }
 
-/** Settings › About: the version, and where updates stand. Always there, never nagging. */
+/** Preferences › About: the version, and where updates stand. Always there, never nagging. */
 export function AboutUpdates(): ReactNode {
   const status = useUpdate()
   const restart = useRestart()

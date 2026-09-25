@@ -163,7 +163,7 @@ export function junctionsForTrack(project: Project, timeline: Timeline, track: T
 }
 
 /**
- * The length a transition gets when nobody chose one: Settings › Editing's transition length (a
+ * The length a transition gets when nobody chose one: Preferences › Editing's transition length (a
  * second unless changed), or the most the cut can take when that is less. `add_transition` with
  * no `durationInFrames`, ⌘T and the transition dialog all use it, so an agent and a person
  * adding "a transition" to the same cut get the same one.

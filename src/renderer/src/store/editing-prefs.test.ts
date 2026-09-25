@@ -1,5 +1,5 @@
 /**
- * Settings › Editing, pinned by literal localStorage keys (a later build reads what this one
+ * Preferences › Editing, pinned by literal localStorage keys (a later build reads what this one
  * wrote), and the frames each preference turns into. Run with `pnpm test`.
  *
  * Like `settings-keys.test.ts`, each case installs a storage stub and imports a fresh copy of the

@@ -117,7 +117,7 @@ Before the first paid generation in a request, run each call with \`validateOnly
 the user what you plan to generate and the estimated total, and wait for their go-ahead — once
 per request, not once per call. If they already gave a budget or said to go ahead, work within
 it without asking again; ask again only if the work would go past what they agreed. Generate only
-what the edit needs, and never ask for an API key in chat — keys live in Settings › Providers.
+what the edit needs, and never ask for an API key in chat — keys live in Preferences › AI providers.
 Every job you start, follow with \`track_generation\` until it lands, before your final answer.
 
 ## When something fails

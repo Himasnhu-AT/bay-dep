@@ -15,7 +15,7 @@ export const tool: ToolSpec = {
     'how many files and frames it would index and roughly how long, and starts nothing; it reads ' +
     'part of every file, so on many files or a slow drive it can take a while. Needs the visual ' +
     'search model; when it is missing and the user has not allowed downloads, the answer says how ' +
-    'the user gets it (Settings › Visual search).',
+    'the user gets it (Preferences › Visual search).',
   category: 'read',
   readOnly: false,
   selfValidating: true,

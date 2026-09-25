@@ -130,7 +130,7 @@ test('an invalid option is refused before main is asked; a dry run says the same
 test('with no key the real call is refused with where to set it, and a dry run reports it blocked', async () => {
   const refused = await call('generate_video', { model: 'kling-v2-6', prompt: 'x' })
   assert.equal(refused.ok, false)
-  assert.match(refused.ok ? '' : refused.error, /No Kling key is set.*Settings › Providers.*never takes keys in chat/)
+  assert.match(refused.ok ? '' : refused.error, /No Kling key is set.*Preferences › AI providers.*never takes keys in chat/)
   const dry = await call('generate_video', { model: 'kling-v2-6', prompt: 'x', validateOnly: true })
   const value = dry.ok ? (dry.value as Record<string, unknown>) : {}
   assert.equal(value.keySet, false)
@@ -200,7 +200,7 @@ test('a real call reports the session spend; a dry run reports the guard would r
   // $3.20 spent of $5: a second 8-second Veo clip would pass the budget, and the dry run says so.
   const dry = await call('generate_video', { model: 'veo-3.1-generate-preview', prompt: 'surf', validateOnly: true })
   const planned = dry.ok ? (dry.value as Record<string, unknown>) : {}
-  assert.match(String(planned.blocked), /\$3\.20 spent of \$5\.00.*Settings › Providers/)
+  assert.match(String(planned.blocked), /\$3\.20 spent of \$5\.00.*Preferences › AI providers/)
   // Positive control: a call that fits is not blocked.
   const fits = await call('generate_video', { model: 'veo-3.1-generate-preview', prompt: 'surf', durationSeconds: 4, validateOnly: true })
   assert.equal((fits.ok ? (fits.value as Record<string, unknown>) : {}).blocked, undefined)

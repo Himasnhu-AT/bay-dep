@@ -114,7 +114,7 @@ test('Add Title is one undo step: one ⌘Z takes back the clip and its asset tog
   assert.equal(byAsset(id).length, 0)
 })
 
-test('Settings › Editing › New clips frames a differently shaped clip, for the UI and place_asset alike', () => {
+test('Preferences › Editing › New clips frames a differently shaped clip, for the UI and place_asset alike', () => {
   const portrait: Asset = { ...shot('P', 5), width: 1080, height: 1920 }
   const layoutOf = (id: string | null) => tl().tracks.flatMap((t) => t.items).find((i) => i.id === id)!.layout
   const setFit = (fit: 'auto' | 'cover' | 'contain') => useEditingPrefs.setState({ newClipFit: fit })

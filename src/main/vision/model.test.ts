@@ -1,7 +1,7 @@
 /**
  * The real model, end to end: bay's ffmpeg samples the pictures, onnxruntime embeds them, the
  * cache holds them, the service ranks them. Skipped loudly unless the model is on this machine —
- * where Settings › Visual search puts it (`~/Library/Application Support/bay/vision-models/…`), or
+ * where Preferences › Visual search puts it (`~/Library/Application Support/bay/vision-models/…`), or
  * a folder named by `BAY_VISION_MODEL_DIR` holding the same four files.
  *
  * The ranking check is paired: a red square must rank "a red square" above "a blue circle", *and*
@@ -25,7 +25,7 @@ const MODEL_DIR = process.env['BAY_VISION_MODEL_DIR'] || join(homedir(), 'Librar
 const HAVE_MODEL = VISION_MODEL.files.every((f) => existsSync(join(MODEL_DIR, f.name)))
 const TOOLS = vendoredTools()
 const SKIP = !HAVE_MODEL
-  ? `no visual search model at ${MODEL_DIR} — download it in Settings › Visual search, or set BAY_VISION_MODEL_DIR (this check did not run)`
+  ? `no visual search model at ${MODEL_DIR} — download it in Preferences › Visual search, or set BAY_VISION_MODEL_DIR (this check did not run)`
   : !TOOLS
     ? NO_VENDORED_FFMPEG
     : false

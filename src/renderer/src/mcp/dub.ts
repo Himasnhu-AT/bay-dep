@@ -225,7 +225,7 @@ function sessionSpend(spending: GenerationSpending): Record<string, unknown> {
     sessionSpendUsd: spending.spentUsd,
     sessionBudgetUsd: spending.budgetUsd,
     ...(spending.reservedUsd ? { heldForDubsUsd: spending.reservedUsd } : {}),
-    spendNote: 'Estimated spend this session against the budget the user set in Settings › Providers. bay refuses a dub that would pass it.'
+    spendNote: 'Estimated spend this session against the budget the user set in Preferences › AI providers. bay refuses a dub that would pass it.'
   }
 }
 
@@ -294,7 +294,7 @@ async function applyDub(args: Record<string, unknown>): Promise<Record<string, u
   const bridge = api()
   const keys = await bridge.generation.keys()
   const keySet = keys.some((k) => k.provider === provider && k.set)
-  const noKey = `No ${label} key is set, so this cannot run. Tell the user to add one in Settings › Providers (bay never takes keys in chat), then call this again.`
+  const noKey = `No ${label} key is set, so this cannot run. Tell the user to add one in Preferences › AI providers (bay never takes keys in chat), then call this again.`
   const spending = await bridge.generation.spending()
   // The whole dub against the budget, before any line starts: half a dub is money spent on
   // nothing usable. Jobs at once are not a refusal here — lines queue and start as slots free.

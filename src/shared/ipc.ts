@@ -547,7 +547,7 @@ export interface BayApi {
     saveDub(record: unknown): Promise<{ ok: true } | { ok: false; error: string }>
     /** The spend guard: this session's estimated spend, jobs active, and the limits main enforces. */
     spending(): Promise<GenerationSpending>
-    /** Settings › Providers. Checked and persisted by main; the renderer cannot pass limits with a call. */
+    /** Preferences › AI providers. Checked and persisted by main; the renderer cannot pass limits with a call. */
     setLimits(limits: GenerationLimits): Promise<{ ok: true; spending: GenerationSpending } | { ok: false; error: string }>
     /** One job as it stands, or null for an id main has never seen. */
     job(id: string): Promise<GenerationJob | null>

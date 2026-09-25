@@ -21,7 +21,7 @@ const KEYS = ['bay.autoDownloadModels', 'bay.agentApproval']
 await runProbe(async () => {
   const S = 'window.bayEngine.store.getState()'
   const frames = () => evaluate(`new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(true))))`)
-  const DIALOG = `document.querySelector('[role="dialog"][aria-label="Settings"]')`
+  const DIALOG = `document.querySelector('[role="dialog"][aria-label="Preferences"]')`
   const saved = await evaluate(`(() => Object.fromEntries(${JSON.stringify(KEYS)}.map((k) => [k, localStorage.getItem(k)])))()`)
   const storeBefore = await evaluate(`(() => { const s = ${S}; return { auto: s.autoDownloadModels, approval: s.agentApproval } })()`)
 
@@ -40,6 +40,9 @@ await runProbe(async () => {
     await frames()
     check('the dialog is open', await evaluate(`${DIALOG} !== null`), true)
     check('and the store says so', await evaluate(`${S}.settingsOpen`), true)
+    // Preferences is paged; the store names the page to show, and the open dialog follows it.
+    await evaluate(`(${S}.setSettingsOpen(true, 'transcription'), true)`)
+    await frames()
 
     const headings = await evaluate(`[...${DIALOG}.querySelectorAll('h3')].map((h) => h.textContent.trim())`)
     check('it has a Transcription section', headings.includes('Transcription'), true)
@@ -108,6 +111,8 @@ await runProbe(async () => {
     console.log('\n── "Download models when needed"')
     await flip('Download models when needed', 'autoDownloadModels', 'bay.autoDownloadModels')
     console.log('\n── "Ask before editing"')
+    await evaluate(`(${S}.setSettingsOpen(true, 'agent'), true)`)
+    await frames()
     await flip('Ask before editing', 'agentApproval', 'bay.agentApproval')
 
     console.log('\n── Escape closes it')

@@ -7,7 +7,7 @@ import { useEditor } from '@/store/editor'
 import { Group, LinkRow, Row, Section, usePreferencesNavigation } from './parts'
 
 /**
- * Settings › Visual search: the SigLIP model search_footage runs on, and the indexing job.
+ * Preferences › Visual search: the SigLIP model search_footage runs on, and the indexing job.
  *
  * The model is the one download; the agent's `index_footage` fetches it only when "Download models
  * when needed" is on — the same switch as Transcription's, because it is the same promise: bay

@@ -252,8 +252,8 @@ export function SubtitlesSection(): ReactNode {
         {language !== 'en' && (
           <p className="text-[10px] leading-relaxed text-pretty text-ink-2">
             {needsModel
-              ? 'Only English models are on this Mac. A multilingual one downloads on first use if Settings › Transcription allows it; otherwise download one there.'
-              : 'Other languages use a multilingual model — the ones not marked “English” in Settings › Transcription.'}
+              ? 'Only English models are on this Mac. A multilingual one downloads on first use if Preferences › Transcription allows it; otherwise download one there.'
+              : 'Other languages use a multilingual model — the ones not marked “English” in Preferences › Transcription.'}
           </p>
         )}
       </div>

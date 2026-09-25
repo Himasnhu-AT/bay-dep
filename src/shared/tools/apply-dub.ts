@@ -16,12 +16,12 @@ export const tool: ToolSpec = {
     'same itemId, language and fromFrame/toFrame you gave plan_dub, and a translation for every cue ' +
     '(or partial: true to redo only some — those replace the lines already on the dub track). A line ' +
     'whose estimate needs more than ' + TEMPO_ACCEPT + '× speed is refused, every such line named with ' +
-    'its overage and the characters to cut. The session budget in Settings › Providers is checked ' +
+    'its overage and the characters to cut. The session budget in Preferences › AI providers is checked ' +
     'for the whole dub before any job starts, and jobs run a few at a time within its jobs-at-once ' +
     'limit. Returns a dubId at once: **call track_dub with it until it is placed, before your final ' +
     'answer**. After generation a line longer than its slot is sped up (pitch kept) up to ' +
     TEMPO_ACCEPT + '× quietly, up to ' + TEMPO_WARN + '× with a warning, and beyond that is not placed. ' +
-    'If no key is set, tell the user to add one in Settings › Providers — never ask for a key in chat.',
+    'If no key is set, tell the user to add one in Preferences › AI providers — never ask for a key in chat.',
   category: 'write',
   readOnly: false,
   selfValidating: true,

@@ -98,7 +98,7 @@ test('the agent panel prices a generate call as written, and nothing else', () =
 test('the spend guard fits a call up to the budget exactly, and refuses a cent past it or a job past the cap', () => {
   const at = { spentUsd: 4.8, budgetUsd: 5, active: 0, maxActive: 3 }
   assert.equal(spendRefusal(at, 0.2), null)
-  assert.match(spendRefusal(at, 0.21) ?? '', /\$4\.80 spent of \$5\.00.*Settings › Providers/)
+  assert.match(spendRefusal(at, 0.21) ?? '', /\$4\.80 spent of \$5\.00.*Preferences › AI providers/)
   assert.match(spendRefusal({ ...at, active: 3 }, 0) ?? '', /3 generation jobs are already running, and the limit is 3 at once/)
   assert.equal(spendRefusal({ ...at, active: 2 }, 0.1), null)
 })

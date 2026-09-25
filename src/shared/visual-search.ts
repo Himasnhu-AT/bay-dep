@@ -5,7 +5,7 @@
  * `Xenova/siglip-base-patch16-224`) puts a frame and a sentence in one space, so a phrase can be
  * scored against what is *in* a frame. It runs on this Mac (`src/main/vision/`); frames, embeddings
  * and queries never leave it. The model is the only thing fetched, from Hugging Face, when the user
- * clicks Download in Settings › Visual search or when indexing finds no model and "Download models
+ * clicks Download in Preferences › Visual search or when indexing finds no model and "Download models
  * when needed" is on — the same exception, and the same verified download, as whisper's models.
  *
  * One module for both processes: main needs the URLs, sizes and hashes; the renderer needs the

@@ -1,7 +1,7 @@
 /**
  * The Effects Library's transitions: which cut a click applies to, and applying it — the same
  * store calls ⌘T and the transition dialog make, so a transition put on from the library is the
- * one `add_transition` would put there, at the length Settings › Editing gives.
+ * one `add_transition` would put there, at the length Preferences › Editing gives.
  */
 
 import { formatTimecode, type Frames, type Project, type Timeline, type TransitionDirection, type TransitionKind } from '@shared/project'

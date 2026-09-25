@@ -1248,7 +1248,7 @@ export function placementLayout(
   timeline: Pick<Timeline, 'width' | 'height'>,
   sourceWidth: number,
   sourceHeight: number,
-  /** Settings › Editing › New clips. `auto` is the rule above; the others always cover or contain. */
+  /** Preferences › Editing › New clips. `auto` is the rule above; the others always cover or contain. */
   fit: CanvasFit = 'auto'
 ): Layout {
   if (sourceWidth <= 0 || sourceHeight <= 0) return defaultLayout(timeline)

@@ -62,7 +62,7 @@ test('a missing key blocks with the way to Providers; a set key does not', () =>
   assert.equal(missing?.reason, 'no-key')
   assert.equal(missing?.providers, true)
   assert.match(missing!.text, /OpenAI/)
-  assert.match(missing!.text, /Settings › Providers/)
+  assert.match(missing!.text, /Preferences › AI providers/)
   assert.equal(startBlocker({ provider: 'openai', keys: keys(true), spending: spending(), estimatedCostUsd: 0.05 }), null)
 })
 

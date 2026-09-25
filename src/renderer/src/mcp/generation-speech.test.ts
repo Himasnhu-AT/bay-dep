@@ -128,7 +128,7 @@ test('an option the model does not take is refused before main is asked; the leg
 test('with no key the call is refused with where to set it, and a dry run reports it blocked', async () => {
   const refused = await call('generate_speech', { model: 'eleven_multilingual_v2', text: 'Hi.' })
   assert.equal(refused.ok, false)
-  assert.match(refused.ok ? '' : refused.error, /No ElevenLabs key is set.*Settings › Providers.*never takes keys in chat/)
+  assert.match(refused.ok ? '' : refused.error, /No ElevenLabs key is set.*Preferences › AI providers.*never takes keys in chat/)
   const dry = value(await call('generate_speech', { model: 'eleven_multilingual_v2', text: 'Hi.', validateOnly: true }))
   assert.equal(dry.keySet, false)
   assert.match(String(dry.blocked), /No ElevenLabs key is set/)
