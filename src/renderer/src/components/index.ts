@@ -36,6 +36,7 @@ export {
   Field,
   Panel,
   Section,
+  SectionBars,
   SectionReset,
   type FieldProps,
   type PanelProps,

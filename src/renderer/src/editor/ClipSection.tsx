@@ -166,9 +166,11 @@ export function ClipSection({
       }
     >
       {count > 1 ? (
-        <p className="text-[11px] leading-relaxed text-ink-2">
-          Every field applies to all {count} clips as one undo step. Where they differ, the field
-          reads “Mixed” until you set it.
+        <p
+          className="text-[11px] text-ink-2"
+          title="Every field applies to all of them as one undo step. Where they differ, the field reads “Mixed” until you set it."
+        >
+          Edits apply to all {count} clips.
         </p>
       ) : asset ? (
         <>

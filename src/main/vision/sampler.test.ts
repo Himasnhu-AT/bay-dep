@@ -194,12 +194,14 @@ test('a decode that produces nothing is stopped by the stall watchdog and report
   const ffmpeg = hangingTool(dir, 'ffmpeg')
   const started = Date.now()
   // An image skips the probe, so the stand-in ffmpeg is the only process.
-  const frames = sampleFrames('/x.png', { ffmpeg: ffmpeg.bin, ffprobe: '/nonexistent', kind: 'image', durationUs: 0, stallMs: 2000 })
+  // The limit is well above a loaded machine's shell start-up (measured past 2 s while other
+  // builds ran), or the watchdog kills the stand-in before `startedPid` has seen it alive.
+  const frames = sampleFrames('/x.png', { ffmpeg: ffmpeg.bin, ffprobe: '/nonexistent', kind: 'image', durationUs: 0, stallMs: 4000 })
   const next = frames.next()
   next.catch(() => undefined)
   const pid = await startedPid(ffmpeg)
   await assert.rejects(next, /stopped producing frames of \/x\.png/)
-  assert.ok(Date.now() - started < 8000, `stopped in ${Date.now() - started} ms`)
+  assert.ok(Date.now() - started < 10_000, `stopped in ${Date.now() - started} ms`)
   assert.ok(await gone(pid), 'the stalled ffmpeg was killed')
 })
 

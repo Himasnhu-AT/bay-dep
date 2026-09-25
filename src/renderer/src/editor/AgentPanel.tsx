@@ -1,10 +1,36 @@
 import { useEffect, useRef, useState, type DragEvent, type ReactNode } from 'react'
-import { AlertTriangle, Brain, Check, ChevronRight, Download, Film, Loader2, Paperclip, Undo2 } from 'lucide-react'
+import {
+  AlertTriangle,
+  Brain,
+  Check,
+  ChevronRight,
+  Film,
+  Loader2,
+  MessageSquarePlus,
+  MessagesSquare,
+  MoreHorizontal,
+  Paperclip,
+  Sparkles,
+  Undo2,
+  X
+} from 'lucide-react'
 import { approvalMessage, DECLINED_MESSAGE, formatElapsed, type AgentEntry } from '@shared/agent'
-import { Button, Markdown, Panel, ScrollArea } from '@/components'
+import {
+  BayMark,
+  Button,
+  IconButton,
+  Markdown,
+  Menu,
+  ScrollArea,
+  Tabs,
+  Tooltip,
+  useFloatingTrigger,
+  type MenuEntry
+} from '@/components'
 import { AGENT_STARTERS, STARTERS_SHOWN, type AgentStarter } from './agentStarters'
+import { GeneratePanel } from './ai/GeneratePanel'
 import { bay } from '@/lib/bay'
-import { useAgentProvider } from '@/lib/agentProvider'
+import { PROVIDER_LABELS, useAgentProvider } from '@/lib/agentProvider'
 import { revertImpact, selectFps, useEditor } from '@/store/editor'
 import { composeMessage, pinLabel, type Pin } from '@shared/pins'
 import { insertSkill, skillSegments } from '@shared/skills'
@@ -125,18 +151,32 @@ export function AgentPanel(): ReactNode {
   }
   const bottom = useRef<HTMLDivElement | null>(null)
   const composer = useRef<HTMLTextAreaElement | null>(null)
+  const [tab, setTab] = useState<AgentTab>('chat')
 
-  // A starter fills the composer and hands it back to the user — never sends. The prompt is a
-  // draft: which clip, whose name, what style are theirs to add, and sending on click would
-  // start a paid turn from a single mis-click.
-  const pickStarter = (starter: AgentStarter): void => {
-    setDraft(insertSkill(draft, starter.skill))
+  const focusComposer = (): void => {
     requestAnimationFrame(() => {
       const box = composer.current
       if (!box) return
       box.focus()
       box.setSelectionRange(box.value.length, box.value.length)
     })
+  }
+
+  // A starter fills the composer and hands it back to the user — never sends. The prompt is a
+  // draft: which clip, whose name, what style are theirs to add, and sending on click would
+  // start a paid turn from a single mis-click.
+  const pickStarter = (starter: AgentStarter): void => {
+    setDraft(insertSkill(draft, starter.skill))
+    focusComposer()
+  }
+
+  // A quick action on the Generate tab: the same, from the other tab. What was already typed is
+  // kept, with the action's words after it.
+  const pickQuickAction = (text: string): void => {
+    const body = draft.replace(/\s+$/, '')
+    setDraft(body ? `${body} ${text}` : text)
+    setTab('chat')
+    focusComposer()
   }
 
   useEffect(() => {
@@ -252,39 +292,46 @@ export function AgentPanel(): ReactNode {
     setProblem(null)
   }
 
+  const moreItems: MenuEntry[] = [
+    { label: 'Agent settings…', onSelect: () => useEditor.getState().setSettingsOpen(true, 'agent') },
+    ...(debugMode
+      ? [
+          { kind: 'separator' as const },
+          {
+            label: exporting ? 'Exporting transcript…' : 'Export transcript',
+            disabled: log.length === 0 || exporting,
+            onSelect: () => void exportTranscript()
+          }
+        ]
+      : [])
+  ]
+
   return (
-    <Panel
-      title="Agent"
-      className="h-full"
-      bodyClassName={cn('relative flex flex-col', dragOver && 'ring-2 ring-accent ring-inset')}
-      actions={
-        debugMode || log.length > 0 ? (
-          <>
-            {debugMode && (
-              <Button
-                variant="subtle"
-                icon={<Download className="size-3.5" />}
-                disabled={log.length === 0 || exporting}
-                onClick={() => void exportTranscript()}
-                title="Debug mode: write this conversation to a folder in Downloads"
-              >
-                {exporting ? 'Exporting…' : 'Export transcript'}
-              </Button>
-            )}
-            {log.length > 0 && (
-              <Button variant="subtle" onClick={reset}>
-                New
-              </Button>
-            )}
-          </>
-        ) : undefined
-      }
-    >
+    <section aria-labelledby="agent-dock-title" className="flex h-full min-h-0 flex-col bg-surface-1">
+      <AgentHeader
+        canReset={log.length > 0 || attachments.length > 0 || draft.length > 0}
+        onReset={reset}
+        moreItems={moreItems}
+      />
+      <Tabs<AgentTab>
+        label="Agent views"
+        value={tab}
+        onChange={setTab}
+        items={[
+          { value: 'chat', label: 'Chat', icon: <MessagesSquare aria-hidden="true" className="size-3.5" /> },
+          { value: 'generate', label: 'Generate', icon: <Sparkles aria-hidden="true" className="size-3.5" /> }
+        ]}
+      />
+      {tab === 'generate' ? (
+        <ScrollArea className="min-h-0 flex-1">
+          <GeneratePanel onDraft={pickQuickAction} />
+        </ScrollArea>
+      ) : (
       <div
-        className="contents"
+        className={cn('relative flex min-h-0 flex-1 flex-col', dragOver && 'ring-2 ring-accent ring-inset')}
         onDragOver={onDragOver}
         onDragLeave={(event) => {
-          if (!event.currentTarget.parentElement?.contains(event.relatedTarget as Node | null)) setDragOver(false)
+          if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDragOver(false)
         }}
         onDrop={onDrop}
       >
@@ -337,7 +384,63 @@ export function AgentPanel(): ReactNode {
         onRemoveAttachment={removeAttachment}
       />
       </div>
-    </Panel>
+      )}
+    </section>
+  )
+}
+
+type AgentTab = 'chat' | 'generate'
+
+/**
+ * The dock's title strip: the mark and "Agent", which model is answering, and the three things
+ * a person does to the conversation as a whole — start over, the rare options, close.
+ */
+function AgentHeader({
+  canReset,
+  onReset,
+  moreItems
+}: {
+  canReset: boolean
+  onReset: () => void
+  moreItems: MenuEntry[]
+}): ReactNode {
+  const provider = useAgentProvider((state) => state.provider)
+  const running = useEditor((state) => state.agentRunning)
+  const setAgentDocked = useEditor((state) => state.setAgentDocked)
+  const more = useFloatingTrigger()
+  return (
+    <header className="@container flex h-9 shrink-0 items-center gap-1.5 border-b border-line bg-chrome pr-1 pl-2.5">
+      <BayMark variant="glyph" size={15} />
+      <h2 id="agent-dock-title" className="text-[13px] font-semibold text-ink-0">
+        Agent
+      </h2>
+      <Tooltip label={`Answered by ${PROVIDER_LABELS[provider]}, with bay's tools and nothing else. Change it in Settings › Agent.`}>
+        <button
+          type="button"
+          onClick={() => useEditor.getState().setSettingsOpen(true, 'agent')}
+          className="t-fast flex h-5 items-center gap-1 rounded-full border border-line-strong px-1.5 text-[10.5px] text-ink-1 hover:border-line-hover hover:text-ink-0"
+        >
+          {running && <Loader2 aria-hidden="true" className="size-2.5 animate-spin" />}
+          {PROVIDER_LABELS[provider]}
+        </button>
+      </Tooltip>
+      <div className="flex-1" />
+      <Tooltip label="New conversation" detail="Clears the chat and the pins. The project is not touched.">
+        <button
+          type="button"
+          aria-label="New conversation"
+          disabled={!canReset}
+          onClick={onReset}
+          className="t-press flex h-7 items-center gap-1 rounded-sm px-1.5 text-[11px] font-medium text-ink-1 hover:bg-surface-3 hover:text-ink-0 disabled:pointer-events-none disabled:opacity-35"
+        >
+          <MessageSquarePlus aria-hidden="true" className="size-3.5" />
+          <span className="hidden @[260px]:inline">New</span>
+        </button>
+      </Tooltip>
+      <IconButton {...more.triggerProps} label="More agent options" icon={<MoreHorizontal className="size-3.5" />} />
+      <Menu {...more.surfaceProps} label="Agent options" side="bottom" align="end" items={moreItems} />
+      <IconButton label="Close the agent" icon={<X className="size-3.5" />} onClick={() => setAgentDocked(false)} />
+    </header>
   )
 }
 
