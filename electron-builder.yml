@@ -29,6 +29,11 @@ files:
   # onnxruntime-node (visual search) ships every platform's native runtime in one package: 85 MB
   # for darwin/arm64 and ~200 MB more for Linux and Windows that a Mac build would carry for nothing.
   - '!node_modules/onnxruntime-node/bin/napi-v6/{linux,win32}/**'
+  # The package ships the runtime twice, as two identical 44 MB files: `libonnxruntime.1.dylib`
+  # and `libonnxruntime.1.<minor>.<patch>.dylib`. The binding loads the first by name —
+  # `otool -L onnxruntime_binding.node` lists `@rpath/libonnxruntime.1.dylib` and nothing else —
+  # so the versioned copy is never loaded and is left out rather than unpacked and signed.
+  - '!node_modules/onnxruntime-node/bin/napi-v6/darwin/*/libonnxruntime.1.*.*.dylib'
 
 # bay's own LGPL ffmpeg (script/build-ffmpeg.sh → vendor/ffmpeg/<platform>-<arch>/) goes to
 # Contents/Resources/ffmpeg/ as plain files: the OS cannot spawn a file inside the asar archive,
