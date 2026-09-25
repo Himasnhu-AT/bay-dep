@@ -1,8 +1,9 @@
-import { useEffect, useId, useState, type ReactNode } from 'react'
-import { ChevronRight, RotateCcw } from 'lucide-react'
+import { createContext, useContext, useEffect, useId, useState, type ReactNode } from 'react'
+import { ChevronRight, Info, RotateCcw } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { OPEN_SECTION_EVENT } from '@/lib/openSection'
 import { IconButton } from './IconButton'
+import { Tooltip } from './Tooltip'
 
 export interface PanelProps {
   title?: string
@@ -16,14 +17,17 @@ export interface PanelProps {
 /**
  * A titled region. Panels are separated by a 1px `line`, never by a gap or a shadow —
  * borders are what keep a dense tool from looking like a page of floating cards.
+ *
+ * The title sits in its own `chrome-raised` strip, as every Resolve panel's does ("Media Pool",
+ * "Inspector"): with the header the same grey as the body, regions blurred into one field.
  */
 export function Panel({ title, actions, children, className, bodyClassName }: PanelProps): ReactNode {
   return (
     <section className={cn('flex min-h-0 min-w-0 flex-col bg-surface-1', className)}>
       {(title || actions) && (
-        <header className="flex h-9 shrink-0 items-center justify-between gap-2 border-b border-line px-3">
+        <header className="flex h-8 shrink-0 items-center justify-between gap-2 border-b border-line bg-chrome-raised px-3">
           {title && (
-            <h2 className="text-[11px] font-semibold tracking-[0.08em] text-ink-0 uppercase">
+            <h2 className="truncate text-[12px] font-semibold text-ink-0">
               {title}
             </h2>
           )}
@@ -50,6 +54,25 @@ export interface SectionProps {
    * collapsible section starts at `defaultOpen` every time it mounts.
    */
   id?: string
+  /**
+   * Guidance about the section — what it is for, how it differs from a neighbour — shown as a
+   * tooltip on the title rather than as a paragraph in the body. State (a refusal, a clamp)
+   * still belongs in the body, where it cannot be missed.
+   */
+  hint?: string
+}
+
+/**
+ * How `Section`s draw their titles below this point: `plain` (a caption over the fields — the
+ * Settings dialog) or `bar` (a filled title strip per section, Resolve's inspector). A context
+ * rather than a prop, so a section component mounted by the inspector and by a page of its own
+ * takes the look of wherever it is mounted without either caller threading a prop through it.
+ */
+const SectionLook = createContext<'plain' | 'bar'>('plain')
+
+/** Draws every `Section` inside as a titled bar with hairlines between — the inspector's look. */
+export function SectionBars({ children }: { children: ReactNode }): ReactNode {
+  return <SectionLook.Provider value="bar">{children}</SectionLook.Provider>
 }
 
 const sectionKey = (id: string): string => `bay.section.${id}`
@@ -74,6 +97,7 @@ function writeOpen(id: string | undefined, open: boolean): void {
 }
 
 const SECTION_TITLE = 'text-[10px] font-semibold tracking-[0.08em] text-ink-1 uppercase'
+const BAR_TITLE = 'text-[11px] font-semibold text-ink-0'
 
 /**
  * A labelled group inside a panel body — the Inspector is built out of these.
@@ -89,8 +113,11 @@ export function Section({
   className,
   collapsible,
   defaultOpen = true,
-  id
+  id,
+  hint
 }: SectionProps): ReactNode {
+  const look = useContext(SectionLook)
+  const bar = look === 'bar'
   const [open, setOpen] = useState(() => (collapsible ? readOpen(id, defaultOpen) : true))
   const bodyId = useId()
   // `openSection(id)` from outside (a field inside is about to be focused).
@@ -104,37 +131,68 @@ export function Section({
     window.addEventListener(OPEN_SECTION_EVENT, onOpen)
     return () => window.removeEventListener(OPEN_SECTION_EVENT, onOpen)
   }, [collapsible, id])
+  const titleClass = bar ? BAR_TITLE : SECTION_TITLE
+  const info = hint ? <Info aria-hidden="true" className="size-3 shrink-0 text-ink-3" /> : null
+  let heading: ReactNode = collapsible ? (
+    <h3 className="min-w-0">
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-controls={bodyId}
+        aria-description={hint}
+        onClick={() => {
+          setOpen(!open)
+          writeOpen(id, !open)
+        }}
+        className={cn('t-fast -mx-1 flex h-5 min-w-0 items-center gap-1 rounded-sm px-1 hover:text-ink-0', titleClass)}
+      >
+        <ChevronRight
+          aria-hidden="true"
+          className={cn(
+            'size-3 shrink-0 transition-[rotate] duration-(--duration-fast)',
+            bar && 'text-ink-2',
+            open && 'rotate-90'
+          )}
+        />
+        <span className="truncate">{title}</span>
+        {info}
+      </button>
+    </h3>
+  ) : (
+    <h3 className={cn('flex min-w-0 items-center gap-1', titleClass)} aria-description={hint}>
+      <span className="truncate">{title}</span>
+      {info}
+    </h3>
+  )
+  if (hint) {
+    heading = (
+      <Tooltip label={title} detail={hint} side="left">
+        <div className="min-w-0">{heading}</div>
+      </Tooltip>
+    )
+  }
+  if (bar) {
+    return (
+      <div className={cn('border-b border-line last:border-b-0', className)}>
+        <div
+          className={cn(
+            'flex h-7 items-center justify-between gap-2 bg-chrome-raised px-3',
+            open && 'border-b border-line'
+          )}
+        >
+          {heading}
+          {actions}
+        </div>
+        <div id={bodyId} hidden={!open} className="px-3 pt-2 pb-3">
+          {children}
+        </div>
+      </div>
+    )
+  }
   return (
     <div className={cn('border-b border-line px-3 py-3 last:border-b-0', className)}>
       <div className={cn('flex h-4 items-center justify-between gap-2', open && 'mb-2')}>
-        {collapsible ? (
-          <h3 className="min-w-0">
-            <button
-              type="button"
-              aria-expanded={open}
-              aria-controls={bodyId}
-              onClick={() => {
-                setOpen(!open)
-                writeOpen(id, !open)
-              }}
-              className={cn(
-                't-fast -mx-1 flex h-5 items-center gap-1 rounded-sm px-1 hover:text-ink-0',
-                SECTION_TITLE
-              )}
-            >
-              <ChevronRight
-                aria-hidden="true"
-                className={cn(
-                  'size-3 shrink-0 transition-[rotate] duration-(--duration-fast)',
-                  open && 'rotate-90'
-                )}
-              />
-              {title}
-            </button>
-          </h3>
-        ) : (
-          <h3 className={SECTION_TITLE}>{title}</h3>
-        )}
+        {heading}
         {actions}
       </div>
       <div id={bodyId} hidden={!open}>
