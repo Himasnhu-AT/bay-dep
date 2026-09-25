@@ -9,7 +9,7 @@ import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { attach, runProbe } from './cdp.mjs'
+import { attach, runProbe, showInspector } from './cdp.mjs'
 
 const run = promisify(execFile)
 const MEDIA = process.env.MEDIA
@@ -29,6 +29,9 @@ await runProbe(async () => {
   const placed = await mcp('place_asset', { assetId: imp.value.assets[0].id, atFrame: 0 })
   const itemId = placed.value.itemId
   await evaluate(`window.bayEngine.store.getState().select([${JSON.stringify(itemId)}])`)
+  // The Grade section is on the Inspector's Color tab, on the Edit page (remembered per machine).
+  const onTab = await showInspector(evaluate, 'color')
+  console.log(`${onTab ? 'ok  ' : 'FAIL'}  the Edit page shows the Inspector's Color tab`)
   await new Promise((r) => setTimeout(r, 500))
   const tree = await ab('snapshot', '-i')
   const hasSection = /Temperature \(K\)/.test(tree) && /Halation/.test(tree) && /LUT/.test(tree)
@@ -47,5 +50,5 @@ await runProbe(async () => {
     console.log('FAIL  no LUT combobox in the tree:\n' + tree.split('\n').filter((l) => /LUT|Grade|Blend/.test(l)).join('\n'))
   }
   close()
-  return hasSection && wrote
+  return onTab && hasSection && wrote
 })

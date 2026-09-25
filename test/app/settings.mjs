@@ -71,7 +71,8 @@ await runProbe(async () => {
     const others = [...installedFiles].filter((f) => !WHISPER_MODELS.some((m) => whisperFileName(m.id) === f))
     const rows = await evaluate(`[...${DIALOG}.querySelectorAll('ul > li')].map((li) => ({
       label: li.querySelector('span.font-medium')?.textContent.trim(),
-      buttons: [...li.querySelectorAll('button')].map((b) => b.getAttribute('aria-label') || b.textContent.trim())
+      buttons: [...li.querySelectorAll('button')].map((b) => b.getAttribute('aria-label') || b.textContent.trim()),
+      automatic: li.textContent.includes('In use · automatic')
     }))`)
     check(`${WHISPER_MODELS.length} catalog rows plus ${others.length} found elsewhere`, rows.length, WHISPER_MODELS.length + others.length)
     // Which of the two row states this machine can exercise. With both, a list that drew every
@@ -82,11 +83,18 @@ await runProbe(async () => {
     for (const [i, spec] of WHISPER_MODELS.entries()) {
       const row = rows[i]
       const installed = installedFiles.has(whisperFileName(spec.id))
-      check(`row ${i + 1} is "${spec.label}" and shows ${installed ? 'Use/Chosen' : 'Download'}`,
+      // The model bay is already using on its own has no "Use" button, by design
+      // (TranscriptionSection: pressing it would only pin the choice bay is already making); its
+      // badge says "In use · automatic" instead. Every other installed row offers Use/Chosen.
+      const automatic = installed && row?.automatic
+      check(`row ${i + 1} is "${spec.label}" and shows ${!installed ? 'Download' : automatic ? 'the In use · automatic badge and no Use' : 'Use/Chosen'}`,
         row, (r) => r?.label === spec.label && (installed
-          ? r.buttons.some((b) => b === 'Use' || b === 'Chosen') && !r.buttons.includes('Download')
-          : r.buttons.includes('Download')))
+          ? !r.buttons.includes('Download') && (r.automatic
+            ? !r.buttons.includes('Use')
+            : r.buttons.some((b) => b === 'Use' || b === 'Chosen'))
+          : r.buttons.includes('Download') && !r.automatic))
     }
+    check('at most one row is "In use · automatic"', rows.filter((r) => r.automatic).length, (n) => n <= 1)
 
     // A switch, clicked in the dialog, then clicked back: store, localStorage and aria-checked.
     const flip = async (label, storeKey, lsKey) => {

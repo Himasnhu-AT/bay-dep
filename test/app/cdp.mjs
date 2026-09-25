@@ -222,7 +222,10 @@ export async function attach(port = Number(process.env.PORT ?? 9222)) {
     let approval = null
     try { approval = localStorage.getItem(${JSON.stringify(APPROVAL_KEY)}) } catch {}
     const leftover = !!window.__bayProbeSnapshot
-    window.__bayProbeSnapshot = { state, approval }
+    // The workspace page and the Inspector/Library tabs are remembered per machine, so they are
+    // put back through their own setters (which write the remembered value), not by setState.
+    const workspace = { page: st.page, inspectorTab: st.inspectorTab, libraryTab: st.libraryTab }
+    window.__bayProbeSnapshot = { state, approval, workspace }
     window.__bayProbePatches = window.__bayProbePatches || []
     return { leftover, fingerprint: ${FINGERPRINT}, project: JSON.stringify(st.project),
              dirty: st.dirty, playhead: st.playhead }
@@ -265,6 +268,23 @@ export async function attach(port = Number(process.env.PORT ?? 9222)) {
   }
 
   return { send: cdp.send, evaluate, close, patch, reloaded, opened }
+}
+
+/**
+ * Shows the Edit page with the Inspector on `tab` ('video' | 'audio' | 'effects' | 'color' | …).
+ *
+ * The Inspector is tabbed and the workspace page is remembered per machine, so a probe that
+ * reads an Inspector section must ask for the page and tab it reads rather than assume the app
+ * was left on them. `attach()` records both, and the restore puts them back.
+ */
+export async function showInspector(evaluate, tab) {
+  return evaluate(`(async () => {
+    const st = window.bayEngine.store
+    if (st.getState().page !== 'edit') st.getState().setPage('edit')
+    st.getState().setInspectorTab(${JSON.stringify(tab)})
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
+    return st.getState().page === 'edit' && st.getState().inspectorTab === ${JSON.stringify(tab)}
+  })()`)
 }
 
 /** What a restore is checked against: identity-free, so it also works after a JSON fallback. */
@@ -320,6 +340,13 @@ async function restoreSession() {
       const { playing, ...rest } = snap.state
       store.setState(rest)
       if (playing) store.getState().setPlaying(true)
+      const ws = snap.workspace
+      if (ws) {
+        const now = store.getState()
+        if (ws.page && now.page !== ws.page) now.setPage(ws.page)
+        if (ws.inspectorTab && store.getState().inspectorTab !== ws.inspectorTab) store.getState().setInspectorTab(ws.inspectorTab)
+        if (ws.libraryTab && store.getState().libraryTab !== ws.libraryTab) store.getState().setLibraryTab(ws.libraryTab)
+      }
       try {
         if (snap.approval === null) localStorage.removeItem(${JSON.stringify(APPROVAL_KEY)})
         else localStorage.setItem(${JSON.stringify(APPROVAL_KEY)}, snap.approval)

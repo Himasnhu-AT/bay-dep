@@ -15,10 +15,10 @@
  *    and produces a blur appearing on clips nobody blurred.
  */
 
-import { attach, runProbe, PreconditionError, ProbeFailure } from './cdp.mjs'
+import { attach, runProbe, PreconditionError, ProbeFailure, showInspector } from './cdp.mjs'
 
-const CLIP = `${process.cwd()}/assets/podcast-cut/output/goodall-transcript-cut.mp4`
-const BED = `${process.cwd()}/assets/round2/bed_pad_c3.wav`
+const CLIP = process.env.CLIP ?? `${process.cwd()}/assets/podcast-cut/output/goodall-transcript-cut.mp4`
+const BED = process.env.BED ?? `${process.cwd()}/assets/round2/bed_pad_c3.wav`
 const { evaluate, close } = await attach()
 
 let checks = 0
@@ -84,6 +84,9 @@ const assetId = imported.assets[0].id
 const one = await mcp('place_asset', { assetId, atFrame: 0 })
 await mcp('edit_item', { itemId: one.itemId, durationInFrames: 120 })
 await select([one.itemId])
+// The Inspector is tabbed: Adjustments live on its Effects tab, Transform and Composite (blend)
+// on Video. Each section is read on its own tab.
+check('the Inspector shows its Effects tab for the clip', await showInspector(evaluate, 'effects'), true)
 
 // -- the section exists and is called Adjustments, not Colour ---------------
 const heading = await waitFor(`(() => {
@@ -92,14 +95,14 @@ const heading = await waitFor(`(() => {
 })()`)
 check('the panel has an Adjustments section', heading !== null, true)
 check('the sliders are present', await evaluate(`
-  ['Brightness','Contrast','Saturation','Hue','Blur','Greyscale','Sepia','Invert']
+  ['Brightness','Contrast','Saturate','Hue','Blur','Greyscale','Sepia','Invert']
     .every((label) => [...document.querySelectorAll('[aria-label]')].some((el) => el.getAttribute('aria-label') === label))
 `), true)
 // An aria-label is not a caption. All eight shipped as bare tracks with the name only in
 // `aria-label` — the check above passed while a sighted person saw eight identical lines. So
 // the name must be *rendered* in the slider's own row, as text a person can read.
 const uncaptioned = await evaluate(`
-  ['Brightness','Contrast','Saturation','Hue','Blur','Greyscale','Sepia','Invert'].filter((label) => {
+  ['Brightness','Contrast','Saturate','Hue','Blur','Greyscale','Sepia','Invert'].filter((label) => {
     const el = [...document.querySelectorAll('[role=slider]')].find((e) => e.getAttribute('aria-label') === label)
     let row = el?.parentElement
     while (row && !row.className.includes('grid-cols-')) row = row.parentElement
@@ -107,8 +110,10 @@ const uncaptioned = await evaluate(`
   })
 `)
 check('every Adjustments slider shows its name beside it, not only in aria-label', uncaptioned, (list) => list.length === 0)
+check('the Inspector shows its Video tab', await showInspector(evaluate, 'video'), true)
 check('the Transform section is shown for a video clip (the positive control for audio below)',
   await evaluate(`[...document.querySelectorAll('h3')].some((h) => h.textContent.trim().toLowerCase() === 'transform')`), true)
+check('back on the Effects tab', await showInspector(evaluate, 'effects'), true)
 
 // -- a slider move reaches the store --------------------------------------
 const moveSlider = (label, value) =>
@@ -155,12 +160,13 @@ check(
   (t) => /contrast\(0\.5\) grayscale\(1\) blur\(4px\)/.test(t)
 )
 // -- blend mode: disabled on the bottom track, with the reason ------------
+check('the Inspector shows its Video tab, where Composite lives', await showInspector(evaluate, 'video'), true)
 const blendDisabled = await waitFor(`(() => {
   const el = [...document.querySelectorAll('select[aria-label="Blend mode"]')][0]
   return el ? el.disabled : null
 })()`)
 check('blend mode is disabled on the lowest video track', blendDisabled, true)
-const blendText = await sectionText('Blend')
+const blendText = await sectionText('Composite')
 check(
   'and the reason is on screen rather than left to be guessed',
   blendText,
@@ -191,7 +197,9 @@ const freeFrame = await evaluate(`(() => {
 const clean = await mcp('place_asset', { assetId, atFrame: freeFrame, trackId: upper })
 await mcp('edit_item', { itemId: clean.itemId, from: freeFrame, durationInFrames: 120 })
 await select([above.itemId, clean.itemId])
-check('the Saturation slider is reachable with two clips selected', await moveSlider('Saturation', 3), true)
+check('the Inspector shows its Effects tab for the two clips', await showInspector(evaluate, 'effects'), true)
+// "Saturate", not "Saturation" since 326f50d: the Grade has a saturation of its own.
+check('the Saturate slider is reachable with two clips selected', await moveSlider('Saturate', 3), true)
 const leaked = await waitFor(`(() => {
   const tl = window.bayEngine.store.getState().project.timelines[0]
   const item = tl.tracks.flatMap((t) => t.items).find((i) => i.id === ${JSON.stringify(clean.itemId)})
@@ -214,17 +222,26 @@ const audioTrack = await evaluate(`(() => {
   const a = tl.tracks.filter((t) => t.kind === 'audio'); return a[a.length - 1].id })()`)
 const sound = await mcp('place_asset', { assetId: bed.assets[0].id, atFrame: 0, trackId: audioTrack })
 await select([sound.itemId])
+// Asked for on the Effects tab, where Adjustments would be if an audio clip were offered them —
+// on any other tab their absence would prove nothing.
+await showInspector(evaluate, 'effects')
 await new Promise((resolve) => setTimeout(resolve, 400))
 check('an audio-only clip is offered no Adjustments — there is nothing to filter', await evaluate(`
   [...document.querySelectorAll('[aria-label]')].some((el) => el.getAttribute('aria-label') === 'Brightness')
 `), false)
-check('POSITIVE CONTROL: the inspector is showing that clip, not empty', await evaluate(`
-  document.body.textContent.includes('Audio & speed')
+check('POSITIVE CONTROL: the Effects tab is drawn for that clip — its sound empty state, not a blank panel', await evaluate(`
+  document.body.textContent.includes('No effects for sound')
+`), true)
+check('POSITIVE CONTROL: the Audio tab shows that clip\'s Audio section', await showInspector(evaluate, 'audio') && await evaluate(`
+  [...document.querySelectorAll('h3')].some((h) => h.textContent.trim().toLowerCase() === 'audio')
 `), true)
 // X/Y/W/H/Rotate/Opacity move nothing anyone can see on a music bed.
 check('an audio-only clip is offered no Transform section either', await evaluate(`
   [...document.querySelectorAll('h3')].some((h) => h.textContent.trim().toLowerCase() === 'transform')
 `), false)
+check('and its Video tab is disabled, so Transform is not merely on another tab', await evaluate(`
+  document.querySelector('[role=tab][aria-label="Video"]')?.disabled ?? null
+`), true)
 
 console.log(`\n${checks}/${checks} checks passed`)
 close()
