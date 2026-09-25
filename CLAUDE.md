@@ -119,7 +119,7 @@ something saves, and nothing a probe does should.
   `--strict-mcp-config` isolates the agent to bay's tools.
 - An allow-list governs what needs approval, not what exists: with one alone, `Bash` ran `id`.
 - `--tools ListMcpResourcesTool,ReadMcpResourceTool,Skill` makes every other built-in *absent* —
-  the session's tool list is bay's catalog (33 tools as of this writing) plus those three, and a request to run `id` had nothing to
+  the session's tool list is bay's catalog (56 tools as of this writing — `src/shared/tools/index.ts` is the count) plus those three, and a request to run `id` had nothing to
   run it with. MCP tools are not built-ins, so bay's are unaffected. `--allowedTools` narrows
   `Skill` to `Skill(<slug>)` for bay's own skills, never the bare name, which would permit every
   bundled skill (`cli.test.ts` pins both).
