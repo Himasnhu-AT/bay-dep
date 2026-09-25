@@ -46,7 +46,7 @@
 import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import type { Options, SDKMessage } from '@anthropic-ai/claude-agent-sdk'
+import type { Options, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
 import type { AgentEvent } from '@shared/agent'
 import {
   allowedToolNames,
@@ -54,13 +54,27 @@ import {
   BUILT_IN_TOOLS,
   TURN_TIMEOUT_MS,
   type CliOptions,
-  childEnv
+  childEnv,
+  userContent
 } from './cli'
 import type { HostedAgentRuntime } from './runtime'
 import { newStreamState, toAgentEvents } from './stream'
 
 /** The SDK's `query`, narrowed to the part bay uses. Injected in tests. */
-export type QueryFn = (params: { prompt: string; options?: Options }) => AsyncIterable<SDKMessage>
+export type QueryFn = (params: { prompt: string | AsyncIterable<SDKUserMessage>; options?: Options }) => AsyncIterable<SDKMessage>
+
+/**
+ * A turn's prompt: the plain string when nothing is attached — the path every turn took before
+ * attachments, left as it was — and otherwise the SDK's streaming input, one user message whose
+ * content is the same blocks the CLI runtime writes (`userContent`), images inline as base64.
+ */
+export async function* promptWithImages(text: string, images: readonly string[]): AsyncGenerator<SDKUserMessage> {
+  yield {
+    type: 'user',
+    message: { role: 'user', content: userContent(text, images) },
+    parent_tool_use_id: null
+  }
+}
 
 export interface SdkOptions extends Omit<CliOptions, 'binary'> {
   /**
@@ -220,7 +234,7 @@ export class SdkAgentRuntime implements HostedAgentRuntime {
   }
 
   /** Send one message. Events arrive through `onEvent`; `started` is emitted first. */
-  send(text: string): string {
+  send(text: string, images: readonly string[] = []): string {
     // A turn still running is abandoned rather than raced: two queries resuming one session at
     // once would each append to the same transcript.
     if (this.#runId) this.#interrupt('Interrupted by a new message.')
@@ -237,17 +251,17 @@ export class SdkAgentRuntime implements HostedAgentRuntime {
       abort.abort()
     }, timeout)
 
-    void this.#run(runId, text, abort)
+    void this.#run(runId, text, images, abort)
     return runId
   }
 
-  async #run(runId: string, text: string, abort: AbortController): Promise<void> {
+  async #run(runId: string, text: string, images: readonly string[], abort: AbortController): Promise<void> {
     try {
       const query = this.#options.query ?? (await import('@anthropic-ai/claude-agent-sdk')).query
       if (runId !== this.#runId) return
       const stream = newStreamState()
       const messages = query({
-        prompt: text,
+        prompt: images.length > 0 ? promptWithImages(text, images) : text,
         options: sdkOptions(this.#options, { resume: this.#sessionId, abortController: abort })
       })
       for await (const message of messages) {

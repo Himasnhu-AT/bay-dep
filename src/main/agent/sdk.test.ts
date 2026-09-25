@@ -15,7 +15,10 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import type { Options, SDKMessage } from '@anthropic-ai/claude-agent-sdk'
+import type { Options, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
+import { mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { AgentEvent } from '@shared/agent'
 import { TOOLS } from '@shared/mcp'
 import { allowedToolNames, BUILT_IN_TOOLS, cliArgs } from './cli'
@@ -198,7 +201,7 @@ const success = (sessionId: string): SDKMessage =>
   ({ type: 'result', subtype: 'success', is_error: false, result: 'ok', session_id: sessionId }) as unknown as SDKMessage
 
 interface Call {
-  prompt: string
+  prompt: Parameters<QueryFn>[0]['prompt']
   options: Options | undefined
 }
 
@@ -393,4 +396,35 @@ test('dispose aborts and silences the runtime', { timeout: 5000 }, async () => {
   await new Promise((r) => setTimeout(r, 20))
   assert.equal(calls[0]?.options?.abortController?.signal.aborted, true)
   assert.equal(events.length, before, 'no event after dispose')
+})
+
+test('a turn with images is one streamed user message carrying them; a turn without stays a string', { timeout: 5000 }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bay-sdk-images-'))
+  const image = join(dir, 'sheet.jpg')
+  writeFileSync(image, Buffer.from([0xff, 0xd8, 0xff, 1, 2]))
+  const { calls, query } = scripted([
+    () => play(init(SESSION), success(SESSION)),
+    () => play(init(SESSION), success(SESSION))
+  ])
+  const runtime = new SdkAgentRuntime({ ...BASE, query })
+  const { dones } = collect(runtime)
+  runtime.send('what is in this video?', [image])
+  await dones(1)
+  runtime.send('and now?')
+  await dones(2)
+
+  const first = calls[0]?.prompt
+  assert.ok(first && typeof first !== 'string', 'an attached image must use the streaming input')
+  const messages: SDKUserMessage[] = []
+  for await (const message of first) messages.push(message)
+  assert.equal(messages.length, 1)
+  assert.equal(messages[0]?.type, 'user')
+  assert.deepEqual(messages[0]?.message, {
+    role: 'user',
+    content: [
+      { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: Buffer.from([0xff, 0xd8, 0xff, 1, 2]).toString('base64') } },
+      { type: 'text', text: 'what is in this video?' }
+    ]
+  })
+  assert.equal(calls[1]?.prompt, 'and now?')
 })

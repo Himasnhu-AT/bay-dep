@@ -10,6 +10,7 @@
 
 import type { Asset, Project } from './project'
 import type { AgentEntry, AgentEvent, AgentProvider, AgentProviderStatus } from './agent'
+import type { AgentAttachmentInput } from './agent-attachments'
 import type { TranscriptSegment } from './transcribe'
 import type { BeatGrid } from './beats'
 import type { WhisperDownload, WhisperStatus } from './whisper'
@@ -539,7 +540,12 @@ export interface BayApi {
     start(options?: { provider?: AgentProvider }): Promise<{ ok: true; id: string } | { ok: false; error: string }>
     /** Which providers' CLIs this machine has, and what each still needs before it can start. */
     providers(): Promise<AgentProviderStatus[]>
-    send(text: string): Promise<{ ok: boolean; error?: string }>
+    /**
+     * One message. `attachments` — images and video the user added — cross as bytes or as a
+     * project asset; main checks them (`validateAttachments`) and writes what the model sees into
+     * its own folder. A message whose attachments are refused is not sent.
+     */
+    send(text: string, attachments?: AgentAttachmentInput[]): Promise<{ ok: boolean; error?: string }>
     /** Abandon the running turn. Safe when nothing is running. */
     stop(): Promise<void>
     dispose(): Promise<void>

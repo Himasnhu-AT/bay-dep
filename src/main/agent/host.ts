@@ -23,6 +23,10 @@ import { agentSystemPrompt } from './prompt'
 import { providerOf, RUNTIME_ENV, runtimeFor, type HostedAgentRuntime } from './runtime'
 import { bundledExecutable, SdkAgentRuntime } from './sdk'
 import { installSkills } from './skills'
+import { ATTACHMENTS_FOLDER, prepareAttachments, sweepAttachments, withAttachmentNotes } from './attachments'
+import { validateAttachments } from '@shared/agent-attachments'
+import { ffmpegBin, ffprobeBin } from '../ffmpeg/ffmpeg'
+import { isAllowed } from '../protocol'
 
 let runtime: HostedAgentRuntime | null = null
 /** Which provider `runtime` is — so a start asking for the other one replaces it. */
@@ -147,10 +151,43 @@ export async function startAgent(
   return { ok: true, id: created.id }
 }
 
-export function sendToAgent(text: string): { ok: boolean; error?: string } {
+/** `<userData>/agent-attachments` — bay's own folder, the only place attached files are read from. */
+function attachmentsRoot(): string {
+  return join(app.getPath('userData'), ATTACHMENTS_FOLDER)
+}
+
+/** At startup: attachments left by a conversation that never reached `dispose` (a crash, a kill). */
+export function sweepAgentAttachments(): void {
+  sweepAttachments(attachmentsRoot())
+}
+
+/**
+ * One user message, with what they attached. `attachments` arrive from the renderer unchecked —
+ * validated here (count, size, type), written into bay's own folder, and only those files handed
+ * to the runtime. A message whose attachments cannot all be prepared is not sent at all.
+ */
+export async function sendToAgent(text: string, attachments?: unknown): Promise<{ ok: boolean; error?: string }> {
   if (!runtime) return { ok: false, error: 'No agent conversation is running. Start one first.' }
+  const checked = validateAttachments(attachments)
+  if (!checked.ok) return { ok: false, error: checked.error }
+  let images: string[] = []
+  let message = text
+  if (checked.attachments.length > 0) {
+    let tools: { ffmpeg: string; ffprobe: string }
+    try {
+      tools = { ffmpeg: ffmpegBin(), ffprobe: ffprobeBin() }
+    } catch (error) {
+      return { ok: false, error: `Attachments need ffmpeg, which bay could not find: ${(error as Error).message}` }
+    }
+    const prepared = await prepareAttachments(checked.attachments, { root: attachmentsRoot(), tools, isAllowed })
+    if (!prepared.ok) return prepared
+    images = prepared.attachments.map((a) => a.path)
+    message = withAttachmentNotes(text, prepared.attachments)
+  }
+  // Preparing takes a moment; the conversation may have been disposed or replaced meanwhile.
+  if (!runtime) return { ok: false, error: 'The conversation ended before the message could be sent.' }
   try {
-    runtime.send(text)
+    runtime.send(message, images)
     return { ok: true }
   } catch (error) {
     return { ok: false, error: (error as Error).message }
@@ -170,6 +207,8 @@ export function disposeAgent(): void {
   offEvents = null
   runtime?.dispose()
   runtime = null
+  // What the user attached belongs to the conversation, and goes with it.
+  sweepAttachments(attachmentsRoot())
 }
 
 /**

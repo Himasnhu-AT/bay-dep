@@ -34,6 +34,7 @@
 
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { setPriority } from 'node:os'
 import type { AgentEvent } from '@shared/agent'
 import { TOOLS } from '@shared/mcp'
@@ -204,6 +205,38 @@ export function cliArgs(options: CliOptions, sessionId: string, resume = false):
   ]
 }
 
+/** What an attached image file is, by the extension bay gave it (`agent/attachments.ts`). */
+export function imageMediaType(path: string): 'image/png' | 'image/jpeg' {
+  return /\.png$/i.test(path) ? 'image/png' : 'image/jpeg'
+}
+
+export type UserContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'image'; source: { type: 'base64'; media_type: 'image/png' | 'image/jpeg'; data: string } }
+
+/**
+ * One user turn as Messages API content blocks: each attached image inline as base64, then the
+ * text. Images first, the order the model reads best. Shared by both Claude runtimes; `read` is
+ * injected in tests.
+ *
+ * Measured with claude 2.1.281 over `--input-format stream-json`: a 64×64 solid #1E90FF PNG sent
+ * this way with "What colour is this image? Answer with one word." answered "Blue", and a solid
+ * #22AA22 one "Green." — the picture reached the model, rather than a guess.
+ */
+export function userContent(
+  text: string,
+  images: readonly string[] = [],
+  read: (path: string) => Buffer = (path) => readFileSync(path)
+): UserContentBlock[] {
+  return [
+    ...images.map((path) => ({
+      type: 'image' as const,
+      source: { type: 'base64' as const, media_type: imageMediaType(path), data: read(path).toString('base64') }
+    })),
+    { type: 'text' as const, text }
+  ]
+}
+
 /**
  * One conversation, backed by one long-lived `claude` process.
  *
@@ -318,8 +351,11 @@ export class CliAgentRuntime implements HostedAgentRuntime {
     if (runId) this.#emit({ type: 'done', runId, reason: 'error', message })
   }
 
-  /** Send one message. Events arrive through `onEvent`; `started` is emitted first. */
-  send(text: string): string {
+  /**
+   * Send one message. Events arrive through `onEvent`; `started` is emitted first. `images` are
+   * files bay wrote into its own attachments folder, sent inline.
+   */
+  send(text: string, images: readonly string[] = []): string {
     const runId = randomUUID()
     this.#runId = runId
     this.#stream = newStreamState()
@@ -338,12 +374,14 @@ export class CliAgentRuntime implements HostedAgentRuntime {
       TURN_TIMEOUT_MS
     )
 
-    child.stdin.write(
-      `${JSON.stringify({
-        type: 'user',
-        message: { role: 'user', content: [{ type: 'text', text }] }
-      })}\n`
-    )
+    let content: UserContentBlock[]
+    try {
+      content = userContent(text, images)
+    } catch (error) {
+      this.#fail(`An attachment could not be read: ${(error as Error).message}`)
+      return runId
+    }
+    child.stdin.write(`${JSON.stringify({ type: 'user', message: { role: 'user', content } })}\n`)
     return runId
   }
 

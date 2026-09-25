@@ -184,7 +184,7 @@ function windowOf(event: IpcMainInvokeEvent): BrowserWindow | null {
 const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
   agentStart: async (_event, options) => startAgent(options),
   agentProviders: async () => agentProviders(),
-  agentSend: async (_event, text) => sendToAgent(text),
+  agentSend: async (_event, text, attachments) => sendToAgent(text, attachments),
   agentStop: async () => stopAgent(),
   agentDispose: async () => disposeAgent(),
   agentExportTranscript: (_event, projectName, log) => exportTranscript(projectName, log),

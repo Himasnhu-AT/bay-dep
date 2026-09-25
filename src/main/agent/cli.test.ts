@@ -11,7 +11,10 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { allowedToolNames, BUILT_IN_TOOLS, cliArgs, killTree, mcpConfig, TURN_TIMEOUT_MS } from './cli'
+import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { allowedToolNames, BUILT_IN_TOOLS, cliArgs, CliAgentRuntime, killTree, mcpConfig, TURN_TIMEOUT_MS, userContent } from './cli'
 import { TOOLS } from '@shared/mcp'
 import { BAY_SKILLS } from '@shared/skills'
 
@@ -151,4 +154,45 @@ test('a turn outlasts the slowest tool call, with room for the model around it',
   const slowest = Math.max(...TOOLS.map((tool) => tool.timeoutMs ?? 0))
   assert.ok(slowest > 10 * 60 * 1000, 'specimen: some tool is allowed longer than the old 10-minute turn')
   assert.ok(TURN_TIMEOUT_MS >= slowest + 5 * 60 * 1000, `turn ${TURN_TIMEOUT_MS} ms vs tool ${slowest} ms`)
+})
+
+test('an attached image goes to Claude inline, as base64 content before the text', () => {
+  const files: Record<string, Buffer> = { '/att/t/a.png': Buffer.from('png-bytes'), '/att/t/sheet-1.jpg': Buffer.from('jpg-bytes') }
+  const content = userContent('what colour?', ['/att/t/a.png', '/att/t/sheet-1.jpg'], (path) => {
+    const bytes = files[path]
+    assert.ok(bytes, `read ${path}, which was not attached`)
+    return bytes
+  })
+  assert.deepEqual(content, [
+    { type: 'image', source: { type: 'base64', media_type: 'image/png', data: Buffer.from('png-bytes').toString('base64') } },
+    { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: Buffer.from('jpg-bytes').toString('base64') } },
+    { type: 'text', text: 'what colour?' }
+  ])
+  // Nothing attached is the one text block every turn sent before attachments existed.
+  assert.deepEqual(userContent('hi'), [{ type: 'text', text: 'hi' }])
+})
+
+test('the CLI runtime writes the image blocks into the stream-json turn on stdin', { skip: process.platform === 'win32', timeout: 10_000 }, async () => {
+  // A stand-in `claude` that copies its stdin to a file: what bay wrote is what the CLI would read.
+  const dir = mkdtempSync(join(tmpdir(), 'bay-cli-stdin-'))
+  const captured = join(dir, 'stdin.jsonl')
+  const binary = join(dir, 'claude')
+  writeFileSync(binary, `#!/bin/sh\ncat > "${captured}"\n`)
+  chmodSync(binary, 0o755)
+  const image = join(dir, 'a.png')
+  writeFileSync(image, Buffer.from([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]))
+  const runtime = new CliAgentRuntime({ ...OPTIONS, cwd: dir, binary })
+  runtime.send('what colour is this?', [image])
+  let line = ''
+  for (let i = 0; i < 100 && !line; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    line = existsSync(captured) ? readFileSync(captured, 'utf8').split('\n')[0] ?? '' : ''
+  }
+  runtime.dispose()
+  const message = JSON.parse(line) as { type: string; message: { role: string; content: unknown[] } }
+  assert.equal(message.type, 'user')
+  assert.deepEqual(message.message.content, [
+    { type: 'image', source: { type: 'base64', media_type: 'image/png', data: readFileSync(image).toString('base64') } },
+    { type: 'text', text: 'what colour is this?' }
+  ])
 })
