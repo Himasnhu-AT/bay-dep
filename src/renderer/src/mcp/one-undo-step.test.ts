@@ -366,7 +366,9 @@ const TOOL_EXEMPT: Record<string, string> = {
   generate_video: 'starts a job in main and never edits the project; generation.test.ts asserts past is untouched',
   generate_speech: 'starts a job in main and never edits the project; generation-speech.test.ts asserts past is untouched',
   track_generation:
-    'reads a job from main before it imports; generation.test.ts asserts import and place are one undo step'
+    'reads a job from main before it imports; generation.test.ts asserts import and place are one undo step',
+  apply_dub: 'starts jobs in main and never edits the project; dub.test.ts asserts past is untouched',
+  track_dub: 'reads jobs from main before it imports; dub.test.ts asserts placement and ducking are one undo step'
 }
 
 test('every write tool in the catalog has an undo-step case or a stated exemption', () => {
@@ -766,6 +768,7 @@ const STORE_EXEMPT: Record<string, string> = {
   enterProject: 'opens a project: setProject plus the screen, so it resets history by design',
   revertAgentChange: 'restores a saved state as one undo step; agent-changes.test.ts covers it',
   placeSubtitles: 'needs a source clip and a composition asset; add-subtitles.test.ts covers it as one step',
+  placeDub: 'needs generated line assets and a source clip; dub.test.ts covers it as one step',
   undo: 'moves an entry from past to future',
   redo: 'moves an entry from future to past',
   transact: 'is the grouping mechanism itself; editor.test.ts covers it',

@@ -9,6 +9,7 @@ import { tool as addSubtitles } from './add-subtitles'
 import { tool as addTemplate } from './add-template'
 import { tool as addTrack } from './add-track'
 import { tool as addTransition } from './add-transition'
+import { tool as applyDub } from './apply-dub'
 import { tool as applyScript } from './apply-script'
 import { tool as browseAssets } from './browse-assets'
 import { tool as deleteItems } from './delete-items'
@@ -32,6 +33,7 @@ import { tool as listProjects } from './list-projects'
 import { tool as markHighlights } from './mark-highlights'
 import { tool as openProject } from './open-project'
 import { tool as placeAsset } from './place-asset'
+import { tool as planDub } from './plan-dub'
 import { tool as previewFrame } from './preview-frame'
 import { tool as proposeEdit } from './propose-edit'
 import { tool as readBrf } from './read-brf'
@@ -46,6 +48,7 @@ import { tool as resolveFeedback } from './resolve-feedback'
 import { tool as setCanvas } from './set-canvas'
 import { tool as setPlayhead } from './set-playhead'
 import { tool as splitAt } from './split-at'
+import { tool as trackDub } from './track-dub'
 import { tool as trackExport } from './track-export'
 import { tool as trackGeneration } from './track-generation'
 import { tool as transcribe } from './transcribe'
@@ -106,5 +109,8 @@ export const TOOLS: ToolSpec[] = [
   generateVideo,
   generateSpeech,
   estimateSpeech,
+  planDub,
+  applyDub,
+  trackDub,
   trackGeneration,
 ]

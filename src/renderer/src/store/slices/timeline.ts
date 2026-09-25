@@ -6,8 +6,9 @@
 import { CANVAS_PRESETS, checkCanvasSize, activeTimeline, allItems, placementLayout, coverLayout, containLayout, defaultLayout, findAsset, findItem, itemEnd, type Asset, type Item, type Project, type Transition, retimeTimeline } from '@shared/project'
 import { captionAssetName, captionLayout, captionStyle, checkCues } from '@shared/captions'
 import { applyScriptOps } from '@shared/script'
+import { linkedPartners } from '@shared/links'
 import { clone, makeTrack, newId, nextMarkerName } from '../factory'
-import type { EditorActions } from '../types'
+import type { DubPlaced, EditorActions } from '../types'
 import type { StoreKit } from '../kit'
 
 type Actions = Pick<
@@ -19,6 +20,7 @@ type Actions = Pick<
   | 'applyScript'
   | 'patchTransition'
   | 'placeSubtitles'
+  | 'placeDub'
   | 'resizeCanvas'
   | 'setBackground'
   | 'addCaptions'
@@ -184,6 +186,88 @@ export function timelineSlice({ set, get, edit, editTimeline, currentTimeline }:
         })
       })
       return { itemId, trackName, replaced }
+    },
+
+    placeDub(spec) {
+      const timeline = currentTimeline()
+      if (!timeline) return { error: 'No timeline is open.' }
+      const existing = timeline.tracks.find((t) => t.kind === 'audio' && t.name === spec.trackName)
+      if (existing?.locked) return { error: `The track "${spec.trackName}" is locked. Unlock it, then place the dub again.` }
+      const itemIds = spec.clips.map(() => newId('itm'))
+      const placed: DubPlaced = {
+        trackId: existing?.id ?? '',
+        trackName: spec.trackName,
+        itemIds,
+        replaced: 0,
+        ducked: [],
+        muted: [],
+        lockedOriginals: []
+      }
+      edit((project) => {
+        const tl = activeTimeline(project)
+        if (!tl) return
+        for (const clip of spec.clips) {
+          if (!project.assets.some((a) => a.id === clip.asset.id)) project.assets.push(clone(clip.asset))
+        }
+        let track = tl.tracks.find((t) => t.kind === 'audio' && t.name === spec.trackName)
+        if (!track) {
+          track = makeTrack('audio', tl.tracks.filter((t) => t.kind === 'audio').length + 1)
+          track.name = spec.trackName
+          tl.tracks.push(track)
+        }
+        placed.trackId = track.id
+        const before = track.items.length
+        track.items = track.items.filter(
+          (item) => !spec.clips.some((clip) => item.from < clip.from + clip.durationInFrames && itemEnd(item) > clip.from)
+        )
+        placed.replaced = before - track.items.length
+        for (const [i, clip] of spec.clips.entries()) {
+          track.items.push({
+            id: itemIds[i]!,
+            assetId: clip.asset.id,
+            trackId: track.id,
+            from: clip.from,
+            durationInFrames: clip.durationInFrames,
+            sourceStartUs: 0,
+            layout: defaultLayout(tl),
+            volume: 1,
+            fadeInFrames: 0,
+            fadeOutFrames: 0,
+            speed: clip.speed
+          })
+        }
+        track.items.sort((a, b) => a.from - b.from)
+        if (spec.original.mode === 'keep') return
+        // The sound of each original clip: its own, or the audio item it was detached onto.
+        const sounding = new Map<string, Item>()
+        for (const id of spec.original.itemIds) {
+          const item = allItems(tl).find((candidate) => candidate.id === id)
+          if (!item) continue
+          const sources = item.audioDetached ? linkedPartners(tl, item.id).filter((p) => !p.audioDetached) : [item]
+          for (const source of sources) sounding.set(source.id, source)
+        }
+        const locked = new Set(tl.tracks.filter((t) => t.locked).map((t) => t.id))
+        for (const item of sounding.values()) {
+          if (item.trackId === track.id) continue
+          if (locked.has(item.trackId)) {
+            placed.lockedOriginals.push(item.id)
+            continue
+          }
+          if (spec.original.mode === 'mute') {
+            item.volume = 0
+            placed.muted.push(item.id)
+          } else {
+            item.duck = {
+              keyTrackId: track.id,
+              amountDb: spec.original.amountDb,
+              attackFrames: Math.round(tl.fps * 0.25),
+              releaseFrames: Math.round(tl.fps * 0.5)
+            }
+            placed.ducked.push(item.id)
+          }
+        }
+      })
+      return placed
     },
 
     resizeCanvas(width, height, fit) {
