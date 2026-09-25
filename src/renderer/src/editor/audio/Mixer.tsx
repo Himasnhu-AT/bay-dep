@@ -1,5 +1,7 @@
 import { useMemo, type ReactNode } from 'react'
 import { Headphones, VolumeX } from 'lucide-react'
+import { dbToGain, formatDb, formatPan, gainToDb, MAX_VOLUME_DB, VOLUME_DB_FLOOR } from '@shared/inspector'
+import { Slider } from '@/components'
 import { cn } from '@/lib/cn'
 import { selectTimeline, useEditor } from '@/store/editor'
 import { useExportSession } from '../export-session'
@@ -75,6 +77,7 @@ function ChannelStrip({ channel }: { channel: MixerChannel }): ReactNode {
       <div className="flex min-h-0 flex-1 flex-col items-center">
         <AudioMeter orientation="vertical" trackId={track.id} label={`${track.name} level`} readout />
       </div>
+      <TrackFader trackId={track.id} name={track.name} volume={track.volume ?? 1} pan={track.pan ?? 0} />
       <div className="grid grid-cols-2 gap-1">
         <button
           type="button"
@@ -104,6 +107,43 @@ function ChannelStrip({ channel }: { channel: MixerChannel }): ReactNode {
         </button>
       </div>
       <p className="h-6 text-center text-[9px] leading-tight text-pretty text-ink-2">{state ?? `${channel.soundingClips} ${channel.soundingClips === 1 ? 'clip' : 'clips'}`}</p>
+    </div>
+  )
+}
+
+/**
+ * The track's fader and pan: `track.volume` and `track.pan`, applied after each clip's own by the
+ * one gain function preview and export share (`itemAudioGainAt`, `routedPanGains`). Each commits
+ * once at the end of a drag, so a move is one undo step; double-click puts it back to 0 dB/centre.
+ */
+function TrackFader({ trackId, name, volume, pan }: { trackId: string; name: string; volume: number; pan: number }): ReactNode {
+  const patchTrack = useEditor((state) => state.patchTrack)
+  const db = gainToDb(volume)
+  const shownDb = Number.isFinite(db) ? Math.max(VOLUME_DB_FLOOR, db) : VOLUME_DB_FLOOR
+  return (
+    <div className="flex flex-col gap-1">
+      <div title="Track volume. Double-click for 0 dB." onDoubleClick={() => patchTrack(trackId, { volume: 1 })}>
+        <div className="flex items-baseline justify-between text-[9px] text-ink-2">
+          <span>Vol</span>
+          <span className="font-mono text-ink-1 tabular-nums">{formatDb(shownDb)}</span>
+        </div>
+        <Slider
+          label={`${name} volume in decibels`}
+          min={VOLUME_DB_FLOOR}
+          max={Number(MAX_VOLUME_DB.toFixed(2))}
+          step={0.5}
+          origin={0}
+          value={shownDb}
+          onCommit={(next) => patchTrack(trackId, { volume: dbToGain(next) })}
+        />
+      </div>
+      <div title="Track pan. Double-click to centre." onDoubleClick={() => patchTrack(trackId, { pan: 0 })}>
+        <div className="flex items-baseline justify-between text-[9px] text-ink-2">
+          <span>Pan</span>
+          <span className="font-mono text-ink-1 tabular-nums">{formatPan(pan)}</span>
+        </div>
+        <Slider label={`${name} pan, left to right`} min={-1} max={1} step={0.01} bipolar value={pan} onCommit={(next) => patchTrack(trackId, { pan: next })} />
+      </div>
     </div>
   )
 }

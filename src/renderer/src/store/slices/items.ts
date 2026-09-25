@@ -660,6 +660,18 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
         Object.assign(track, patch)
         // Not soloed is stored as absence, so a project that tried solo saves as one that never did.
         if (track.solo === false) delete track.solo
+        // The fader and pan the same way: unity and centre are absence. Clamped to what the mixer
+        // offers, and a non-finite value is the default rather than a NaN in the file.
+        if (track.volume !== undefined) {
+          const volume = Number.isFinite(track.volume) ? Math.max(0, Math.min(2, track.volume)) : 1
+          if (volume === 1) delete track.volume
+          else track.volume = volume
+        }
+        if (track.pan !== undefined) {
+          const pan = Number.isFinite(track.pan) ? Math.max(-1, Math.min(1, track.pan)) : 0
+          if (pan === 0) delete track.pan
+          else track.pan = pan
+        }
       })
     }
   }

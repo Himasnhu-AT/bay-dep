@@ -609,6 +609,17 @@ export interface Track {
    * through `trackAudible`, never directly, or preview and export will disagree about it.
    */
   solo?: boolean
+  /**
+   * The track's fader: a linear gain on every sound the track plays, 0..2 (unity at 1, +6 dB at
+   * 2), after each clip's own volume. Absent is unity. Sound only; read through
+   * `trackVolume`, which the one gain function (`itemAudioGainAt`) applies for preview and export.
+   */
+  volume?: number
+  /**
+   * The track's pan, -1 (left) .. 1 (right), applied after each clip's own pan — per channel,
+   * the two gains multiply (`trackPanGains`). Absent is centre.
+   */
+  pan?: number
   items: Item[]
 }
 

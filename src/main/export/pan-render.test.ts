@@ -74,8 +74,9 @@ test('the pan filter is panGains, coefficient for coefficient, and centre writes
 })
 
 /** Mixes `item` through the real ffmpeg; returns interleaved stereo samples. */
-function render(dir: string, path: string, item: Item): Int16Array {
+function render(dir: string, path: string, item: Item, track: { volume?: number; pan?: number } = {}): Int16Array {
   const { project, timeline } = setup(path, item)
+  Object.assign(timeline.tracks[0]!, track)
   const graph = buildAudioGraph(project, timeline, 0, 60)
   assert.ok(graph)
   const out = join(dir, `mix-${Math.random().toString(36).slice(2)}.wav`)
@@ -126,6 +127,27 @@ test('a dual-mono clip panned through the real ffmpeg: each channel moves by the
   const hardLeft = render(dir, path, clip({ pan: -1 }))
   assert.ok(Math.abs(db(level(hardLeft, 0, 500) / refLeft) - 3.0103) < 0.05, 'hard left is +3 dB on the left')
   assert.ok(level(hardLeft, 1, 500) < refRight * 1e-3, 'and silence on the right')
+})
+
+test('the track fader and pan apply after the clip’s own, in the rendered file, within 0.05 dB', { skip: SKIP }, () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bay-track-mix-'))
+  const path = join(dir, 'tone.wav')
+  execFileSync(FFMPEG, ['-v', 'error', '-y', '-f', 'lavfi', '-i', 'sine=frequency=500:duration=4', '-af', 'volume=0.25', '-ac', '2', '-ar', String(RATE), path])
+  const reference = render(dir, path, clip())
+  const refLeft = level(reference, 0, 500)
+  const refRight = level(reference, 1, 500)
+  // A clip panned right on a track panned left at half level: per channel, both laws and the fader.
+  const samples = render(dir, path, clip({ pan: 0.4 }), { pan: -0.6, volume: 0.5 })
+  const own = panGains(0.4)
+  const track = panGains(-0.6)
+  const expectLeft = db(own.left * track.left * 0.5)
+  const expectRight = db(own.right * track.right * 0.5)
+  const left = db(level(samples, 0, 500) / refLeft)
+  const right = db(level(samples, 1, 500) / refRight)
+  assert.ok(Math.abs(left - expectLeft) < 0.05, `left ${left.toFixed(3)} dB, expected ${expectLeft.toFixed(3)} dB`)
+  assert.ok(Math.abs(right - expectRight) < 0.05, `right ${right.toFixed(3)} dB, expected ${expectRight.toFixed(3)} dB`)
+  // The specimen tells the two apart: ignoring the track would read db(own.left) on the left.
+  assert.ok(Math.abs(expectLeft - db(own.left)) > 3, 'the track changes the expected level by more than the tolerance')
 })
 
 test('a stereo source pans as a balance: hard left drops the right channel, it does not fold it across', { skip: SKIP }, () => {

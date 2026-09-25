@@ -442,7 +442,7 @@ export interface EditorActions {
    */
   addTrack(kind: TrackKind, index?: number): string
   removeTrack(trackId: string): void
-  patchTrack(trackId: string, patch: Partial<Pick<Track, 'locked' | 'muted' | 'hidden' | 'name' | 'solo'>>): void
+  patchTrack(trackId: string, patch: Partial<Pick<Track, 'locked' | 'muted' | 'hidden' | 'name' | 'solo' | 'volume' | 'pan'>>): void
 
   // transitions ---------------------------------------------------------------
   /**

@@ -43,7 +43,7 @@ import {
   playableTimeline
 } from '@shared/project'
 import type { CompositionSound } from '@shared/composition'
-import { audibleSpan, itemAudioGainAt, panGains, resolveAudioOffsets, transitionOfItemAt } from '@shared/audio-gain'
+import { audibleSpan, itemAudioGainAt, resolveAudioOffsets, routedPanGains, transitionOfItemAt } from '@shared/audio-gain'
 import { linkedPartners, soundAlignedWithPicture } from '@shared/links'
 import {
   scheduleCompositionSounds,
@@ -92,7 +92,7 @@ export interface AudioRouting {
    * both. `transitionGain` above is one factor of it, kept for the routing tests that pin it.
    */
   gain: number
-  /** The item's per-channel pan gains — `panGains(item.pan)`, what export's `pan` filter writes. */
+  /** The item's per-channel pan gains — `routedPanGains(timeline, item): the clip's pan, then its track's`, what export's `pan` filter writes. */
   pan: { left: number; right: number }
   /**
    * Set when the item's sound is *detached* from its picture — a J/L cut, whose sound runs
@@ -156,7 +156,7 @@ export function audioRoutingAt(project: Project, timeline: Timeline, frame: numb
         slot: slots.get(item.id) ?? 0,
         transitionGain,
         gain,
-        pan: panGains(item.pan),
+        pan: routedPanGains(timeline, item),
         metered: true,
         audible: trackAudible(timeline.tracks, track)
       })
@@ -171,7 +171,7 @@ export function audioRoutingAt(project: Project, timeline: Timeline, frame: numb
       slot: 0,
       transitionGain,
       gain,
-      pan: panGains(item.pan),
+      pan: routedPanGains(timeline, item),
       detached: {
         mediaSeconds: sourceSecondsAt(item, standIn, frame, fps),
         claim: drawn !== undefined && asset.hasVideo ? { asset, slot: drawn } : null
@@ -246,7 +246,7 @@ export function audioRoutingAt(project: Project, timeline: Timeline, frame: numb
       // element is claimed silently so its sound cannot reach the speakers unmixed.
       const picture = sharedPicture(timeline, item, pictureSlots)
       if (picture !== null && !isDetached(project, timeline, item)) {
-        out.push({ item, track, asset, slot: picture.slot, transitionGain, gain, pan: panGains(item.pan), metered: true, audible: trackAudible(timeline.tracks, track) })
+        out.push({ item, track, asset, slot: picture.slot, transitionGain, gain, pan: routedPanGains(timeline, item), metered: true, audible: trackAudible(timeline.tracks, track) })
         continue
       }
       const standIn = detachedAsset(asset, item)
@@ -258,7 +258,7 @@ export function audioRoutingAt(project: Project, timeline: Timeline, frame: numb
         slot: 0,
         transitionGain,
         gain,
-        pan: panGains(item.pan),
+        pan: routedPanGains(timeline, item),
         detached: {
           mediaSeconds: sourceSecondsAt(item, standIn, frame, fps),
           claim: partner ? { asset, slot: pictureSlots.get(partner.id) ?? 0 } : null
@@ -271,7 +271,7 @@ export function audioRoutingAt(project: Project, timeline: Timeline, frame: numb
 
     const slot = audioSlotsUsed.get(asset.id) ?? 0
     audioSlotsUsed.set(asset.id, slot + 1)
-    out.push({ item, track, asset, slot, transitionGain, gain, pan: panGains(item.pan), metered: true, audible: trackAudible(timeline.tracks, track) })
+    out.push({ item, track, asset, slot, transitionGain, gain, pan: routedPanGains(timeline, item), metered: true, audible: trackAudible(timeline.tracks, track) })
   }
 
   return out
@@ -424,7 +424,7 @@ export function compositionSoundsAt(
           asset: soundAsset(item, entry),
           entry,
           gain: itemAudioGainAt(project, timeline, item, frame) * entry.sound.volume,
-          pan: panGains(item.pan),
+          pan: routedPanGains(timeline, item),
           mediaSeconds,
           audible: trackAudible(timeline.tracks, track)
         })

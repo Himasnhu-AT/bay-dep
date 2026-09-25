@@ -12,7 +12,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Asset, Item, Project, Timeline, Track } from './project'
 import { framesToUs } from './project'
-import { audibleSpan, duckDepth, duckGainAt, itemAudioGainAt, resolveAudioOffsets } from './audio-gain'
+import { audibleSpan, duckDepth, duckGainAt, itemAudioGainAt, panGains, resolveAudioOffsets, routedPanGains, trackVolume } from './audio-gain'
 
 const FPS = 30
 
@@ -226,4 +226,36 @@ test('a non-finite or non-positive amount ducks nothing, rather than silencing w
     const { project, timeline, music } = ducked({ amountDb })
     assert.equal(itemAudioGainAt(project, timeline, music, 80), 1, String(amountDb))
   }
+})
+
+test('the track fader multiplies every clip’s gain on it; absent, non-finite and out-of-range are handled', () => {
+  const item = { id: 'i', assetId: 'a', trackId: 't', from: 0, durationInFrames: 30, sourceStartUs: 0,
+    layout: { left: 0, top: 0, width: 10, height: 10, opacity: 1, rotation: 0 }, volume: 1, fadeInFrames: 0, fadeOutFrames: 0, speed: 1 }
+  const make = (volume?: number) => {
+    const timeline = { id: 'tl', name: 'T', fps: 30, width: 10, height: 10, background: '#000', transitions: [],
+      tracks: [{ id: 't', kind: 'audio', name: 'A1', locked: false, muted: false, hidden: false, ...(volume === undefined ? {} : { volume }), items: [item] }] }
+    const project = { id: 'p', name: 'p', version: 1, createdAt: 0, updatedAt: 0, activeTimelineId: 'tl', timelines: [timeline],
+      assets: [{ id: 'a', kind: 'audio', name: 'a', path: '/a', durationUs: 10_000_000, width: 0, height: 0, fps: null, hasAudio: true, hasVideo: false, posterPath: null, waveformPath: null, createdAt: 0 }] }
+    return { project: project as unknown as Project, timeline: timeline as unknown as Timeline }
+  }
+  const at = (volume?: number): number => {
+    const { project, timeline } = make(volume)
+    return itemAudioGainAt(project, timeline, item as unknown as Item, 10)
+  }
+  assert.equal(at(), 1, 'no fader is unity')
+  assert.equal(at(0.5), 0.5)
+  assert.equal(at(0), 0)
+  assert.equal(at(5), 2, 'clamped to +6 dB')
+  assert.equal(at(Number.NaN), 1, 'a NaN fader is unity, not silence')
+  const { timeline } = make()
+  assert.equal(trackVolume(timeline, 'missing'), 1)
+})
+
+test('a clip’s pan and its track’s compose per channel', () => {
+  const timeline = { tracks: [{ id: 't', pan: -1 }] } as unknown as Timeline
+  assert.deepEqual(routedPanGains(timeline, { trackId: 't', pan: 0 }), panGains(-1), 'a centred clip on a hard-left track is hard left')
+  const both = routedPanGains(timeline, { trackId: 't', pan: 0.5 })
+  assert.equal(both.right, 0, 'hard left on the track silences the right whatever the clip says')
+  assert.ok(Math.abs(both.left - panGains(0.5).left * panGains(-1).left) < 1e-12)
+  assert.deepEqual(routedPanGains({ tracks: [] } as unknown as Timeline, { trackId: 'x', pan: undefined }), { left: 1, right: 1 })
 })

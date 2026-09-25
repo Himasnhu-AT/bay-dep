@@ -304,8 +304,25 @@ export function transitionOfItemAt(
   return null
 }
 
+/** The fader on `trackId`: 0..2, unity when absent, and a non-finite value is unity rather than silence. */
+export function trackVolume(timeline: Timeline, trackId: string): number {
+  const level = timeline.tracks.find((track) => track.id === trackId)?.volume
+  return typeof level === 'number' && Number.isFinite(level) ? Math.max(0, Math.min(2, level)) : 1
+}
+
 /**
- * `item`'s gain at `frame`: its volume, times its fade envelope, times any transition over it,
+ * The per-channel gains for an item's sound: its own pan, then its track's. Each is the same
+ * constant-power law (`panGains`) and the two multiply per channel — the preview's channel gains
+ * and export's `pan` filters are both written from this, so they cannot disagree.
+ */
+export function routedPanGains(timeline: Timeline, item: Pick<Item, 'pan' | 'trackId'>): { left: number; right: number } {
+  const own = panGains(item.pan)
+  const track = panGains(timeline.tracks.find((candidate) => candidate.id === item.trackId)?.pan)
+  return { left: own.left * track.left, right: own.right * track.right }
+}
+
+/**
+ * `item`'s gain at `frame`: its volume, times its track's fader, times its fade envelope, times any transition over it,
  * times its duck.
  *
  * Independent things multiply, and collapsing any two would make one unreachable while
@@ -371,5 +388,5 @@ export function itemAudioGainAt(
     },
     frame
   )
-  return volume * fade * transitionGain * duckGainAt(project, timeline, item, frame)
+  return volume * trackVolume(timeline, item.trackId) * fade * transitionGain * duckGainAt(project, timeline, item, frame)
 }
