@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { AudioLines, Captions, FolderOpen, SlidersHorizontal } from 'lucide-react'
 import { formatTimecode } from '@shared/project'
 import { EXPORT_PRESETS, isAudioOnly, matchExportPreset, resolveExportSize, type ExportPreset } from '@shared/export-presets'
@@ -15,7 +15,7 @@ import {
   useExportForm,
   VideoFields
 } from '../ExportDialog'
-import type { RangeKind } from '../export-session'
+import { useExportSession, type RangeKind } from '../export-session'
 import { fileName, folderOf } from './queue'
 
 type DeliverTab = 'video' | 'audio' | 'file'
@@ -41,6 +41,14 @@ export interface DeliverSettingsProps {
 export function DeliverSettings({ className }: DeliverSettingsProps): ReactNode {
   const form = useExportForm()
   const [tab, setTab] = useState<DeliverTab>('video')
+  // A fresh window's settings are the defaults, which match no preset: the cards lit Custom
+  // before anyone had customised anything. The first time the page shows them untouched, choose
+  // the preset that fits the canvas. Settings anyone has set stay as they are.
+  const canvasWidth = form?.timeline.width
+  const canvasHeight = form?.timeline.height
+  useEffect(() => {
+    if (canvasWidth && canvasHeight) useExportSession.getState().adoptFittingPreset(canvasWidth, canvasHeight)
+  }, [canvasWidth, canvasHeight])
   if (!form) {
     return (
       <Panel title="Render Settings" className={cn('h-full', className)}>
@@ -116,16 +124,17 @@ export function PresetCards(): ReactNode {
   const custom = !EXPORT_PRESETS.some((preset) => preset.id === current)
   const canvas = { width: timeline.width, height: timeline.height }
   return (
-    <div role="radiogroup" aria-label="Render preset" className="-mx-1 flex gap-1.5 overflow-x-auto px-1 pb-1">
-      {/* First, as Resolve's Custom Export is: it is lit whenever no preset matches, and a lit
-          card scrolled out of sight would say nothing. */}
+    // A grid that wraps, not a sideways scroller: the scroller showed three and a half cards at
+    // the default width with nothing to say there were more, and cut the fourth's name.
+    <div role="radiogroup" aria-label="Render preset" className="grid grid-cols-[repeat(auto-fill,minmax(84px,1fr))] gap-1.5">
+      {/* First, as Resolve's Custom Export is: it is lit whenever no preset matches. */}
       <div
         role="radio"
         aria-checked={custom}
         aria-disabled="true"
         aria-label="Custom: your own settings"
         className={cn(
-          'flex w-[92px] shrink-0 flex-col items-center gap-1.5 rounded-sm border px-1.5 py-2 text-center',
+          'flex min-w-0 flex-col items-center gap-1.5 rounded-sm border px-1.5 py-2 text-center',
           custom ? 'border-accent bg-accent/10 text-ink-0' : 'border-dashed border-line text-ink-2'
         )}
       >
@@ -145,7 +154,7 @@ export function PresetCards(): ReactNode {
             disabled={locked}
             onClick={() => session.setSettings(preset.settings)}
             className={cn(
-              't-press flex w-[92px] shrink-0 flex-col items-center gap-1.5 rounded-sm border px-1.5 py-2 text-center',
+              't-press flex min-w-0 flex-col items-center gap-1.5 rounded-sm border px-1.5 py-2 text-center',
               'disabled:pointer-events-none disabled:opacity-50',
               chosen ? 'border-accent bg-accent/10 text-ink-0' : 'border-line bg-surface-2 text-ink-1 hover:bg-surface-3 hover:text-ink-0'
             )}

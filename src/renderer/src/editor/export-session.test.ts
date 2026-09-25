@@ -9,7 +9,8 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { shallow } from 'zustand/shallow'
 import type { ExportProgress } from '@shared/ipc'
-import { exportFormFields, useExportSession } from './export-session'
+import { DEFAULT_EXPORT_SETTINGS, matchExportPreset } from '@shared/export-presets'
+import { exportFormFields, firstFittingPreset, useExportSession } from './export-session'
 import { addRecord, applyProgress } from './deliver/queue'
 
 function frame(framesDone: number, stage: ExportProgress['stage'] = 'rendering'): ExportProgress {
@@ -47,4 +48,26 @@ test('a frame of progress leaves the form’s fields shallow-equal; settings and
   const done = exportFormFields(useExportSession.getState())
   assert.equal(done.running, false)
   assert.ok(!shallow(mid, done), 'the job ending unlocks the form')
+})
+
+test('the Deliver page’s first look picks the preset that fits the canvas, only over untouched defaults', () => {
+  const fresh = (): void => useExportSession.setState({ settings: DEFAULT_EXPORT_SETTINGS, progress: null, starting: false })
+  // The specimen: the defaults match no preset, which is why the cards lit Custom.
+  assert.equal(matchExportPreset(DEFAULT_EXPORT_SETTINGS), 'custom')
+
+  fresh()
+  assert.equal(useExportSession.getState().adoptFittingPreset(1920, 1080), true)
+  assert.equal(matchExportPreset(useExportSession.getState().settings), 'youtube-1080')
+  assert.equal(useExportSession.getState().adoptFittingPreset(1080, 1920), false, 'once chosen, not chosen again')
+  assert.equal(matchExportPreset(useExportSession.getState().settings), 'youtube-1080')
+
+  fresh()
+  useExportSession.getState().adoptFittingPreset(1080, 1920)
+  assert.equal(matchExportPreset(useExportSession.getState().settings), 'vertical', 'a vertical canvas is not letterboxed')
+  assert.equal(firstFittingPreset(1000, 700).id, 'master', 'no frame preset fits: canvas size')
+
+  // Settings someone set, even back to the default values, are theirs.
+  useExportSession.setState({ settings: { ...DEFAULT_EXPORT_SETTINGS }, progress: null })
+  assert.equal(useExportSession.getState().adoptFittingPreset(1920, 1080), false)
+  assert.equal(matchExportPreset(useExportSession.getState().settings), 'custom')
 })
