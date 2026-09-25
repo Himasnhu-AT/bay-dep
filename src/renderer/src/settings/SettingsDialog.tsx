@@ -154,7 +154,21 @@ function PreferencesBody(): ReactNode {
     // `pages` is derived each render; the ask is what matters.
   }, [asked])
   const tabs = useRef(new Map<PreferencesPage, HTMLButtonElement>())
+  const focusedOnce = useRef(false)
   const page = pages.find((candidate) => candidate.id === current) ?? pages[0]!
+  // Focus starts on the selected page's tab. The dialog's own rule takes its first button,
+  // which here is always Media tools — so opened on Agent, a focus ring sat on Media tools
+  // beside the real selection, two things that both looked chosen. Whichever of this and the
+  // dialog's effect runs first, this one leaves focus on the selection; and when a link moves
+  // the page while focus is in the list, focus follows it.
+  useEffect(() => {
+    const tab = tabs.current.get(page.id)
+    const active = document.activeElement
+    const inList = active instanceof HTMLButtonElement && [...tabs.current.values()].includes(active)
+    const fresh = !focusedOnce.current
+    focusedOnce.current = true
+    if (tab && (fresh || inList)) tab.focus()
+  }, [page.id])
 
   const choose = (id: PreferencesPage): void => {
     lastPage = id
