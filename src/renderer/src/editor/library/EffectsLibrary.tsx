@@ -14,7 +14,7 @@ import {
   type LucideIcon
 } from 'lucide-react'
 import { findAsset, formatTimecode, type Item, type TransitionKind } from '@shared/project'
-import { isVisualItem } from '@shared/inspector'
+import { isGradeableKind } from '@shared/grade'
 import { TEMPLATES } from '@shared/templates'
 import { Button, ScrollArea, Select, ToolButton } from '@/components'
 import { cn } from '@/lib/cn'
@@ -32,7 +32,8 @@ import {
   applyTransition,
   AUDIO_TRANSITIONS,
   currentTarget,
-  targetJunction,
+  memoJunctionCandidates,
+  nearestCandidate,
   VIDEO_TRANSITIONS,
   type CutTrackKind
 } from './transitions'
@@ -250,10 +251,13 @@ function AudioGlyph({ kind }: { kind: TransitionKind }): ReactNode {
  */
 function TransitionList({ trackKind }: { trackKind: CutTrackKind }): ReactNode {
   // A string, so the list re-renders when the target cut changes — not on every playhead frame.
+  // The cuts themselves are found once per edit or selection (`memoJunctionCandidates`); the
+  // selector runs on every store change, playhead frames included, and only picks the nearest.
+  const [candidatesFor] = useState(memoJunctionCandidates)
   const key = useEditor((state) => {
     const timeline = selectTimeline(state)
     if (!timeline) return ''
-    const junction = targetJunction(state.project, timeline, state.playhead, trackKind, state.selection)
+    const junction = nearestCandidate(candidatesFor(state.project, timeline, trackKind, state.selection), state.playhead)
     return junction ? `${junction.key}|${junction.transition?.kind ?? ''}|${junction.capacityInFrames}` : ''
   })
   const timeline = useEditor(selectTimeline)
@@ -398,7 +402,9 @@ function Luts(): ReactNode {
 
   const kindOf = (item: Item) => findAsset(project, item.assetId)?.kind
   const trackKindOf = (item: Item) => timeline?.tracks.find((track) => track.id === item.trackId)?.kind
-  const visual = selected.filter((item) => isVisualItem(kindOf(item), trackKindOf(item)))
+  // What a grade draws on: a picture on a video track, as the Color page's LUT list decides it
+  // (`isGradeableKind`), not every visual item: a title has no pixels for a LUT to map.
+  const visual = selected.filter((item) => trackKindOf(item) === 'video' && isGradeableKind(kindOf(item)))
   const anyLut = visual.some((item) => item.grade?.lut)
 
   const apply = (assetId: string | null): void => {
@@ -436,8 +442,10 @@ function Luts(): ReactNode {
               <li key={lut.id}>
                 <button
                   type="button"
-                  disabled={visual.length === 0}
+                  // A LUT that could not be read maps nothing, so it cannot be applied, as on the Color page.
+                  disabled={visual.length === 0 || Boolean(lut.error)}
                   aria-pressed={on}
+                  title={lut.error ?? undefined}
                   onClick={() => apply(lut.id)}
                   className={cn(
                     't-press flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left active:scale-[0.98]',
@@ -446,7 +454,10 @@ function Luts(): ReactNode {
                   )}
                 >
                   <Palette aria-hidden="true" className="size-3.5 shrink-0 text-ink-2" />
-                  <span className={cn('min-w-0 flex-1 truncate text-[12px]', on ? 'text-accent' : 'text-ink-0')}>{lut.name}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className={cn('block truncate text-[12px]', on ? 'text-accent' : 'text-ink-0')}>{lut.name}</span>
+                    {lut.error && <span className="block truncate text-[10px] text-danger">{lut.error}</span>}
+                  </span>
                   {on && <Check aria-hidden="true" className="size-3.5 text-accent" />}
                 </button>
               </li>
