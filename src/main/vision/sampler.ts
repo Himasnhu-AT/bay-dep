@@ -31,12 +31,41 @@ export interface SampleOptions {
   durationUs: number
   intervalUs?: number
   signal?: AbortSignal
+  /** How long ffprobe's keyframe pass may take before it is killed and the full decode runs instead. */
+  probeTimeoutMs?: number
+  /**
+   * How long ffmpeg may go without producing a frame (while the consumer is waiting for one)
+   * before it is killed and the file reported as unreadable. Time the consumer spends embedding
+   * is not counted: a paused pipe is backpressure, not a stall.
+   */
+  stallMs?: number
 }
 
-/** ffprobe's keyframe times, from packets alone (no decode). Empty when there are none or it failed. */
-export async function keyframeTimesUs(ffprobe: string, path: string): Promise<number[]> {
+/** Packets only, no pixels: a minute is far past any real file, and it is killed after it. */
+export const PROBE_TIMEOUT_MS = 60_000
+/** A decode that has produced nothing for this long is stuck (a network drive gone, a pathological file). */
+export const STALL_MS = 60_000
+
+/**
+ * ffprobe's arguments for the keyframe pass. The path goes after `-i`, never bare: a bare argument
+ * beginning with `-` is read as an option, so a file named `-show_format.mov` would not be probed.
+ */
+export function keyframeArgs(path: string): string[] {
+  return ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'packet=pts_time,flags', '-of', 'csv=p=0', '-i', path]
+}
+
+/**
+ * ffprobe's keyframe times, from packets alone (no decode). Empty when there are none or it
+ * failed. Killed on `signal` and after `timeoutMs` — a probe of a file on a drive that stopped
+ * answering must not hold the indexing job for ever.
+ */
+export async function keyframeTimesUs(ffprobe: string, path: string, options: { signal?: AbortSignal; timeoutMs?: number } = {}): Promise<number[]> {
   try {
-    const { stdout } = await run(ffprobe, ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'packet=pts_time,flags', '-of', 'csv=p=0', path])
+    const { stdout } = await run(ffprobe, keyframeArgs(path), {
+      ...(options.signal ? { signal: options.signal } : {}),
+      timeout: options.timeoutMs ?? PROBE_TIMEOUT_MS,
+      killSignal: 'SIGKILL'
+    })
     return parseKeyframes(stdout)
   } catch {
     return []
@@ -92,7 +121,8 @@ export async function* sampleFrames(path: string, options: SampleOptions): Async
   const intervalUs = options.intervalUs ?? SAMPLE_INTERVAL_US
   let keyframesOnly = false
   if (options.kind === 'video') {
-    const kept = keptKeyframes(await keyframeTimesUs(options.ffprobe, path), intervalUs)
+    const probe = { ...(options.signal ? { signal: options.signal } : {}), ...(options.probeTimeoutMs !== undefined ? { timeoutMs: options.probeTimeoutMs } : {}) }
+    const kept = keptKeyframes(await keyframeTimesUs(options.ffprobe, path, probe), intervalUs)
     keyframesOnly = !needsFullDecode(kept, options.durationUs, intervalUs)
   }
   if (options.signal?.aborted) return
@@ -127,6 +157,22 @@ export async function* sampleFrames(path: string, options: SampleOptions): Async
     child.on('error', () => resolve(-1))
   })
 
+  // The stall watchdog: `waitingSince` is set only while this generator waits on ffmpeg (for the
+  // next chunk, or a frame's showinfo line), and cleared while the consumer holds a frame.
+  const stallMs = options.stallMs ?? STALL_MS
+  let waitingSince: number | null = Date.now()
+  let stalled = false
+  const watchdog = setInterval(
+    () => {
+      if (waitingSince !== null && Date.now() - waitingSince > stallMs) {
+        stalled = true
+        child.kill('SIGKILL')
+      }
+    },
+    Math.max(10, Math.min(1000, stallMs / 4))
+  )
+  const stallError = (): Error => new Error(`ffmpeg stopped producing frames of ${path} for ${Math.round(stallMs / 1000)} s, so it was stopped. The file may be damaged or on a drive that is not answering.`)
+
   let pending: Buffer = Buffer.alloc(0)
   let index = 0
   try {
@@ -138,20 +184,25 @@ export async function* sampleFrames(path: string, options: SampleOptions): Async
         // stderr and stdout are separate pipes: a frame can arrive before its showinfo line.
         // Wait for the line rather than guess the time — a frame at the wrong time is a hit that
         // points somewhere else.
-        while (times.length <= index && !stderrEnded && !options.signal?.aborted) {
+        while (times.length <= index && !stderrEnded && !options.signal?.aborted && !stalled) {
           await new Promise((resolve) => setTimeout(resolve, 5))
         }
+        if (stalled) throw stallError()
         const us = times[index]
         if (us === undefined) throw new Error(`ffmpeg did not report the time of frame ${index} of ${path}.`)
         index += 1
+        waitingSince = null
         yield { us, rgb }
+        waitingSince = Date.now()
       }
     }
     const code = await exited
     if (options.signal?.aborted) return
+    if (stalled) throw stallError()
     if (code !== 0) throw new Error(`ffmpeg could not read ${path}: ${stderrTail.trim().split('\n').slice(-2).join(' ') || `exit ${code}`}`)
     if (index === 0) throw new Error(`${path} has no picture to index.`)
   } finally {
+    clearInterval(watchdog)
     options.signal?.removeEventListener('abort', abort)
     if (child.exitCode === null) child.kill('SIGKILL')
   }

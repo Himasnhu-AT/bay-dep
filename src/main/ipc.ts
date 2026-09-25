@@ -43,7 +43,9 @@ import { locate, openCaptions, readCaptions, saveCaptions } from './media/files'
 import { forgetPath, importDialog, importPaths } from './media/import'
 import { freezeFrame } from './media/freeze-frame'
 import { importFromUrl } from './media/url-import'
+import { isAllowed } from './protocol'
 import { vision } from './vision/host'
+import { checkSearchRequest, checkVisionAssets } from './vision/requests'
 import { downloadsDir } from './paths'
 import * as store from './project/store'
 import * as encode from './export/encode'
@@ -307,7 +309,10 @@ const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
   visionDelete: () => vision().deleteModel(),
   visionIndex: async (_event, assets, options) => {
     try {
-      return await vision().index(Array.isArray(assets) ? assets : [], { dryRun: options?.dryRun === true, download: options?.download === true })
+      // The renderer's paths are read only where `bay://` would serve them (vision/requests.ts).
+      const checked = checkVisionAssets(assets, isAllowed)
+      if (!checked.ok) return checked
+      return await vision().index(checked.value, { dryRun: options?.dryRun === true, download: options?.download === true })
     } catch (error) {
       return { ok: false as const, error: error instanceof Error ? error.message : String(error) }
     }
@@ -315,7 +320,9 @@ const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
   visionCancelIndex: async () => vision().cancelIndex(),
   visionSearch: async (_event, request) => {
     try {
-      return await vision().search(request)
+      const checked = checkSearchRequest(request, isAllowed)
+      if (!checked.ok) return checked
+      return await vision().search(checked.value)
     } catch (error) {
       return { ok: false as const, error: error instanceof Error ? error.message : String(error) }
     }

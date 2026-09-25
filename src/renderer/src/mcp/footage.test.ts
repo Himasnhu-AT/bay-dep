@@ -10,9 +10,12 @@
 import { beforeEach, test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Asset, Item, Project } from '@shared/project'
-import { describeJob, VISION_NOT_INSTALLED, type VisionAssetRef, type VisionIndexAnswer, type VisionSearchAnswer, type VisionSearchRequest, type VisionStatus } from '@shared/visual-search'
+import { describeJob, VISION_NOT_INSTALLED, type VisionAssetRef, type VisionIndexAnswer, type VisionIndexJob, type VisionSearchAnswer, type VisionSearchRequest, type VisionStatus } from '@shared/visual-search'
 import { emptyProject, useEditor } from '@/store/editor'
+import { tool as indexFootageTool } from '@shared/tools/index-footage'
 import { executeToolCall } from './index'
+
+const JOB: VisionIndexJob = { state: 'running', phase: 'indexing', checking: 0, alreadyIndexed: 0, filesTotal: 2, filesDone: 0, framesDone: 0, current: null, failed: [], startedAt: 0, finishedAt: null }
 
 const calls: { method: string; args: unknown[] }[] = []
 let installed = true
@@ -25,7 +28,7 @@ const status = (): VisionStatus => ({
   modelDir: '/models',
   bytesOnDisk: 0,
   download: null,
-  index: jobRunning ? { state: 'running', filesTotal: 3, filesDone: 1, framesDone: 40, current: 'beach.mov', failed: [], startedAt: 0, finishedAt: null } : null
+  index: jobRunning ? { ...JOB, filesTotal: 3, filesDone: 1, framesDone: 40, current: 'beach.mov' } : null
 })
 
 ;(globalThis as { window?: unknown }).window = {
@@ -85,7 +88,7 @@ beforeEach(() => {
   calls.length = 0
   installed = true
   jobRunning = false
-  indexAnswer = { ok: true, started: true, plan: PLAN, job: null }
+  indexAnswer = { ok: true, started: true, downloading: false, job: { ...JOB, phase: 'planning', checking: 2, filesTotal: 0 } }
   searchAnswer = { ok: true, hits: [], separation: 0, framesSearched: 0, unindexed: [] }
   useEditor.getState().setAutoDownloadModels(false)
   const base = emptyProject()
@@ -130,6 +133,28 @@ test('index_footage sends every video and image, never audio or a title, with th
     { assetId: 'still', name: 'still.png', path: '/footage/still.png', kind: 'image', durationUs: 0 }
   ])
   assert.match((result.value as { next: string }).next, /background/)
+  assert.match((result.value as { progress: string }).progress, /Checking which files need indexing: 0 of 2 checked/)
+})
+
+test('when the model must download first, index_footage answers at once and says so', async () => {
+  useEditor.getState().setAutoDownloadModels(true)
+  indexAnswer = { ok: true, started: true, downloading: true, job: { ...JOB, phase: 'download', checking: 2, filesTotal: 0 } }
+  const result = await run('index_footage', {})
+  assert.ok(result.ok, result.ok ? '' : result.error)
+  const value = result.value as { started: boolean; downloading: boolean; progress: string; next: string }
+  assert.equal(value.downloading, true)
+  assert.match(value.progress, /Waiting for the visual search model to download before indexing 2 files\./)
+  assert.match(value.next, /downloading first; indexing starts when it arrives\. Call index_footage again/)
+  // Positive control: no download, no such sentence.
+  indexAnswer = { ok: true, started: true, downloading: false, job: JOB }
+  const plain = await run('index_footage', {})
+  assert.ok(plain.ok)
+  assert.doesNotMatch((plain.value as { next: string }).next, /downloading/)
+})
+
+test('index_footage has a deadline sized for its dry run, beyond the default', () => {
+  assert.ok((indexFootageTool.timeoutMs ?? 0) >= 60_000, `timeoutMs: ${indexFootageTool.timeoutMs}`)
+  assert.match(indexFootageTool.description, /before the model download/)
 })
 
 test('an audio asset named for indexing is refused by name; a video beside it is accepted', async () => {
@@ -212,6 +237,30 @@ test('hits come back with the file time and the timeline frame of every clip tha
   assert.equal(hits[2]!.onTimeline, undefined)
 })
 
+test('a hit is placed on clips that show the picture, never on the same file\'s sound on an audio track', async () => {
+  // clip_a's sound, detached onto an audio track: same asset, same span, no picture.
+  const state = useEditor.getState()
+  const tl = state.project.timelines[0]!
+  useEditor.getState().enterProject({
+    ...state.project,
+    timelines: [
+      {
+        ...tl,
+        tracks: [
+          ...tl.tracks,
+          { id: 'a1', kind: 'audio', name: 'A1', locked: false, muted: false, hidden: false, items: [item('clip_a_sound', 'beach', { trackId: 'a1', from: 100, durationInFrames: 150, sourceStartUs: 4_000_000 })] }
+        ]
+      },
+      ...state.project.timelines.slice(1)
+    ]
+  })
+  searchAnswer = { ok: true, hits: [{ assetId: 'beach', us: 5_000_000, score: 0.12 }], separation: 0.09, framesSearched: 11, unindexed: [] }
+  const result = await run('search_footage', { query: 'a dog on a beach' })
+  assert.ok(result.ok, result.ok ? '' : result.error)
+  const placements = (result.value as { hits: { onTimeline?: { itemId: string }[] }[] }).hits[0]!.onTimeline!.map((p) => p.itemId)
+  assert.deepEqual(placements, ['clip_a', 'clip_fast'])
+})
+
 test('similarTo sends the asset and the moment in microseconds; a weak match says so', async () => {
   searchAnswer = { ok: true, hits: [{ assetId: 'still', us: 0, score: 0.3 }], separation: 0.004, framesSearched: 11, unindexed: ['still'], reference: { assetId: 'beach', us: 12_000_000 } }
   const result = await run('search_footage', { similarTo: { assetId: 'beach', seconds: 12.5 }, assetIds: ['still'] })
@@ -230,13 +279,19 @@ test('similarTo sends the asset and the moment in microseconds; a weak match say
 })
 
 test('each job state has its own sentence', () => {
-  const base = { filesTotal: 4, filesDone: 2, framesDone: 90, current: 'b.mov', failed: [], startedAt: 0, finishedAt: null }
+  const base = { ...JOB, filesTotal: 4, filesDone: 2, framesDone: 90, current: 'b.mov' }
   const sentences = new Set([
+    describeJob({ ...base, state: 'running', phase: 'download', checking: 4, filesTotal: 0 }),
+    describeJob({ ...base, state: 'running', phase: 'planning', checking: 2, filesTotal: 1, alreadyIndexed: 1 }),
     describeJob({ ...base, state: 'running' }),
     describeJob({ ...base, state: 'cancelled' }),
+    describeJob({ ...base, state: 'failed', error: 'Downloading SigLIP failed: offline' }),
     describeJob({ ...base, state: 'done', filesDone: 4 }),
+    describeJob({ ...base, state: 'done', filesTotal: 0, filesDone: 0, alreadyIndexed: 4 }),
     describeJob({ ...base, state: 'done', filesDone: 4, failed: [{ assetId: 'x', name: 'x.mov', error: 'moov atom not found' }] })
   ])
-  assert.equal(sentences.size, 4)
+  assert.equal(sentences.size, 8)
+  assert.match(describeJob({ ...base, state: 'running', phase: 'planning', checking: 2, filesTotal: 1, alreadyIndexed: 1 }), /2 of 4 checked, 1 to index; 1 already indexed/)
+  assert.equal(describeJob({ ...base, state: 'done', filesTotal: 0, filesDone: 0, alreadyIndexed: 4 }), 'All 4 files were already indexed.')
   assert.match(describeJob({ ...base, state: 'done', filesDone: 4, failed: [{ assetId: 'x', name: 'x.mov', error: 'moov atom not found' }] }), /3 of 4 files indexed.*x\.mov \(moov atom not found\)/)
 })
