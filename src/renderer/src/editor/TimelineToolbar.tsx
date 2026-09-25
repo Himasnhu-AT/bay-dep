@@ -156,6 +156,8 @@ function GroupMenu({
         label={label}
         icon={<ChevronDown className="size-3" />}
         active={menu.open}
+        // A menu trigger, not a toggle: `aria-expanded` from the trigger props says it is open.
+        aria-pressed={undefined}
         className="flex-row-reverse"
       />
       <Menu
@@ -180,6 +182,8 @@ function OptionsChevron({ label, items }: { label: string; items: readonly MenuE
         showLabel={false}
         icon={<ChevronDown className="size-3" />}
         active={menu.open}
+        // A menu trigger, not a toggle: `aria-expanded` from the trigger props says it is open.
+        aria-pressed={undefined}
         className="-ml-0.5 w-4!"
       />
       <Menu {...menu.surfaceProps} label={label} items={items} side="bottom" align="start" />
