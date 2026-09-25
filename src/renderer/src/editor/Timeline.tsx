@@ -26,6 +26,8 @@ import { useDrag } from '@/lib/useDrag'
 import { newId, selectDuration, selectTimeline, useEditor } from '@/store/editor'
 import { editingPrefs } from '@/store/editing-prefs'
 import { ASSET_DRAG_TYPE } from './MediaPanel'
+import { decodeTransitionDrag, dropJunction, TRANSITION_DRAG_TYPE } from '@/lib/transitionDrag'
+import { applyTransitionAt } from './library/transitions'
 import { junctionsForTrack, type Junction } from '@/lib/junctions'
 import { snapFrame, snapTargets } from '@/lib/snap'
 import { Clip } from './Clip'
@@ -202,6 +204,8 @@ export function Timeline(): ReactNode {
   const [laneMenu, setLaneMenu] = useState<{ trackId: string; frame: number; x: number; y: number } | null>(null)
   const [marquee, setMarquee] = useState<MarqueeGesture | null>(null)
   const [hoverGap, setHoverGap] = useState<Gap | null>(null)
+  // The cut a transition dragged from the library would land on, while it is over a lane.
+  const [dropCut, setDropCut] = useState<{ trackId: string; cutFrame: number } | null>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const tool = useTimelineTool((state) => state.tool)
   const armed = useTimelineTool((state) => state.armed)
@@ -1065,11 +1069,37 @@ export function Timeline(): ReactNode {
                   }}
                   onContextMenu={(event) => onLaneContextMenu(event, track)}
                   onDragOver={(event) => {
+                    if (event.dataTransfer.types.includes(TRANSITION_DRAG_TYPE)) {
+                      const cut = timeline ? dropJunction(project, timeline, track.id, frameAtClientX(event.clientX), pixelsPerFrame) : null
+                      if (!cut) {
+                        if (dropCut) setDropCut(null)
+                        return
+                      }
+                      event.preventDefault()
+                      event.dataTransfer.dropEffect = 'copy'
+                      if (dropCut?.trackId !== track.id || dropCut.cutFrame !== cut.cutFrame) setDropCut({ trackId: track.id, cutFrame: cut.cutFrame })
+                      return
+                    }
                     if (!event.dataTransfer.types.includes(ASSET_DRAG_TYPE)) return
                     event.preventDefault()
                     event.dataTransfer.dropEffect = 'copy'
                   }}
+                  onDragLeave={() => {
+                    if (dropCut?.trackId === track.id) setDropCut(null)
+                  }}
                   onDrop={(event) => {
+                    const transition = decodeTransitionDrag(event.dataTransfer.getData(TRANSITION_DRAG_TYPE))
+                    if (transition) {
+                      event.preventDefault()
+                      setDropCut(null)
+                      if (transition.trackKind !== track.kind) {
+                        useEditor.getState().notify(`${transition.label} is ${transition.trackKind === 'video' ? 'a picture transition' : 'an audio transition'}; drop it on a cut on ${transition.trackKind === 'video' ? 'a video' : 'an audio'} track.`)
+                        return
+                      }
+                      const cut = timeline ? dropJunction(project, timeline, track.id, frameAtClientX(event.clientX), pixelsPerFrame) : null
+                      if (cut) applyTransitionAt(cut, transition.kind, transition.label)
+                      return
+                    }
                     const assetId = event.dataTransfer.getData(ASSET_DRAG_TYPE)
                     if (!assetId) return
                     event.preventDefault()
@@ -1093,6 +1123,14 @@ export function Timeline(): ReactNode {
                 >
                   {/* The gap under the pointer, and the selected one. Pointer-transparent, so a
                       press still lands on the lane and can start a rubber band. */}
+                  {dropCut?.trackId === track.id && (
+                    // Where the dragged transition will land: the cut, lit.
+                    <div
+                      aria-hidden="true"
+                      className="pointer-events-none absolute inset-y-0 z-30 w-1 -translate-x-1/2 rounded-full bg-accent shadow-[0_0_0_3px_color-mix(in_srgb,var(--color-accent)_35%,transparent)]"
+                      style={{ left: dropCut.cutFrame * pixelsPerFrame }}
+                    />
+                  )}
                   {laneGaps.map((gap) => {
                     const selectedHere = sameGap(gap, selectedGap)
                     const width = Math.max(2, (gap.to - gap.from) * pixelsPerFrame)

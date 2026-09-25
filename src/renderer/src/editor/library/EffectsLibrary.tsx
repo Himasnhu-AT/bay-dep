@@ -18,6 +18,7 @@ import { isGradeableKind } from '@shared/grade'
 import { TEMPLATES } from '@shared/templates'
 import { Button, ScrollArea, Select, ToolButton } from '@/components'
 import { cn } from '@/lib/cn'
+import { encodeTransitionDrag, TRANSITION_DRAG_TYPE } from '@/lib/transitionDrag'
 import { whyNoRoom } from '@/lib/junctions'
 import { importMediaDialog } from '@/lib/mediaActions'
 import { useSelectedItems } from '@/lib/useSelectedItems'
@@ -293,12 +294,19 @@ function TransitionList({ trackKind }: { trackKind: CutTrackKind }): ReactNode {
             <li key={option.kind}>
               <button
                 type="button"
-                disabled={!target || reason !== null}
-                aria-label={`Apply ${option.label}${target ? ` to the cut at ${formatTimecode(target.cutFrame, fps, true)}` : ''}`}
+                // Not disabled when there is no target here: a row still drags onto any cut on the
+                // timeline, and a click says why nothing happened (`applyTransition`).
+                aria-label={`Apply ${option.label}${target ? ` to the cut at ${formatTimecode(target.cutFrame, fps, true)}` : ''}, or drag it onto a cut`}
+                title="Click to apply to the cut named above, or drag onto any cut on the timeline"
+                draggable
+                onDragStart={(event) => {
+                  event.dataTransfer.setData(TRANSITION_DRAG_TYPE, encodeTransitionDrag({ kind: option.kind, trackKind, label: option.label }))
+                  event.dataTransfer.effectAllowed = 'copy'
+                }}
                 onClick={() => applyTransition(option.kind, trackKind, option.label)}
                 className={cn(
-                  't-press flex w-full items-center gap-2 rounded-sm px-1.5 py-1.5 text-left active:scale-[0.98]',
-                  'disabled:pointer-events-none disabled:opacity-45',
+                  't-press flex w-full cursor-grab items-center gap-2 rounded-sm px-1.5 py-1.5 text-left active:scale-[0.98]',
+                  (!target || reason !== null) && 'opacity-60',
                   on ? 'bg-accent/14' : 'hover:bg-surface-3'
                 )}
               >

@@ -114,3 +114,24 @@ test('no cut, or no room, is a message — and nothing is stored', () => {
   assert.match(s().toast?.text ?? '', /footage/)
   assert.equal((tl().transitions ?? []).length, 0)
 })
+
+test('a transition dropped on a lane lands on the cut under the pointer — not the playhead’s — as one step', async () => {
+  const { decodeTransitionDrag, dropJunction, encodeTransitionDrag } = await import('@/lib/transitionDrag')
+  const { applyTransitionAt } = await import('./transitions')
+  load()
+  const video = tl().tracks.find((t) => t.kind === 'video')!
+  // 4 px a frame: the 24 px reach is 6 frames either side of a cut.
+  assert.equal(dropJunction(s().project, tl(), video.id, 63, 4)?.cutFrame, 60, 'near the first cut')
+  assert.equal(dropJunction(s().project, tl(), video.id, 90, 4), null, 'the middle of a clip is not a cut')
+  assert.equal(dropJunction(s().project, tl(), video.id, 118, 4)?.cutFrame, 120)
+  // The playhead is at 100, nearest the cut at 120; the drop names 60, and 60 is where it goes.
+  const payload = decodeTransitionDrag(encodeTransitionDrag({ kind: 'cross-dissolve', trackKind: 'video', label: 'Cross Dissolve' }))
+  assert.deepEqual(payload, { kind: 'cross-dissolve', trackKind: 'video', label: 'Cross Dissolve' })
+  assert.equal(decodeTransitionDrag('not json'), null)
+  const past = s().past.length
+  const done = applyTransitionAt(dropJunction(s().project, tl(), video.id, 61, 4)!, payload!.kind, payload!.label)
+  assert.equal(done?.cutFrame, 60)
+  const stored = tl().transitions ?? []
+  assert.deepEqual(stored.map((t) => [t.fromItemId, t.toItemId, t.kind]), [['A', 'B', 'cross-dissolve']])
+  assert.equal(s().past.length, past + 1, 'one undo step')
+})

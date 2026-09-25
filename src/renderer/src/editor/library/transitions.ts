@@ -124,6 +124,17 @@ export function applyTransition(transition: TransitionKind, kind: CutTrackKind, 
     )
     return null
   }
+  return applyTransitionAt(junction, transition, label)
+}
+
+/**
+ * `applyTransition` on a named cut — a transition dropped onto it from the library. The same edit
+ * and the same messages as a click; one undo step.
+ */
+export function applyTransitionAt(junction: Junction, transition: TransitionKind, label: string): Junction | null {
+  const state = useEditor.getState()
+  const timeline = selectTimeline(state)
+  if (!timeline) return null
   const reason = whyNoRoom(junction)
   if (reason) {
     state.notify(reason, 'error')
