@@ -28,6 +28,7 @@ import type { AccessStatus, ReferralResult } from './access'
 import type { UpdateStatus } from './update'
 import type { Finding } from './findings'
 import type { UrlImportResult } from './url-import'
+import type { VisionAssetRef, VisionIndexAnswer, VisionSearchAnswer, VisionSearchRequest, VisionStatus } from './visual-search'
 
 // ---------------------------------------------------------------------------
 // Media
@@ -488,6 +489,26 @@ export interface BayApi {
   }
 
   /**
+   * Visual search over the project's footage (`src/shared/visual-search.ts`, `src/main/vision/`):
+   * a SigLIP model on this Mac, frames indexed per file and cached by content. The model is the
+   * only thing fetched — from Hugging Face, on Download or on an index with `download: true`
+   * (the user's "Download models when needed"). Changes (download progress, the indexing job) are
+   * pushed through `onChange`.
+   */
+  vision: {
+    status(): Promise<VisionStatus>
+    /** Resolves when every file is on disk and verified. */
+    download(): Promise<{ ok: true } | { ok: false; error: string }>
+    cancelDownload(): Promise<void>
+    deleteModel(): Promise<{ ok: boolean; error?: string }>
+    /** Index what is not indexed yet; `dryRun` plans only (counts and an estimate) and starts nothing. */
+    index(assets: VisionAssetRef[], options?: { dryRun?: boolean; download?: boolean }): Promise<VisionIndexAnswer>
+    cancelIndex(): Promise<void>
+    search(request: VisionSearchRequest): Promise<VisionSearchAnswer>
+    onChange(listener: (status: VisionStatus) => void): () => void
+  }
+
+  /**
    * AI image and video generation (`src/shared/generation.ts`, `src/main/generate/`) — bay's
    * fourth network exception. Main alone calls the providers, with keys set here and only when
    * a generation tool asks. Keys go in and never come back out: `keys` answers set/not-set.
@@ -785,6 +806,15 @@ export const IPC = {
   whisperInstall: 'whisper:install',
   /** main -> renderer: one `WhisperDownload`, pushed as it changes. */
   whisperProgress: 'whisper:progress',
+  visionStatus: 'vision:status',
+  visionDownload: 'vision:download',
+  visionCancelDownload: 'vision:cancel-download',
+  visionDelete: 'vision:delete',
+  visionIndex: 'vision:index',
+  visionCancelIndex: 'vision:cancel-index',
+  visionSearch: 'vision:search',
+  /** main -> renderer: the new `VisionStatus`, whenever the download or the indexing job moves. */
+  visionChanged: 'vision:changed',
   mediaFilmstrip: 'media:filmstrip',
   mediaWaveform: 'media:waveform',
   mediaBeats: 'media:beats',

@@ -14,9 +14,12 @@ export default defineConfig({
         // Two entries from one config: the app, and the MCP proxy an agent client spawns.
         // The proxy is a separate bundle because it runs as plain Node — stdio JSON-RPC needs
         // a byte-exact stdout and Chromium does not provide one.
+        // The third is visual search's utility process (`src/main/vision/host.ts` forks it), a
+        // separate bundle so the model and onnxruntime live in their own process.
         input: {
           index: resolve('src/main/index.ts'),
-          'mcp/index': resolve('src/main/mcp/entry.ts')
+          'mcp/index': resolve('src/main/mcp/entry.ts'),
+          'vision/worker': resolve('src/main/vision/worker.ts')
         },
         output: { entryFileNames: '[name].js' }
       }
