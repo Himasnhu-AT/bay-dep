@@ -26,6 +26,31 @@ import type { Pin } from './pins'
 import type { ChangeLine } from './diff'
 
 // ---------------------------------------------------------------------------
+// Who the agent is
+// ---------------------------------------------------------------------------
+
+/**
+ * Whose model drives the in-app agent: Anthropic's Claude Code or OpenAI's Codex, each the CLI
+ * already installed and signed in on this Mac. The panel and everything it renders are the same
+ * for both — only main knows which binary it spawned.
+ */
+export type AgentProvider = 'claude' | 'codex'
+
+export const AGENT_PROVIDERS: readonly AgentProvider[] = ['claude', 'codex']
+
+/** Whether a provider's CLI was found on this machine — what Settings › Agent shows. */
+export interface AgentProviderStatus {
+  provider: AgentProvider
+  /** The binary bay would run, or null when none was found where a GUI app can look. */
+  path: string | null
+  /**
+   * What the user needs to do before this provider can start, or null when nothing: not
+   * installed, or (Codex) installed and never signed in.
+   */
+  problem: string | null
+}
+
+// ---------------------------------------------------------------------------
 // What a runtime emits
 // ---------------------------------------------------------------------------
 

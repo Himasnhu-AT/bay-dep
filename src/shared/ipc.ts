@@ -9,7 +9,7 @@
  */
 
 import type { Asset, Project } from './project'
-import type { AgentEntry, AgentEvent } from './agent'
+import type { AgentEntry, AgentEvent, AgentProvider, AgentProviderStatus } from './agent'
 import type { TranscriptSegment } from './transcribe'
 import type { BeatGrid } from './beats'
 import type { WhisperDownload, WhisperStatus } from './whisper'
@@ -459,8 +459,14 @@ export interface BayApi {
    * many, over minutes, and the panel renders them as they land.
    */
   agent: {
-    /** Returns the runtime id, or a reason it could not start. */
-    start(): Promise<{ ok: true; id: string } | { ok: false; error: string }>
+    /**
+     * Returns the runtime id, or a reason it could not start. `provider` is the Settings choice
+     * (Claude when omitted); `BAY_AGENT_RUNTIME` in main's environment overrides it. Starting
+     * with a provider other than the running conversation's replaces that conversation.
+     */
+    start(options?: { provider?: AgentProvider }): Promise<{ ok: true; id: string } | { ok: false; error: string }>
+    /** Which providers' CLIs this machine has, and what each still needs before it can start. */
+    providers(): Promise<AgentProviderStatus[]>
     send(text: string): Promise<{ ok: boolean; error?: string }>
     /** Abandon the running turn. Safe when nothing is running. */
     stop(): Promise<void>
@@ -675,6 +681,7 @@ export const IPC = {
 
   /** renderer -> main: start, drive and stop the in-app agent. */
   agentStart: 'agent:start',
+  agentProviders: 'agent:providers',
   agentSend: 'agent:send',
   agentStop: 'agent:stop',
   agentDispose: 'agent:dispose',

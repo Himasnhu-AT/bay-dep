@@ -11,7 +11,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { findClaude, notFoundMessage } from './locate'
+import { codexNotFoundMessage, findClaude, findCodex, notFoundMessage } from './locate'
 import { searchDirs } from '../search-dirs'
 
 const HOME = '/Users/x'
@@ -153,4 +153,26 @@ test('the not-found message names the likely cause, not just the symptom', () =>
   assert.match(message, /24 places/)
   assert.match(message, /which claude/)
   assert.match(message, /npm install -g/)
+})
+
+test('codex is found where Homebrew’s cask links it, from a GUI PATH that does not include it', async () => {
+  const found = await findCodex({
+    env: GUI_ENV,
+    homeDir: HOME,
+    platform: 'darwin',
+    ...withFiles(['/opt/homebrew/bin/codex', '/opt/homebrew/bin/claude'])
+  })
+  assert.equal(found?.path, '/opt/homebrew/bin/codex')
+  // And the two finders do not answer for each other.
+  assert.equal(
+    await findCodex({ env: GUI_ENV, homeDir: HOME, platform: 'darwin', ...withFiles(['/opt/homebrew/bin/claude']) }),
+    null
+  )
+})
+
+test('the codex not-found message says how to install it and that it must be signed in', () => {
+  const message = codexNotFoundMessage(24)
+  assert.match(message, /24 places/)
+  assert.match(message, /brew install --cask codex|npm install -g @openai\/codex/)
+  assert.match(message, /codex login/)
 })

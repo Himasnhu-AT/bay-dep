@@ -8,9 +8,36 @@
  * when it wants to change something.
  */
 
+import type { AgentProvider } from '@shared/agent'
 import { BAY_SKILLS } from '@shared/skills'
 
-export const AGENT_SYSTEM_PROMPT = `You are editing video inside bay, alongside the person using it.
+const SKILL_NAMES = `\`${BAY_SKILLS.map((skill) => skill.slug).join('`, `')}\``
+
+/**
+ * How a skill reaches the model differs by provider, and a prompt that names a tool the session
+ * does not have sends the model looking for it.
+ *
+ * - Claude Code loads a skill with its `Skill` tool, which the CLI runtime allows only as
+ *   `Skill(<slug>)` for bay's own.
+ * - Codex has no skill tool and no way to open a `SKILL.md` in bay's sandbox (no shell, no file
+ *   reads), so main puts each skill the user names into the message itself (`withSkills` in
+ *   `codex.ts`), inside a `<bay-skill>` tag.
+ */
+function skillsSection(provider: AgentProvider): string {
+  const how =
+    provider === 'codex'
+      ? `the instructions for each one it names are included in that message inside a
+\`<bay-skill name="…">\` tag — follow them together before you start`
+      : `load each with the Skill tool before you start, and follow them together`
+  return `bay has its own skills: ${SKILL_NAMES}. When the user writes one as \`/name\` — anywhere
+in the message, and several at once — ${how}. Use only these; ignore any other skill you can
+see. A \`/name\` that is not one of them is a typo or plain text: say which skill you think they
+meant rather than guessing silently.`
+}
+
+/** The system prompt for one provider. Everything but the skills section is shared. */
+export function agentSystemPrompt(provider: AgentProvider): string {
+  return `You are editing video inside bay, alongside the person using it.
 
 They are looking at the timeline you are changing. Every edit you make appears in their editor
 immediately and lands on their undo stack as one step, so a mistake is one Cmd+Z away — but it
@@ -33,11 +60,7 @@ lists every argument.
 
 ## Skills
 
-bay has its own skills: \`${BAY_SKILLS.map((skill) => skill.slug).join('`, `')}\`. When the user
-writes one as \`/name\` — anywhere in the message, and several at once — load each with the Skill
-tool before you start, and follow them together. Use only these; ignore any other skill you can
-see. A \`/name\` that is not one of them is a typo or plain text: say which skill you think they
-meant rather than guessing silently.
+${skillsSection(provider)}
 
 ## Changing things
 
@@ -69,3 +92,4 @@ Do what was asked and stop. If something else would help, say so — do not also
 Report honestly. If a tool failed, say so and why. If you have not looked at the result, say
 that rather than implying it looks right — a frame you have not rendered is not evidence. When
 something is done, say it plainly without hedging.`
+}
