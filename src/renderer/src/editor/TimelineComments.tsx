@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { Check, MessageSquare, Plus, RotateCcw, Trash2 } from 'lucide-react'
 import { formatTimecode, type ReviewComment } from '@shared/project'
 import { shortcutOf } from '@shared/commands'
@@ -179,11 +179,15 @@ export function RulerComments({
   )
 }
 
-/** A new comment at the playhead: the words, then Add (or ⌘Enter). */
-function Composer({ fps, onAdded }: { fps: number; onAdded(): void }): ReactNode {
+/**
+ * A new comment at the playhead: the words, then Add (or ⌘Enter). The toolbar's Comments popover
+ * and the library's Index tab both hold one.
+ */
+export function CommentComposer({ fps, onAdded }: { fps: number; onAdded(): void }): ReactNode {
   const playhead = useEditor((state) => state.playhead)
   const [draft, setDraft] = useState('')
   const field = useRef<HTMLTextAreaElement>(null)
+  const fieldId = useId()
   // A frame later, so the popover's own initial focus (its surface) lands first and this wins.
   useEffect(() => {
     const frame = requestAnimationFrame(() => field.current?.focus())
@@ -200,11 +204,11 @@ function Composer({ fps, onAdded }: { fps: number; onAdded(): void }): ReactNode
 
   return (
     <div className="flex flex-col gap-1.5">
-      <label htmlFor="comment-draft" className="text-[11px] text-ink-1">
+      <label htmlFor={fieldId} className="text-[11px] text-ink-1">
         Comment at <span className="tabular-nums">{formatTimecode(playhead, fps, true)}</span>
       </label>
       <textarea
-        id="comment-draft"
+        id={fieldId}
         ref={field}
         value={draft}
         rows={2}
@@ -263,7 +267,7 @@ export function CommentListButton({ fps }: { fps: number }): ReactNode {
       <Popover {...list.surfaceProps} label="Comments" side="bottom" align="start" width={280}>
         <div className="flex flex-col gap-2">
           {composing ? (
-            <Composer fps={fps} onAdded={() => setComposing(false)} />
+            <CommentComposer fps={fps} onAdded={() => setComposing(false)} />
           ) : (
             <>
               {sorted.length === 0 ? (

@@ -23,8 +23,8 @@ import type { ReactNode } from 'react'
 import type { WorkspacePage } from '@/store/editor'
 import { ExportPanel } from '@/editor/ExportPanel'
 import { Inspector } from '@/editor/Inspector'
-import { LeftRail, SidePanel } from '@/editor/LeftRail'
-import { MediaPanel } from '@/editor/MediaPanel'
+import { Library } from '@/editor/library/Library'
+import { MediaBrowser, MediaSourceViewer } from '@/editor/library/MediaBrowser'
 import { AudioStandIn, ColorStandIn } from './placeholders'
 
 export interface PageContent {
@@ -44,19 +44,20 @@ export interface PageContent {
 
 export function pageContent(page: WorkspacePage): PageContent {
   switch (page) {
-    // Resolve's Media page: a big media pool and a viewer. MediaPanel still carries its own
-    // source monitor (its selection is local to it); WP3 can lift that into its own slot.
+    // Resolve's Media page: a big media pool with the selected clip's details, and a large
+    // source monitor beside the programme viewer (they share the pool's selection).
     case 'media':
       return {
-        left: <MediaPanel />,
+        left: <MediaBrowser />,
+        right: <MediaSourceViewer />,
         timeline: false
       }
 
-    // The default page, laid out as the editor always was.
+    // The default page: the library's tabs (Media Pool, Effects, Index, Transcript) replace the
+    // old icon rail; the agent is the dock and export is the Deliver page.
     case 'edit':
       return {
-        rail: <LeftRail />,
-        left: <SidePanel />,
+        left: <Library />,
         right: <Inspector />,
         timeline: true
       }
