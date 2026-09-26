@@ -25,7 +25,7 @@
  * prefixed with the turn's `runId` — without it, turn two's `item_2` would patch turn one's card.
  */
 
-import type { AgentEvent } from '@shared/agent'
+import type { AgentEvent, TurnUsage } from '@shared/agent'
 import { summarise } from './stream'
 
 type Line = Record<string, unknown>
@@ -201,7 +201,8 @@ export function codexToAgentEvents(line: Line, runId: string, state: CodexStream
   }
 
   if (type === 'turn.completed') {
-    return [...closeThinking(runId, state), { type: 'done', runId, reason: 'complete' }]
+    const usage = turnUsage(line)
+    return [...closeThinking(runId, state), { type: 'done', runId, reason: 'complete', ...(usage ? { usage } : {}) }]
   }
 
   if (type === 'turn.failed') {
@@ -219,4 +220,21 @@ function closeThinking(runId: string, state: CodexStreamState): AgentEvent[] {
   if (!state.thinking) return []
   state.thinking = false
   return [{ type: 'thinking-end', runId }]
+}
+
+const count = (value: unknown): number => (typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0)
+
+/**
+ * `turn.completed`'s `usage`. Codex's `input_tokens` already includes the cached part, and its
+ * `output_tokens` the reasoning, so both are taken as they are. No cost: Codex reports none. None
+ * at all for an empty `usage`, which is a turn that said nothing about itself, not a free one.
+ */
+function turnUsage(line: Record<string, unknown>): TurnUsage | null {
+  const usage = asRecord(line['usage'])
+  if (!usage || !('input_tokens' in usage || 'output_tokens' in usage)) return null
+  return {
+    inputTokens: count(usage['input_tokens']),
+    cachedInputTokens: count(usage['cached_input_tokens']),
+    outputTokens: count(usage['output_tokens'])
+  }
 }

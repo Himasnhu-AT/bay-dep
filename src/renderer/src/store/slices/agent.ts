@@ -264,6 +264,12 @@ export function agentSlice({ set, get, restoreFiles }: StoreKit): Actions {
                 )
               }
             }
+            if (event.reason !== 'complete') {
+              entries = [...entries, { kind: 'error', id: newId('msg'), text: event.message ?? 'The run stopped.' }]
+            }
+            // What the turn cost goes last, under everything it produced — its changes and its
+            // failure included, because a failed turn was paid for too.
+            if (event.usage) entries = [...entries, { kind: 'usage', id: newId('use'), usage: event.usage }]
             return {
               agentRunning: false,
               agentThinkingSince: null,
@@ -273,10 +279,7 @@ export function agentSlice({ set, get, restoreFiles }: StoreKit): Actions {
               agentTurnUserEdited: false,
               agentTurnClientEdited: false,
               agentCheckpoints: checkpoints,
-              agentLog:
-                event.reason === 'complete'
-                  ? entries
-                  : [...entries, { kind: 'error', id: newId('msg'), text: event.message ?? 'The run stopped.' }]
+              agentLog: entries
             }
           }
         }

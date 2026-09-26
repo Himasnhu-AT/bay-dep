@@ -8,7 +8,7 @@
  * "did the agent misread me, or did I send it something other than I thought?".
  */
 
-import { formatElapsed, type AgentEntry } from './agent'
+import { describeUsage, formatElapsed, type AgentEntry } from './agent'
 
 /** The panel's log as markdown: turns, tool calls with arguments and results, proposals. */
 export function transcriptMarkdown(projectName: string, log: readonly AgentEntry[], exportedAt: string): string {
@@ -49,6 +49,9 @@ export function transcriptMarkdown(projectName: string, log: readonly AgentEntry
         break
       case 'thinking':
         out.push(`_Thought for ${formatElapsed(entry.seconds)}_`, '')
+        break
+      case 'usage':
+        out.push(`_Tokens: ${describeUsage(entry.usage)}_`, '')
         break
       case 'changes':
         out.push(`### Changes${entry.state === 'applied' ? '' : ` (${entry.state})`}`, '')

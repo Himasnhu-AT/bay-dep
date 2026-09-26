@@ -100,8 +100,12 @@ export type AgentEvent =
    */
   | { type: 'thinking-start'; runId: string }
   | { type: 'thinking-end'; runId: string }
-  /** The run ended. `reason` distinguishes a finished turn from a stop and from a failure. */
-  | { type: 'done'; runId: string; reason: 'complete' | 'stopped' | 'error'; message?: string }
+  /**
+   * The run ended. `reason` distinguishes a finished turn from a stop and from a failure. `usage`
+   * is what the turn cost in tokens, when the runtime reported it — a stopped turn usually has
+   * none, because the line that carries it never arrived.
+   */
+  | { type: 'done'; runId: string; reason: 'complete' | 'stopped' | 'error'; message?: string; usage?: TurnUsage }
 
 /**
  * A conversation with an agent, whatever is hosting it.
@@ -148,6 +152,8 @@ export type AgentEntry =
     }
   | { kind: 'proposal'; id: string; proposal: Proposal }
   | { kind: 'error'; id: string; text: string }
+  /** What one turn cost in tokens, shown under it. The conversation's total is these summed. */
+  | { kind: 'usage'; id: string; usage: TurnUsage }
   /**
    * What an agent turn changed, like a commit's diff. The project before and after lives in the
    * store (`agentCheckpoints`), keyed by `id`, so a transcript export does not carry whole
@@ -545,4 +551,73 @@ export function formatElapsed(seconds: number): string {
   const m = Math.floor(s / 60)
   const rest = s % 60
   return m >= 10 || rest === 0 ? `${m}m` : `${m}m ${rest}s`
+}
+
+// ---------------------------------------------------------------------------
+// Tokens
+// ---------------------------------------------------------------------------
+
+/**
+ * What one turn cost, the same shape whichever runtime answered.
+ *
+ * `inputTokens` is **every** token the model read, cached or not: Claude Code reports the fresh,
+ * cache-written and cache-read parts separately, Codex reports a total with the cached part inside
+ * it, and a total is the number that means the same thing for both. `cachedInputTokens` is the
+ * part read from the prompt cache, which is cheaper and is most of any turn after the first.
+ * `costUsd` is Claude Code's own estimate at list price — on a subscription it is not a bill —
+ * and absent for Codex, which reports no cost.
+ */
+export interface TurnUsage {
+  inputTokens: number
+  cachedInputTokens: number
+  outputTokens: number
+  costUsd?: number
+}
+
+/** 950 → "950", 12_400 → "12.4k", 1_250_000 → "1.25M". */
+export function formatTokens(count: number): string {
+  const n = Math.max(0, Math.round(count))
+  if (n < 1000) return `${n}`
+  if (n < 1_000_000) return `${trimFixed(n / 1000, n < 10_000 ? 2 : 1)}k`
+  return `${trimFixed(n / 1_000_000, 2)}M`
+}
+
+function trimFixed(value: number, digits: number): string {
+  return value.toFixed(digits).replace(/\.?0+$/, '')
+}
+
+/** "$0.014", "$1.20", "<$0.001". */
+export function formatUsd(amount: number): string {
+  if (amount > 0 && amount < 0.001) return '<$0.001'
+  return `$${amount < 1 ? amount.toFixed(3) : amount.toFixed(2)}`
+}
+
+/** "110.7k in (87.8k cached) · 1.26k out · $0.041" — the line under a turn. */
+export function describeUsage(usage: TurnUsage): string {
+  const cached = usage.cachedInputTokens > 0 ? ` (${formatTokens(usage.cachedInputTokens)} cached)` : ''
+  const cost = usage.costUsd !== undefined ? ` · ${formatUsd(usage.costUsd)}` : ''
+  return `${formatTokens(usage.inputTokens)} in${cached} · ${formatTokens(usage.outputTokens)} out${cost}`
+}
+
+/**
+ * The conversation so far, summed from its usage entries, or null when no turn has reported any.
+ * The cost is summed only if every turn had one: a total over some of them would read as the
+ * whole.
+ */
+export function conversationUsage(log: readonly AgentEntry[]): (TurnUsage & { turns: number }) | null {
+  const total = { turns: 0, inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 }
+  let cost = 0
+  let everyTurnPriced = true
+  for (const entry of log) {
+    if (entry.kind !== 'usage') continue
+    const u = entry.usage
+    total.turns += 1
+    total.inputTokens += u.inputTokens
+    total.cachedInputTokens += u.cachedInputTokens
+    total.outputTokens += u.outputTokens
+    if (u.costUsd === undefined) everyTurnPriced = false
+    else cost += u.costUsd
+  }
+  if (total.turns === 0) return null
+  return everyTurnPriced ? { ...total, costUsd: cost } : total
 }

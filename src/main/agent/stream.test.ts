@@ -216,6 +216,47 @@ test('a successful result ends the run', () => {
   assert.deepEqual(events(line), [{ type: 'done', runId: RUN, reason: 'complete' }])
 })
 
+test('a result carries the turn’s tokens and cost, with every input part counted', () => {
+  // Captured from claude 2.1.282 (`claude -p … --output-format stream-json`), trimmed to the
+  // fields that matter. The three input parts are reported apart and summed; the cache-read part
+  // is also kept on its own.
+  const line = JSON.stringify({
+    type: 'result',
+    subtype: 'success',
+    is_error: false,
+    result: 'Hi! 👋 How can I help you today?',
+    total_cost_usd: 0.014166,
+    usage: {
+      input_tokens: 10,
+      cache_creation_input_tokens: 6653,
+      cache_read_input_tokens: 2000,
+      output_tokens: 170,
+      output_tokens_details: { thinking_tokens: 151 },
+      service_tier: 'standard'
+    }
+  })
+  assert.deepEqual(events(line), [
+    {
+      type: 'done',
+      runId: RUN,
+      reason: 'complete',
+      usage: { inputTokens: 8663, cachedInputTokens: 2000, outputTokens: 170, costUsd: 0.014166 }
+    }
+  ])
+})
+
+test('a failed turn still reports what it cost', () => {
+  const line = JSON.stringify({
+    type: 'result',
+    subtype: 'error_during_execution',
+    is_error: true,
+    errors: ['boom'],
+    usage: { input_tokens: 5, output_tokens: 1 }
+  })
+  const [event] = events(line)
+  assert.deepEqual((event as { usage: unknown }).usage, { inputTokens: 5, cachedInputTokens: 0, outputTokens: 1 })
+})
+
 test('a failed result ends the run as an error, carrying the reason', () => {
   const line = JSON.stringify({
     type: 'result',

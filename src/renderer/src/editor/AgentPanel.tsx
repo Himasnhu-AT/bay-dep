@@ -4,6 +4,7 @@ import {
   Brain,
   Check,
   ChevronRight,
+  Coins,
   Film,
   Loader2,
   MessageSquarePlus,
@@ -14,7 +15,16 @@ import {
   Undo2,
   X
 } from 'lucide-react'
-import { approvalMessage, DECLINED_MESSAGE, formatElapsed, type AgentEntry } from '@shared/agent'
+import {
+  approvalMessage,
+  conversationUsage,
+  DECLINED_MESSAGE,
+  describeUsage,
+  formatElapsed,
+  formatTokens,
+  formatUsd,
+  type AgentEntry
+} from '@shared/agent'
 import {
   BayMark,
   Button,
@@ -392,6 +402,33 @@ export function AgentPanel(): ReactNode {
 type AgentTab = 'chat' | 'generate'
 
 /**
+ * The conversation's tokens so far, in the header: nothing until a turn has reported any, then
+ * the total read and written, with the breakdown and the cost on hover.
+ */
+function ConversationTokens(): ReactNode {
+  const log = useEditor((state) => state.agentLog)
+  const total = conversationUsage(log)
+  if (!total) return null
+  const tokens = total.inputTokens + total.outputTokens
+  const cost =
+    total.costUsd !== undefined
+      ? ` About ${formatUsd(total.costUsd)} at list price — Claude Code's estimate, not a bill on a subscription.`
+      : ''
+  return (
+    <Tooltip
+      label={`${formatTokens(tokens)} tokens in this conversation`}
+      detail={`${total.turns} ${total.turns === 1 ? 'turn' : 'turns'}: ${describeUsage(total)}.${cost}`}
+    >
+      <span className="flex h-5 items-center gap-1 rounded-full px-1.5 text-[10.5px] text-ink-2 tabular-nums">
+        <Coins aria-hidden="true" className="size-3" />
+        {formatTokens(tokens)}
+        <span className="sr-only"> tokens used in this conversation</span>
+      </span>
+    </Tooltip>
+  )
+}
+
+/**
  * The dock's title strip: the mark and "Agent", which model is answering, and the three things
  * a person does to the conversation as a whole — start over, the rare options, close.
  */
@@ -425,6 +462,7 @@ function AgentHeader({
         </button>
       </Tooltip>
       <div className="flex-1" />
+      <ConversationTokens />
       <Tooltip label="New conversation" detail="Clears the chat and the pins. The project is not touched.">
         <button
           type="button"
@@ -605,6 +643,13 @@ function Entry({ entry, deliver }: { entry: AgentEntry; deliver: Deliver }): Rea
         <p className="flex items-center gap-1.5 text-[11px] text-ink-2 tabular-nums">
           <Brain aria-hidden="true" className="size-3 shrink-0" />
           Thought for {formatElapsed(entry.seconds)}
+        </p>
+      )
+    case 'usage':
+      return (
+        <p className="flex items-center gap-1.5 text-[10.5px] text-ink-2 tabular-nums">
+          <Coins aria-hidden="true" className="size-3 shrink-0" />
+          {describeUsage(entry.usage)}
         </p>
       )
   }
