@@ -13,7 +13,7 @@
  * becomes a log viewer, and the one thing the user is trying to follow gets buried.
  */
 
-import type { AgentEvent } from '@shared/agent'
+import type { AgentEvent, TurnUsage } from '@shared/agent'
 
 /** One line of the stream, already JSON-parsed. Shapes are checked, never assumed. */
 type StreamMessage = Record<string, unknown>
@@ -172,12 +172,14 @@ export function toAgentEvents(message: StreamMessage, runId: string, state: Stre
   if (type === 'result') {
     const subtype = asString(message['subtype'])
     const isError = message['is_error'] === true
+    const usage = resultUsage(message)
     return [
       {
         type: 'done',
         runId,
         reason: isError ? 'error' : 'complete',
-        ...(isError ? { message: failureText(message) ?? subtype ?? 'The run failed.' } : {})
+        ...(isError ? { message: failureText(message) ?? subtype ?? 'The run failed.' } : {}),
+        ...(usage ? { usage } : {})
       }
     ]
   }
@@ -185,6 +187,27 @@ export function toAgentEvents(message: StreamMessage, runId: string, state: Stre
   // Everything else — `system`/init, `system`/status, `rate_limit_event` — is real information
   // about the run and none of it belongs in a conversation the user is reading.
   return []
+}
+
+const count = (value: unknown): number => (typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0)
+
+/**
+ * What the turn cost, from the `result` line: `usage` is the whole turn (every model call in it,
+ * summed by the CLI), and `total_cost_usd` the CLI's estimate at list price. The three input
+ * parts are added, because a total is the only input count that means the same under Codex.
+ * None when the line has no `usage` — an older CLI, or a failure before any model call.
+ */
+function resultUsage(message: StreamMessage): TurnUsage | null {
+  const usage = asRecord(message['usage'])
+  if (!usage) return null
+  const cached = count(usage['cache_read_input_tokens'])
+  const cost = message['total_cost_usd']
+  return {
+    inputTokens: count(usage['input_tokens']) + count(usage['cache_creation_input_tokens']) + cached,
+    cachedInputTokens: cached,
+    outputTokens: count(usage['output_tokens']),
+    ...(typeof cost === 'number' && Number.isFinite(cost) && cost >= 0 ? { costUsd: cost } : {})
+  }
 }
 
 /**

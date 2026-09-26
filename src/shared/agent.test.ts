@@ -494,3 +494,40 @@ test('a proposal whose apply_script has no script is refused when proposed', () 
 test('elapsed time reads the way a person says it', () => {
   assert.deepEqual([0, 8.4, 60, 72, 144, 600, 725].map(formatElapsed), ['0s', '8s', '1m', '1m 12s', '2m 24s', '10m', '12m'])
 })
+
+// --- tokens ----------------------------------------------------------------------------------
+
+test('token counts read at a glance', async () => {
+  const { formatTokens, formatUsd } = await import('./agent')
+  assert.deepEqual(
+    [0, 950, 1000, 1234, 12_400, 110_662, 999_949, 1_250_000].map(formatTokens),
+    ['0', '950', '1k', '1.23k', '12.4k', '110.7k', '999.9k', '1.25M']
+  )
+  assert.deepEqual([0, 0.0004, 0.014166, 1.2].map(formatUsd), ['$0.000', '<$0.001', '$0.014', '$1.20'])
+})
+
+test('a turn’s line names the cached part and the cost only when there are any', async () => {
+  const { describeUsage } = await import('./agent')
+  assert.equal(
+    describeUsage({ inputTokens: 110_662, cachedInputTokens: 87_808, outputTokens: 1256, costUsd: 0.041 }),
+    '110.7k in (87.8k cached) · 1.26k out · $0.041'
+  )
+  assert.equal(describeUsage({ inputTokens: 500, cachedInputTokens: 0, outputTokens: 20 }), '500 in · 20 out')
+})
+
+test('the conversation total sums its turns, and drops the cost if any turn had none', async () => {
+  const { conversationUsage } = await import('./agent')
+  const priced = { kind: 'usage' as const, id: 'a', usage: { inputTokens: 100, cachedInputTokens: 40, outputTokens: 10, costUsd: 0.5 } }
+  const unpriced = { kind: 'usage' as const, id: 'b', usage: { inputTokens: 50, cachedInputTokens: 0, outputTokens: 5 } }
+  const words = { kind: 'assistant' as const, id: 'c', text: 'hi' }
+  assert.equal(conversationUsage([words]), null)
+  assert.deepEqual(conversationUsage([priced, words, priced]), {
+    turns: 2,
+    inputTokens: 200,
+    cachedInputTokens: 80,
+    outputTokens: 20,
+    costUsd: 1
+  })
+  // A total over some turns' cost would read as the whole conversation's.
+  assert.deepEqual(conversationUsage([priced, unpriced]), { turns: 2, inputTokens: 150, cachedInputTokens: 40, outputTokens: 15 })
+})

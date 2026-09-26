@@ -109,7 +109,14 @@ test('reasoning summaries are thinking, opened and closed', () => {
 test('a finished turn is done/complete, and the thread id is kept for the next turn', () => {
   const state = newCodexStreamState()
   const events = play(fixture('tools-and-reasoning'), state)
-  assert.deepEqual(events.at(-1), { type: 'done', runId: RUN, reason: 'complete' })
+  assert.deepEqual(events.at(-1), {
+    type: 'done',
+    runId: RUN,
+    reason: 'complete',
+    // The fixture's own `turn.completed`: input already includes the cached part, output the
+    // reasoning, and Codex reports no cost.
+    usage: { inputTokens: 110662, cachedInputTokens: 87808, outputTokens: 1256 }
+  })
   assert.equal(ofType(events, 'done').length, 1)
   assert.equal(state.threadId, '01a0d61e-57b1-7403-8a09-1fc0ff6cd1d0')
 })
@@ -160,4 +167,9 @@ test('the sandbox probe: every escape attempt ended in text, never a shell card'
   const text = ofType(events, 'text').map((event) => event.delta).join('')
   assert.match(text, /patch rejected: writing is blocked by read-only sandbox/)
   assert.match(text, /process is not defined/)
+})
+
+test('an empty usage says nothing about the turn, rather than that it was free', () => {
+  const events = play(['{"type":"turn.completed","usage":{}}'])
+  assert.deepEqual(events, [{ type: 'done', runId: RUN, reason: 'complete' }])
 })

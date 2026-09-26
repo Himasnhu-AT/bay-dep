@@ -333,3 +333,21 @@ test('a think becomes one "thought for" line with its duration; a turn ended mid
     Date.now = realNow
   }
 })
+
+test('a turn’s tokens land last, under its changes and its failure', async () => {
+  fresh()
+  const usage = { inputTokens: 1000, cachedInputTokens: 800, outputTokens: 50, costUsd: 0.01 }
+  state().applyAgentEvent({ type: 'started', runId: 'u1' })
+  await asAgent(() => state().addTrack('video'))
+  state().applyAgentEvent({ type: 'done', runId: 'u1', reason: 'complete', usage })
+  assert.deepEqual(state().agentLog.map((e) => e.kind), ['changes', 'usage'])
+
+  state().applyAgentEvent({ type: 'started', runId: 'u2' })
+  state().applyAgentEvent({ type: 'done', runId: 'u2', reason: 'error', message: 'boom', usage })
+  assert.deepEqual(state().agentLog.map((e) => e.kind), ['changes', 'usage', 'error', 'usage'])
+
+  // No usage reported (a stopped turn): no line, rather than a line claiming zero.
+  state().applyAgentEvent({ type: 'started', runId: 'u3' })
+  state().applyAgentEvent({ type: 'done', runId: 'u3', reason: 'stopped' })
+  assert.equal(state().agentLog.filter((e) => e.kind === 'usage').length, 2)
+})
