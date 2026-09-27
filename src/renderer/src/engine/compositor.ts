@@ -33,6 +33,7 @@ import { MediaPool, isDrawable, type MediaEntry } from './mediaPool'
 import type { CompositionPool } from './compositionPool'
 import { planTransition } from './transitions'
 import { BrfSurfaces, documentOf, layoutSizeOf, secondsAt } from './brf'
+import { paintGlassBackdrop, planGlass, surfaceToDevice, type GlassPatch } from './glass'
 import { brfRuntime } from './brfCode'
 import { importedFonts } from './importedFonts'
 import type { BrfDocument } from '@shared/brf'
@@ -374,7 +375,9 @@ export class Compositor {
     item: Item,
     frame: number,
     alphaMul = 1,
-    stats?: DrawStats
+    stats?: DrawStats,
+    /** Glass panes on a `.brf` surface: their backdrop is drawn from the canvas before the surface. */
+    glass: GlassPatch[] = []
   ): void {
     const box = layoutBox(item)
     if (!box) return
@@ -406,6 +409,8 @@ export class Compositor {
       const dest = cropped
         ? cropDestRect(item.crop, box)
         : { dx: box.left, dy: box.top, dw: box.width, dh: box.height }
+
+      if (glass.length > 0) this.#glassBackdrop(ctx, item, glass, src, dest, alpha)
 
       // The grade replaces the source with a graded picture of the same framing, at the size it
       // will be drawn — everything else about the draw (alpha, blend, filter, rotation) is
@@ -443,6 +448,43 @@ export class Compositor {
       // A frame can be pulled out from under us mid-draw (the element reloaded, the source
       // went away). One missing item must not abandon the rest of the frame.
     } finally {
+      ctx.restore()
+    }
+  }
+
+  /**
+   * Frosts what the canvas holds under each glass pane, inside the pane, before the surface that
+   * paints the pane's tint and rim is drawn over it. Mapped with the transform in force right now
+   * — the device scale, any transition offset, the item's rotation and zoom — and the same
+   * `src`/`dest` the surface is about to be drawn with, so crop and rotation place the frost where
+   * the pane lands. A blend mode other than normal skips it: such an item is meant to combine with
+   * what is under it, and replacing that with a blur would contradict the mode — the pane then
+   * draws tint and rim only, which the guide says.
+   */
+  #glassBackdrop(
+    ctx: RenderTarget,
+    item: Item,
+    glass: GlassPatch[],
+    src: { sx: number; sy: number; sw: number; sh: number },
+    dest: { dx: number; dy: number; dw: number; dh: number },
+    alpha: number
+  ): void {
+    if (blendOperation(item.blendMode) !== 'source-over') return
+    const t = ctx.getTransform()
+    const toDevice = surfaceToDevice([t.a, t.b, t.c, t.d, t.e, t.f], src, dest)
+    if (!toDevice) return
+    const canvas = { width: ctx.canvas.width, height: ctx.canvas.height }
+    for (const patch of glass) {
+      const plan = planGlass(patch, toDevice, canvas, alpha)
+      if (!plan) continue
+      ctx.save()
+      // A cropped item shows only its dest rect; the frost must not reach past it either.
+      if (isCropped(item.crop)) {
+        ctx.beginPath()
+        ctx.rect(dest.dx, dest.dy, dest.dw, dest.dh)
+        ctx.clip()
+      }
+      paintGlassBackdrop(ctx, plan)
       ctx.restore()
     }
   }
@@ -594,7 +636,7 @@ export class Compositor {
         this.#placeholder(ctx, item, stats, asset.name, `${asset.name} (${painted.error})`)
         return
       }
-      this.#drawSource(ctx, painted.surface, item, frame, opts.alphaMul, stats)
+      this.#drawSource(ctx, painted.surface, item, frame, opts.alphaMul, stats, painted.glass)
       stats.drawn += 1
       return
     }

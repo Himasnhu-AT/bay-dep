@@ -50,6 +50,7 @@ export default ({ t, vars }) => (
 | `<path>` | `d` (SVG path data, in pixels, origin at the anchor), `fill`, `stroke`, `strokeWidth`, `draw` (0–1 of the stroke drawn) |
 | `<text>` | children are the text; `size`, `weight` (100–1000, default 700), `font`, `italic`, `fill` (default white), `stroke`, `strokeWidth`, `align` (default `center`), `w` (wrap width), `lineHeight` (×size, default 1.2), `tracking` (px), `split`, `stagger`, `variations` (variable-font axes, below) |
 | `<group>` | children; `w`, `h` (its box, for `anchor`, `clip` and `wipe`), `clip` |
+| `<glass>` | `w`, `h`, `radius`, `material`, `blur`, `saturation`, `tint`, `tintOpacity`, `refraction`, `bezel`, `edgeHighlight` — frosted glass over what is below the clip ([Glass](#glass)) |
 
 Every element also takes:
 
@@ -280,6 +281,76 @@ export default ({ t }) => {
   )
 }
 ```
+
+## Glass
+
+`<glass>` is a pane of frosted glass: what the **tracks below this clip** show through it
+blurred, a little more saturated, and bent at the rim, with a tint and a rim light on top. It is a
+leaf, so put text and shapes *after* it to sit on the glass.
+
+```tsx
+import { spring, interpolate } from 'bay'
+
+export const vars = { title: 'Nothing leaves your Mac', kicker: 'PRIVATE BY DESIGN' }
+
+export default ({ t, vars }) => {
+  const rise = spring(t, { delay: 0.1, damping: 200 })
+  const y = 540 + 60 * (1 - rise)
+  return (
+    <scene duration={4} size={[1920, 1080]}>
+      <glass x={960} y={y} w={1100} h={300} radius={48} material="regular" tint="#ffffff"
+        tintOpacity={0.14} opacity={rise} out={['fade', 0.3]} />
+      <text x={960} y={y - 50} size={34} weight={700} tracking={6} fill="#0B0B0Fb3"
+        opacity={interpolate(t, [0.3, 0.6], [0, 1])} out={['fade', 0.3]}>{vars.kicker}</text>
+      <text x={960} y={y + 30} size={84} weight={900} fill="#0B0B0F"
+        opacity={interpolate(t, [0.35, 0.7], [0, 1])} out={['fade', 0.3]}>{vars.title}</text>
+    </scene>
+  )
+}
+```
+
+**Materials** are quick-liquid's, clearest to most frosted — each sets `blur`, `saturation`,
+`tintOpacity`, `refraction` and `bezel`, and any of them given beside it wins:
+
+| `material` | blur | saturation | tintOpacity | refraction | bezel | Use |
+|---|---|---|---|---|---|---|
+| `clear` | 2 | 1.55 | 0.03 | 26 | 36 | a lens over a busy shot; the picture stays legible |
+| `thin` | 6 | 1.5 | 0.05 | 18 | 26 | chips and small labels |
+| `regular` (default) | 14 | 1.7 | 0.09 | 16 | 30 | cards and lower thirds with text on them |
+| `thick` | 22 | 1.8 | 0.13 | 12 | 28 | long text over detailed footage |
+| `ultra` | 30 | 1.85 | 0.17 | 10 | 26 | the backdrop only as colour and light |
+
+**Parameters**, and where each stops reading as glass — `write_brf` refuses a value past these:
+
+| Prop | Safe range | Past it |
+|---|---|---|
+| `blur` | 0–40 px | past 40 px the backdrop turns to fog and the glass reads as a grey card |
+| `saturation` | 0–2.5 (1 = unchanged) | past 2.5 skin and skies go neon under the glass |
+| `tint` | a colour, or `"r, g, b"` | — (its strength is `tintOpacity`) |
+| `tintOpacity` | 0–0.6 | past 0.6 the tint hides the backdrop and it reads as a flat card |
+| `refraction` | 0–60 px | past 60 px the rim smears the backdrop into streaks |
+| `bezel` | 0–120 px | past 120 px the bend covers the whole pane and it reads as a fisheye |
+| `edgeHighlight` | 0–1 | above 1 the rim clips to a white outline |
+
+Lengths are in the scene's own pixels and scale with it. `blur` on a glass pane is its frost —
+the pane itself is never blurred.
+
+**Text on glass: dark ink on light glass, light ink on dark glass.** A white tint lifts
+whatever is behind it, so white text on it disappears; use near-black (`#0B0B0F`) at full
+strength and a lighter alpha for secondary lines. For light text, tint dark
+(`tint="#0B0B0F" tintOpacity={0.35}`). Check both with `preview_frame` over the actual footage —
+the backdrop decides the contrast, not the tint alone.
+
+What glass frosts, and what it does not:
+
+- It frosts what is **under the clip** — footage, photos and other clips on lower tracks. Shapes
+  earlier in the **same** scene, and a scene `background`, are painted on the same layer as the
+  glass and are not behind it; to frost a graphic, put it in its own `.brf` on a lower track.
+- A clip with a **blend mode** other than normal draws its glass as tint and rim only, without
+  the frost: a blended clip is meant to mix with what is under it.
+- A `group`'s `clip` does not clip the frost; keep panes inside their group's box.
+- Near the edge of the frame the frost fades a little, because there is nothing beyond the frame
+  to blur in.
 
 ## When `write_brf` refuses
 
