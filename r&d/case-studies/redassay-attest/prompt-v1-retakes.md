@@ -1,0 +1,6 @@
+Good first cut. I re-recorded the two shots you flagged; both are now in the pool:
+
+1. t2c-ring-75-95: the ring climbing 75% → 95% (the demo's own counter, which steps rather than glides). Start it at 1.34 s into the source, where it reads 77%, to skip a brief 74% flicker. Replace the t8-overview-95 still in the climax with it: hard-cut from the 0→75 shot to this, framed on the ring exactly as the previous shot, so it reads as one continuous rise that lands on 95%. Let the final frame (95%) hold under the push-in until the dip to black. Freeze or extend the last frame if the clip is too short.
+2. t3b-controls-flip: Controls with no toasts. The Access group sits mid-frame. The fourth Access row (ACC-4 "Access is removed within 24h of leaving") flips from Not started to a green Met badge at ~2.5 s, and a row in the group below flips at ~6.2 s. Replace t3-controls-evidence in the "Evidence, collected." beat with it, cropped so the ACC-4 row (title on the left, badge on the right) fills the frame and the flip happens on screen, around ~1 s after the cut.
+
+Then re-check both beats with preview_frame (before, during and after each change) and run frame_grid over 44–56 s. Still don't export.
