@@ -36,7 +36,7 @@ and **Open questions**. Keep entries short, and link to files instead of copying
   - **Stock sites are the wrong place to look:** Pexels and Mixkit "talking to camera" clips ship with **no audio stream** (14 of 14 probed).
   - Share-alike passes to our edits, and the people on camera keep their publicity rights.
   - Hindi needs a bigger whisper model than bay's default `base`.
-- [ ] Attest v4 (the owner's review of v3):
+- [x] Attest v4 (the owner's review of v3) → v4-final exported:
   - Fixes: clicks off target, animation stuck, UI tilted where text should read.
   - New look: white, premium, glass, and perry-smooth.
   - Built `tools/render-frames.mjs`, which renders deterministically on a virtual clock with motion-blur sub-frames. macOS has no BeginFrameControl, so each step is virtual-time advance + a screenshot.
@@ -123,6 +123,15 @@ and **Open questions**. Keep entries short, and link to files instead of copying
   unverified. Replace it before publishing.
 
 ## Log
+
+- **2026-09-27** (coordinator):
+  - **Attest v4 exported:** `~/Movies/redassay-launch/RedAssay-launch-film-v4-final.mp4`, 52.4 s, −14.0 LUFS. White canvas, glass card, dark ink, one red word, all straight. The takes are rendered deterministically (`v4b`, with timeline-sync), and the run is recorded in `~/Movies/bay-release/bay-agent-run-attest-v4.mp4`.
+  - **Incident:** I truncated a take bay was reading, which ruined one export. The rule is now in `tools/README.md`.
+  - **`<glass>` in `.brf`** is merged (882a742). An independent review found 3 should-fixes, all fixed in a7bde5b.
+  - **In-app probe** (scratch project, a policies take under a thick pane, frame 120, export on vs off):
+    - Texture inside the pane went 1.38 → 0.33.
+    - Outside the pane it stayed 2.23 → 2.23; mean |Δ| was 0.000 far away and 0.127 at the edge.
+    - Preview matched export visually.
 
 - **2026-09-27** (coordinator):
   - Skills auto-load and the launch-film skill are shipped, tested, mutation-checked and rebuilt into the running app.
