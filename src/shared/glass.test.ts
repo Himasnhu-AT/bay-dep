@@ -79,6 +79,20 @@ test('a tint is a colour or quick-liquid\'s "r, g, b"; anything else is refused'
   assert.equal(faultsOf(pane({ tint: '300, 0, 0' }))[0]?.at, 'layers[0].tint')
 })
 
+test('a "$name" tint must name a declared var holding a colour, or the pane would go white', () => {
+  const withVars = (vars: Record<string, unknown>, tint: string) => {
+    const parsed = parseBrf({ brf: 1, duration: 2, vars, layers: [pane({ tint })] })
+    return parsed.ok ? [] : parsed.faults
+  }
+  assert.deepEqual(withVars({ glassTint: '#0B0B0F' }, '$glassTint'), [], 'a declared colour passes')
+  assert.deepEqual(withVars({ glassTint: '20, 40, 40' }, '$glassTint'), [], 'so does "r, g, b"')
+  const missing = withVars({ glassTint: '#0B0B0F' }, '$glasTint')
+  assert.equal(missing[0]?.at, 'layers[0].tint')
+  assert.match(missing[0]!.message, /\$glasTint.*does not declare/)
+  const notColour = withVars({ glassTint: 7 }, '$glassTint')
+  assert.match(notColour[0]!.message, /\$glassTint is 7, not a colour/)
+})
+
 test('the presets are quick-liquid\'s numbers, and overrides win over them', () => {
   // quick-liquid 0.1.2 dist/chunk-4TLGP4GF.mjs, MATERIAL_PRESETS — copied by hand.
   const expected = {

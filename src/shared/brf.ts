@@ -431,7 +431,7 @@ function checkLayer(
     }
   }
 
-  if (kind === 'glass') checkGlass(layer, at, fault)
+  if (kind === 'glass') checkGlass(layer, at, vars, fault)
   if ((kind === 'rect' || kind === 'ellipse' || kind === 'glass') && (layer.w === undefined || layer.h === undefined)) {
     fault(at, `a ${kind} needs "w" and "h"`)
   }
@@ -479,7 +479,7 @@ function checkLayer(
 }
 
 /** A glass layer's own props: its material, its tint, and each number inside its safe range. */
-function checkGlass(layer: Record<string, unknown>, at: string, fault: (at: string, message: string) => void): void {
+function checkGlass(layer: Record<string, unknown>, at: string, vars: BrfValues, fault: (at: string, message: string) => void): void {
   if (layer.material !== undefined && !isGlassMaterial(layer.material)) {
     const given = layer.material
     fault(
@@ -489,7 +489,14 @@ function checkGlass(layer: Record<string, unknown>, at: string, fault: (at: stri
   }
   if (layer.tint !== undefined) {
     const tint = layer.tint
-    if (typeof tint !== 'string' || (!isColorLike(tint) && !parseTintTriple(tint))) {
+    if (typeof tint === 'string' && tint.startsWith('$')) {
+      // Unchecked, an undeclared name resolves to nothing and the pane silently tints white.
+      const name = tint.slice(1)
+      if (!(name in vars)) fault(`${at}.tint`, `refers to $${name}, which "vars" does not declare — add it to "vars", or write the colour itself`)
+      else if (typeof vars[name] !== 'string' || (!parseColor(vars[name] as string) && !parseTintTriple(vars[name] as string))) {
+        fault(`${at}.tint`, `$${name} is ${JSON.stringify(vars[name])}, not a colour or "r, g, b"`)
+      }
+    } else if (typeof tint !== 'string' || (!isColorLike(tint) && !parseTintTriple(tint))) {
       fault(`${at}.tint`, `${JSON.stringify(tint)} is not a tint: a colour ("#ffffff", "rgba(20,40,40,1)") or "r, g, b" as quick-liquid writes it — set its strength with tintOpacity`)
     }
   }

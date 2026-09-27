@@ -33,7 +33,7 @@ import { MediaPool, isDrawable, type MediaEntry } from './mediaPool'
 import type { CompositionPool } from './compositionPool'
 import { planTransition } from './transitions'
 import { BrfSurfaces, documentOf, layoutSizeOf, secondsAt } from './brf'
-import { paintGlassBackdrop, planGlass, surfaceToDevice, type GlassPatch } from './glass'
+import { paintGlassBackdrop, planGlass, releaseGlassBuffers, surfaceToDevice, type GlassPatch } from './glass'
 import { brfRuntime } from './brfCode'
 import { importedFonts } from './importedFonts'
 import type { BrfDocument } from '@shared/brf'
@@ -362,6 +362,7 @@ export class Compositor {
     this.#seeks.clear()
     this.#seekLatency.clear()
     this.#brf.reset()
+    releaseGlassBuffers()
   }
 
   // -- internals ------------------------------------------------------------
@@ -457,9 +458,10 @@ export class Compositor {
    * paints the pane's tint and rim is drawn over it. Mapped with the transform in force right now
    * — the device scale, any transition offset, the item's rotation and zoom — and the same
    * `src`/`dest` the surface is about to be drawn with, so crop and rotation place the frost where
-   * the pane lands. A blend mode other than normal skips it: such an item is meant to combine with
-   * what is under it, and replacing that with a blur would contradict the mode — the pane then
-   * draws tint and rim only, which the guide says.
+   * the pane lands, clipped to the surface's drawn rect and the scene inside it. A blend mode
+   * other than normal skips it: such an item is meant to combine with what is under it, and
+   * replacing that with a blur would contradict the mode — the pane then draws tint and rim only,
+   * which the guide says.
    */
   #glassBackdrop(
     ctx: RenderTarget,
@@ -478,14 +480,20 @@ export class Compositor {
       const plan = planGlass(patch, toDevice, canvas, alpha)
       if (!plan) continue
       ctx.save()
-      // A cropped item shows only its dest rect; the frost must not reach past it either.
-      if (isCropped(item.crop)) {
+      try {
+        // Only where the surface itself lands (its box, or its crop), and only inside the scene
+        // there: a pane sliding in from off-scene must not frost what the tint and rim cannot reach.
         ctx.beginPath()
         ctx.rect(dest.dx, dest.dy, dest.dw, dest.dh)
         ctx.clip()
+        ctx.setTransform(...toDevice)
+        ctx.beginPath()
+        ctx.rect(patch.scene.x, patch.scene.y, patch.scene.w, patch.scene.h)
+        ctx.clip()
+        paintGlassBackdrop(ctx, plan)
+      } finally {
+        ctx.restore()
       }
-      paintGlassBackdrop(ctx, plan)
-      ctx.restore()
     }
   }
 

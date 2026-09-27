@@ -28,7 +28,7 @@ test('a painted surface reports each glass pane, in surface pixels, and nothing 
   ])
   // The surface is drawn at half the layout size: base halves everything.
   const base: Matrix = [0.5, 0, 0, 0.5, 0, 0]
-  const patches = glassPatches(evaluateBrf(doc, 1, 1920, 1080), base)
+  const patches = glassPatches(evaluateBrf(doc, 1, 1920, 1080), base, { width: 1920, height: 1080 })
   assert.equal(patches.length, 2, 'both panes, the grouped one too, and no other layer')
   const [first, second] = patches as [GlassPatch, GlassPatch]
   assert.deepEqual(first.matrix, [0.5, 0, 0, 0.5, 100, 50])
@@ -36,6 +36,19 @@ test('a painted surface reports each glass pane, in surface pixels, and nothing 
   assert.equal(first.look.blur, 6, 'thin')
   assert.deepEqual(second.matrix.slice(4), [500, 250], 'the group transform is carried')
   assert.equal(second.look.blur, 30, 'ultra')
+  assert.deepEqual(first.scene, { x: 0, y: 0, w: 960, h: 540 }, 'the scene on the surface')
+})
+
+test('a letterboxed scene reports its own rectangle on the surface, for the frost to stay inside', () => {
+  // A 1080×1920 design fitted into a 1920×1080 surface: scale 0.5625, centred.
+  const doc = scene([{ type: 'glass', x: 0, y: 0, w: 100, h: 100 }])
+  const s = 1080 / 1920
+  const base: Matrix = [s, 0, 0, s, (1920 - 1080 * s) / 2, 0]
+  const [only] = glassPatches(evaluateBrf(doc, 1, 1080, 1920), base, { width: 1080, height: 1920 })
+  assert.ok(only)
+  close(only.scene.x, (1920 - 1080 * s) / 2, 'left edge of the pillarbox')
+  close(only.scene.w, 1080 * s, 'width')
+  close(only.scene.h, 1080, 'height')
 })
 
 test('a pane that is fully transparent or not yet alive reports nothing', () => {
@@ -43,9 +56,10 @@ test('a pane that is fully transparent or not yet alive reports nothing', () => 
     { type: 'glass', x: 0, y: 0, w: 10, h: 10, opacity: 0 },
     { type: 'glass', x: 0, y: 0, w: 10, h: 10, t: [1.5, 2] }
   ])
-  assert.deepEqual(glassPatches(evaluateBrf(doc, 1, 100, 100), IDENTITY), [])
+  const size = { width: 100, height: 100 }
+  assert.deepEqual(glassPatches(evaluateBrf(doc, 1, 100, 100), IDENTITY, size), [])
   // Positive control: at 1.6s the second pane is alive and is reported.
-  assert.equal(glassPatches(evaluateBrf(doc, 1.6, 100, 100), IDENTITY).length, 1)
+  assert.equal(glassPatches(evaluateBrf(doc, 1.6, 100, 100), IDENTITY, size).length, 1)
 })
 
 test('surface → device follows drawImage: the box, the crop, then the transform in force', () => {
@@ -72,6 +86,7 @@ const patch = (over: Partial<GlassPatch> = {}): GlassPatch => ({
   wipe: 1,
   alpha: 1,
   look: resolveGlass('regular', {}),
+  scene: { x: 0, y: 0, w: 1920, h: 1080 },
   ...over
 })
 
@@ -122,7 +137,27 @@ test('opacity and wipe reach the plan; a zero alpha or zero wipe is no plan', ()
   close(plan.alpha, 0.25, 'item alpha times pane alpha')
   assert.equal(planGlass(patch(), IDENTITY, { width: 1920, height: 1080 }, 0), null)
   assert.equal(planGlass(patch({ wipe: 0 }), IDENTITY, { width: 1920, height: 1080 }, 1), null)
-  assert.equal(planGlass(patch({ wipe: 0.5 }), IDENTITY, { width: 1920, height: 1080 }, 1)!.w, 100)
+})
+
+test('under a wipe the pane keeps its whole shape and rim; only a plain rect clip narrows it', () => {
+  // As `paintBrf` draws the tint: the full rounded pane, clipped by rect(0,0,w·wipe,h). A pane
+  // narrowed to w·wipe instead would re-round its right edge and pull its rim in with the wipe.
+  const canvas = { width: 1920, height: 1080 }
+  const whole = planGlass(patch({ radius: 40 }), IDENTITY, canvas, 1)!
+  const half = planGlass(patch({ radius: 40, wipe: 0.5 }), IDENTITY, canvas, 1)!
+  assert.equal(half.w, 200, 'the whole width')
+  assert.equal(half.radius, whole.radius, 'the whole radius')
+  assert.deepEqual(half.bands, whole.bands, 'the whole rim')
+  assert.equal(half.wipe, 0.5)
+  assert.equal(whole.wipe, 1)
+  // Only the revealed half is copied from the canvas.
+  assert.ok(half.region.w < whole.region.w, `region ${half.region.w} narrower than ${whole.region.w}`)
+})
+
+test('the region is the pane plus the blur, and no more', () => {
+  // The rim magnifies about the centre, which reads inward; it needs no extra margin.
+  const plan = planGlass(patch({ look: resolveGlass('clear', { blur: 10 }) }), IDENTITY, { width: 1920, height: 1080 }, 1)!
+  assert.deepEqual(plan.region, { x: 100 - 22, y: 100 - 22, w: 200 + 44, h: 100 + 44 })
 })
 
 test('the rim bends hardest at the edge, easing off inward, and not at all without refraction', () => {

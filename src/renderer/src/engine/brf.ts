@@ -448,7 +448,7 @@ export class BrfSurfaces {
     paintBrf(ctx, ops, where.base)
     // The panes, in surface pixels, for the compositor's backdrop pass: the surface cannot see
     // what is under it, so the frost is drawn by whoever can (`engine/glass.ts`).
-    return { surface, glass: glassPatches(ops, where.base) }
+    return { surface, glass: glassPatches(ops, where.base, where) }
   }
 
   reset(): void {

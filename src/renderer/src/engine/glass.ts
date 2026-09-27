@@ -35,6 +35,11 @@ export interface GlassPatch {
   wipe: number
   alpha: number
   look: GlassLook
+  /**
+   * The scene's own rectangle on the surface, in surface pixels. A letterboxed or boxed scene
+   * draws nothing outside it — the pane's tint and rim cannot — so neither may its frost.
+   */
+  scene: { x: number; y: number; w: number; h: number }
 }
 
 export function multiply(m: Matrix, n: Matrix): Matrix {
@@ -52,12 +57,18 @@ function apply(m: Matrix, x: number, y: number): [number, number] {
   return [m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]]
 }
 
-/** The glass panes among `ops`, mapped onto the surface by `base` (document → surface pixels). */
-export function glassPatches(ops: DrawOp[], base: Matrix): GlassPatch[] {
+/**
+ * The glass panes among `ops`, mapped onto the surface by `base` (document → surface pixels,
+ * a scale and an offset), with the `size.width`×`size.height` scene's rectangle on the surface.
+ */
+export function glassPatches(ops: DrawOp[], base: Matrix, size: { width: number; height: number }): GlassPatch[] {
+  const [a, b] = apply(base, 0, 0)
+  const [c, d] = apply(base, size.width, size.height)
+  const scene = { x: Math.min(a, c), y: Math.min(b, d), w: Math.abs(c - a), h: Math.abs(d - b) }
   const out: GlassPatch[] = []
   for (const op of ops) {
     if (op.kind !== 'glass' || op.w <= 0 || op.h <= 0 || op.alpha <= 0.0005) continue
-    out.push({ matrix: multiply(base, op.matrix), w: op.w, h: op.h, radius: op.radius, wipe: op.wipe, alpha: op.alpha, look: op.look })
+    out.push({ matrix: multiply(base, op.matrix), w: op.w, h: op.h, radius: op.radius, wipe: op.wipe, alpha: op.alpha, look: op.look, scene })
   }
   return out
 }
@@ -82,9 +93,12 @@ export function surfaceToDevice(
 export interface GlassPlan {
   /** Pane-local units → device pixels. */
   matrix: Matrix
+  /** The whole pane, whatever the wipe: its radius and rim are the whole pane's. */
   w: number
   h: number
   radius: number
+  /** How much of the pane's width is revealed, 0–1 — a plain rect clip, as the painter's. */
+  wipe: number
   alpha: number
   /** Device pixels per local unit. */
   unit: number
@@ -107,19 +121,20 @@ export function planGlass(
 ): GlassPlan | null {
   const matrix = multiply(toDevice, patch.matrix)
   const unit = Math.sqrt(Math.abs(matrix[0] * matrix[3] - matrix[1] * matrix[2]))
-  const w = patch.w * Math.max(0, Math.min(1, patch.wipe))
+  const wipe = Math.max(0, Math.min(1, patch.wipe))
+  const w = patch.w
   const a = alpha * patch.alpha
-  if (!(unit > 0) || !(w > 0) || !(patch.h > 0) || !(a > 0.0005) || !matrix.every(Number.isFinite)) return null
-  const corners = [apply(matrix, 0, 0), apply(matrix, w, 0), apply(matrix, 0, patch.h), apply(matrix, w, patch.h)]
+  if (!(unit > 0) || !(w * wipe > 0) || !(patch.h > 0) || !(a > 0.0005) || !matrix.every(Number.isFinite)) return null
+  // Only the revealed part is read from the canvas.
+  const shown = w * wipe
+  const corners = [apply(matrix, 0, 0), apply(matrix, shown, 0), apply(matrix, 0, patch.h), apply(matrix, shown, patch.h)]
   const xs = corners.map((c) => c[0])
   const ys = corners.map((c) => c[1])
   const blurPx = patch.look.blur * unit
   const bands = refractionBands(patch.w, patch.h, patch.look)
-  const reach = bands.length > 0 ? Math.max(...bands.map((b) => b.scale)) : 1
-  // Room for the blur to sample beyond the pane, and for the rim's magnification to reach in from
-  // outside it: a band scaled by s about the centre reads up to (s-1)·half-diagonal further out.
-  const halfDiagonal = Math.hypot(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) / 2
-  const margin = Math.ceil(2 * blurPx + (reach - 1) * halfDiagonal) + 2
+  // Room for the blur to sample beyond the pane. The rim needs none: magnifying about the centre
+  // reads from further in, never further out.
+  const margin = Math.ceil(2 * blurPx) + 2
   const x0 = Math.max(0, Math.floor(Math.min(...xs) - margin))
   const y0 = Math.max(0, Math.floor(Math.min(...ys) - margin))
   const x1 = Math.min(canvas.width, Math.ceil(Math.max(...xs) + margin))
@@ -130,6 +145,7 @@ export function planGlass(
     w,
     h: patch.h,
     radius: Math.max(0, Math.min(patch.radius, w / 2, patch.h / 2)),
+    wipe,
     alpha: Math.min(1, a),
     unit,
     blurPx,
@@ -173,6 +189,12 @@ export function refractionBands(w: number, h: number, look: Pick<GlassLook, 'ref
 
 let copy: OffscreenCanvas | null = null
 let frosted: OffscreenCanvas | null = null
+
+/** Lets go of the scratch canvases — one full-frame pane at 4K holds about 66 MB in them. */
+export function releaseGlassBuffers(): void {
+  copy = null
+  frosted = null
+}
 
 function scratch(canvas: OffscreenCanvas | null, w: number, h: number): OffscreenCanvas {
   if (!canvas || canvas.width < w || canvas.height < h) {
@@ -223,8 +245,14 @@ export function paintGlassBackdrop(ctx: Ctx, plan: GlassPlan): boolean {
     ctx.globalCompositeOperation = 'source-over'
     ctx.filter = 'none'
     ctx.shadowColor = 'transparent'
-    // The body: the frosted backdrop inside the pane.
     ctx.setTransform(...plan.matrix)
+    // The wipe first, as a plain rect over the whole pane — the order `paintBrf` clips the tint in.
+    if (plan.wipe < 1) {
+      ctx.beginPath()
+      ctx.rect(0, 0, plan.w * plan.wipe, plan.h)
+      ctx.clip()
+    }
+    // The body: the frosted backdrop inside the pane.
     ctx.beginPath()
     roundedRect(ctx, 0, plan.w, plan.h, plan.radius)
     ctx.clip()

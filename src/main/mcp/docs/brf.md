@@ -332,7 +332,9 @@ export default ({ t, vars }) => {
 | `bezel` | 0–120 px | past 120 px the bend covers the whole pane and it reads as a fisheye |
 | `edgeHighlight` | 0–1 | above 1 the rim clips to a white outline |
 
-Lengths are in the scene's own pixels and scale with it. `blur` on a glass pane is its frost —
+A glass number given as a `"$name"` var is not refused past its range; it is clamped to the
+range when drawn, so check the look with `preview_frame`. Plain numbers and keys are refused. Lengths are in the scene's own
+pixels and scale with it. `blur` on a glass pane is its frost —
 the pane itself is never blurred.
 
 **Text on glass: dark ink on light glass, light ink on dark glass.** A white tint lifts
