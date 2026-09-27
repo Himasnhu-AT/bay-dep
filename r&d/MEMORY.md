@@ -18,7 +18,7 @@ and **Open questions**. Keep entries short, and link to files instead of copying
 ## State (2026-09-27)
 
 - **Branch:** `rnd/entertaining-edits` (from `main` e953244).
-- **Research:** all docs are in `research/`; see the summaries below.
+- **Research:** complete. Six docs in `research/`; see the summaries below.
 - **Footage:** sources verified in `sources/sample-footage.md`; nothing downloaded yet.
 - **First case study:** `case-studies/redassay-attest/`, a v1 → v2 launch film made by bay's agent. The
   v2 export and a 35.7 min recording of bay doing it are in `~/Movies/`.
@@ -45,9 +45,37 @@ and **Open questions**. Keep entries short, and link to files instead of copying
     branch push gets a Preview.
   - Media: in git as plain files (no LFS), about 1 MB per clip today.
   - Page: generalise the existing `BeforeAfter.tsx` and add `/compare`.
-- **`research/github-repos.md`**: pending (parallel agent).
-- **`research/entertaining-editing.md`**: pending (parallel agent).
-- **`research/golden-ratio.md`**: pending (parallel agent).
+- **`research/github-repos.md`** covers 30+ repos, with licence, stars and last push from the GitHub API.
+  - **auto-editor** (Unlicense) defaults are ready to port to a silence detector feeding `remove_range`:
+    threshold 0.04 (~−28 dBFS), 0.2 s margin, drop silences under 0.2 s and sounds under 0.1 s.
+  - **AutoFlip** reframing scores faces over bodies over objects, holds still under a 0.5 motion
+    threshold, and otherwise pans on a smooth path.
+  - **OpenShorts** stacks two speakers and puts the captions on the seam.
+  - **BeatSync-Engine** sets cut rate from music energy and song sections.
+  - **Remotion's TikTok template** shows captions in 1200 ms word pages.
+  - **Biggest gap:** bay has no reframing, speaker tracking or diarization.
+- **`research/entertaining-editing.md`** has 24 sources and a 23-line checklist for bay's agent, mapped to
+  its tools. Each rule is marked with its evidence strength.
+  - **Hook:** the promise within 3 s on shorts. Long-form is judged by 30 s retention.
+  - **Shot length:** the average shot has fallen from ~10 s to under 4 s. No talking-head shot over 6 s
+    long-form or 3 s short-form without a change. Hide jump cuts with alternating +10–15% punch-ins or
+    B-roll.
+  - **Re-hooks:** a visual reset every 10–20 s in minute one, then every 25–40 s; a re-hook every 2–3 min.
+  - **Captions:** shorts show 1–3 words at a time, ≤5–10 words/s, inside the safe zone. Long-form uses
+    ≤42 characters per line, 2 lines, ≤17 characters/s.
+  - **Audio:** duck music 15–25 dB under speech, SFX at −10 to −20 dB, master to −14 LUFS.
+  - The "cut every 0.5–1 s" claims are unsourced blog lore.
+- **`research/golden-ratio.md`**:
+  - **Verdict:** φ is a *house style*, not a proven gain. No study shows it beats thirds, centring or
+    nearby ratios, Fechner's result doesn't replicate reliably, and Stieger & Swami 2015 found people
+    preferred symmetric framing.
+  - **Spec:**
+    - Grid lines on 1920×1080 at x 733.4 / 1186.6 and y 412.5 / 667.5 (swap the axes for 1080×1920).
+    - Type scale 24 → 39 → 63 → 102 → 165 → 266 px.
+    - Animation and stagger durations at 30 fps: 3/5/8/13/21/34/55/89 frames.
+    - The payoff at 61.8% of runtime: 37.1 s of 60 s, 27.8 s of 45 s.
+    - Music under speech at −20 dB (WCAG 1.4.7; φ gives no audio basis).
+  - It includes a paste-able brief block for bay's agent.
 
 ## Decisions
 
@@ -76,3 +104,9 @@ and **Open questions**. Keep entries short, and link to files instead of copying
     study (prompts, lessons, marks).
   - Launched 4 parallel researchers (GitHub repos, retention-editing blogs, golden ratio, website/deploy).
     The website plan is saved; the other three are pending.
+- **2026-09-27** (coordinator): all four researchers are back.
+  - Saved `github-repos.md`, `entertaining-editing.md` and `golden-ratio.md`, and summarised them above.
+  - Next: pick footage for `plan.md`'s first set, and write `clips/<slug>/brief.md` from the retention
+    checklist + the φ brief block.
+  - Candidate feature work surfaced: a silence detector using auto-editor's defaults; reframing/speaker
+    tracking.
