@@ -125,6 +125,14 @@ and **Open questions**. Keep entries short, and link to files instead of copying
 ## Log
 
 - **2026-09-27** (coordinator):
+  - **Style catalog merged** (4adf2c0; the review's should-fixes are in 3b3717a).
+  - **In-app check:**
+    - With no tool or skill named, bay's agent called `search_styles` then `read_style` and picked "Retention talking-head short" over UGC ad and launch film.
+    - It kept the rule-of-thumb labels and stated its gaps (no SFX library, no keyword recolour).
+    - `write_style` from the in-app agent raised the native dialog "Save the editing style …?" showing the id, the title and the first 6 steps, with Cancel / Save style. It is left open for the owner, since global keystrokes are forbidden.
+  - **Next:** style previews in the agent panel. For each built-in style, a raw clip (`sources/style-clips.md`) is edited in bay by its agent, then exported as a short before/after loop shipped in app resources. `search_styles` returns the preview, the tool card renders tiles, and a freshness test guards them.
+
+- **2026-09-27** (coordinator):
   - **Attest v4 exported:** `~/Movies/redassay-launch/RedAssay-launch-film-v4-final.mp4`, 52.4 s, −14.0 LUFS. White canvas, glass card, dark ink, one red word, all straight. The takes are rendered deterministically (`v4b`, with timeline-sync), and the run is recorded in `~/Movies/bay-release/bay-agent-run-attest-v4.mp4`.
   - **Incident:** I truncated a take bay was reading, which ruined one export. The rule is now in `tools/README.md`.
   - **`<glass>` in `.brf`** is merged (882a742). An independent review found 3 should-fixes, all fixed in a7bde5b.
