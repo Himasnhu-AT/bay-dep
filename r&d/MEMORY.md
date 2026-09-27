@@ -46,6 +46,11 @@ and **Open questions**. Keep entries short, and link to files instead of copying
 
 ## Research summaries
 
+- **`research/editing-styles.md`** covers 19 editing styles with pacing, techniques, the raw footage each needs, bay fit, and a draft skill for each. **Use only with `research/audit.md` corrections:** 9 claims are wrong and 12 unsourced, 6 skill parameters are invalid, and 1 URL is dead. Best bay fit: Hormozi-style retention talking-head, news lower-thirds, kinetic type, luxury/minimal, UGC ad. Top gaps: no SFX/music library, no speed ramps, no motion blur, masks or face reframing.
+- **`research/hypit.md`** covers hypit-ai/hypit. Its licence is a modified Apache 2.0 that forbids commercial redistribution, so **ideas only, no code, text or assets**. It proposes a style catalog, previews rendered by bay's own engine, and style-from-reference analysis (coarse→fine, measured by code). The audit rated it trustworthy.
+- **`sources/style-clips.md`** has one verified raw clip for each of 12 style needs (licence + audio checked). Gaps: a travel pile with real sound, podcast licence pending, BY-SA tutorials, identifiable UGC creators.
+- **`research/audit.md`** is the independent audit of the above, with the required corrections before implementation.
+
 - **`research/apple-launch-style.md`** is an Apple-style tone card for launch films: black void, one
   accent, Inter 600 sentence-case headlines, expo-out easing, a push-in on every shot, 200–300% UI crops,
   a focus pull, and a 60 s structure. Followed literally it came out **too plain**, so read it together
