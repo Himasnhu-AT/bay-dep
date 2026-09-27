@@ -30,6 +30,7 @@ import type { AccessStatus, ReferralResult } from './access'
 import type { UpdateStatus } from './update'
 import type { Finding } from './findings'
 import type { UrlImportResult } from './url-import'
+import type { EditingStyle } from './styles/types'
 import type { VisionAssetRef, VisionIndexAnswer, VisionSearchAnswer, VisionSearchRequest, VisionStatus } from './visual-search'
 
 // ---------------------------------------------------------------------------
@@ -565,6 +566,22 @@ export interface BayApi {
   }
 
   /**
+   * The user's own editing styles (`@shared/styles`), saved by `write_style` as JSON text in
+   * `<userData>/styles` — one file per id. Main checks every write with the same `checkStyle` the
+   * renderer uses (a built-in id, a bad slug, an oversize body are refused; markup is stripped) and
+   * never runs anything in one. `list` hands back what is on disk, unvalidated: the renderer checks
+   * each entry again as it reads (`readUserStyles`), because a file may have been edited by hand.
+   */
+  styles: {
+    list(): Promise<unknown[]>
+    /**
+     * Save one style. `replace` must be true to overwrite a user style with the same id; without
+     * it the refusal names the existing id. Resolves with the style as saved (cleaned).
+     */
+    write(style: unknown, options?: { replace?: boolean }): Promise<{ ok: true; style: EditingStyle; replaced: boolean } | { ok: false; error: string }>
+  }
+
+  /**
    * HTML compositions — HyperFrames pages, rendered as a source of pictures.
    *
    * Lives in main rather than the renderer even though the renderer is itself a browser, for
@@ -879,6 +896,9 @@ export const IPC = {
   generationRelease: 'generation:release',
   generationDubs: 'generation:dubs',
   generationSaveDub: 'generation:save-dub',
+
+  stylesList: 'styles:list',
+  stylesWrite: 'styles:write',
 
   compositionInspect: 'composition:inspect',
   compositionWrite: 'composition:write',
