@@ -27,9 +27,10 @@ and **Open questions**. Keep entries short, and link to files instead of copying
 
 ## In progress
 
-- [ ] talk-to-short (clip 1): bay's agent is editing the raylib FOSDEM talk into a vertical short; run recorded to `~/Movies/bay-rnd/talk-to-short/bay-run.mp4`. Coordinator, started 2026-09-27.
-- [ ] perry film study → `research/perry-film-motion.md`. Research agent, started 2026-09-27.
-- [ ] Attest v3 brief (PDF + perry lessons). Coordinator, after the perry study.
+- [~] talk-to-short (clip 1): **paused by owner** 2026-09-27, mid-edit. The project "raylib talk to short" is saved in bay with 12 segments (48.8 s); the speaker layer is not built yet.
+- [x] perry film study → `research/perry-film-motion.md`.
+- [ ] Attest v3: recorded 9 new takes (`tools/takes-v3.js`: product framed right, left scrim, 1.5× cursor, button press); brief `case-studies/redassay-attest/prompt-v3.md` (bar-clocked, perry motion rules, left-text layout, two review passes); bay run in progress, recorded to `~/Movies/bay-release/bay-agent-run-attest-v3.mp4`. Coordinator.
+- [ ] Raw vertical talking-head footage search → `sources/raw-talking-head.md` (the owner's reference: an unedited selfie Reel). Research agent.
 
 ## Research summaries
 
@@ -80,6 +81,9 @@ and **Open questions**. Keep entries short, and link to files instead of copying
   - It includes a paste-able brief block for bay's agent.
 
 ## Decisions
+
+- 2026-09-27: **Focus is the launch film** (the owner). The target raw footage for future clips is **unedited vertical selfie talking-head video** (like the owner's reference Reel), not conference talks.
+- 2026-09-27: **Attest v3 look = perry's system.** Cuts on bar lines only; masked word rise [.165,.84,.44,1] with the whip exit [.72,0,.18,1]; one spring (420/32); text in a left column, product on the right; red rationed to one word. The footage bakes the right framing and a black left scrim.
 
 - 2026-09-27: **bay's Claude agent loads the skills a task needs on its own** (commit e4b793d). The prompt lists every skill with its description. New `launch-film` skill; `short-form` gained retention rules. Both carry the φ house style. **Verified live:** for the raylib brief, which named no skill, the agent loaded `short-form` and `highlights` and said why.
 - 2026-09-27: The owner's rule for all clips: **every edit happens in bay, by bay's agent.** We watch the input, output and edits, then fix bay (skills, tools, prompt) where the agent falls short.

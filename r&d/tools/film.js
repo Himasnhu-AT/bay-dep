@@ -17,14 +17,14 @@
   css.textContent = `
     .film-dim { transition: filter .7s cubic-bezier(.16,1,.3,1), opacity .7s cubic-bezier(.16,1,.3,1); filter: blur(5px) brightness(.38) saturate(.6) !important; }
     .film-lift { transition: transform .7s cubic-bezier(.16,1,.3,1), box-shadow .7s; transform: scale(1.035); box-shadow: 0 30px 80px rgba(0,0,0,.65), 0 0 0 1px rgba(255,255,255,.08); position: relative; z-index: 5; border-radius: 10px; }
-    #film-cursor { position: fixed; left: 0; top: 0; width: 96px; height: 96px; z-index: 2147483647; pointer-events: none; transform-origin: 12px 6px; filter: drop-shadow(0 12px 18px rgba(0,0,0,.6)); transition: opacity .3s; }
-    .film-ring { position: fixed; z-index: 2147483646; pointer-events: none; width: 48px; height: 48px; margin: -24px 0 0 -24px; border-radius: 50%; border: 4px solid rgba(255,255,255,.9); }
+    #film-cursor { position: fixed; left: 0; top: 0; width: 144px; height: 144px; z-index: 2147483647; pointer-events: none; transform-origin: 18px 9px; filter: drop-shadow(0 12px 18px rgba(0,0,0,.6)); transition: opacity .3s; }
+    .film-ring { position: fixed; z-index: 2147483646; pointer-events: none; width: 64px; height: 64px; margin: -32px 0 0 -32px; border-radius: 50%; border: 4px solid rgba(255,255,255,.9); }
   `
   document.head.appendChild(css)
 
   const cur = document.createElement('div')
   cur.id = 'film-cursor'
-  cur.innerHTML = '<svg viewBox="0 0 30 30" width="96" height="96"><path d="M4 2 L4 24 L9.5 18.8 L13.2 27.2 L17 25.6 L13.4 17.4 L21 17.4 Z" fill="#fff" stroke="#000" stroke-width="1.6" stroke-linejoin="round"/></svg>'
+  cur.innerHTML = '<svg viewBox="0 0 30 30" width="144" height="144"><path d="M4 2 L4 24 L9.5 18.8 L13.2 27.2 L17 25.6 L13.4 17.4 L21 17.4 Z" fill="#fff" stroke="#000" stroke-width="1.6" stroke-linejoin="round"/></svg>'
   cur.style.opacity = '0'
   html.appendChild(cur)
   let pos = { x: innerWidth * 0.62, y: innerHeight * 1.05 }
@@ -67,8 +67,8 @@
     cur.animate([{ transform: `translate(${pos.x}px,${pos.y}px) scale(1)` }, { transform: `translate(${pos.x}px,${pos.y}px) scale(.82)` }, { transform: `translate(${pos.x}px,${pos.y}px) scale(1)` }], { duration: 260, easing: 'cubic-bezier(.3,0,.2,1)' })
     const ring = document.createElement('div')
     ring.className = 'film-ring'
-    ring.style.left = pos.x + 12 + 'px'
-    ring.style.top = pos.y + 6 + 'px'
+    ring.style.left = pos.x + 18 + 'px'
+    ring.style.top = pos.y + 9 + 'px'
     html.appendChild(ring)
     ring.animate([{ transform: 'scale(.4)', opacity: 1 }, { transform: 'scale(3.2)', opacity: 0 }], { duration: 520, easing: 'cubic-bezier(.16,1,.3,1)' }).finished.then(() => ring.remove())
     await sleep(110)
@@ -79,8 +79,9 @@
     if (!e) throw new Error('film: no target ' + target)
     e.scrollIntoView({ block: 'nearest' })
     const c = centre(e)
-    await moveTo(c.x - 16, c.y - 10, ms)
+    await moveTo(c.x - 24, c.y - 14, ms)
     await sleep(hold)
+    e.animate([{ transform: 'scale(1)' }, { transform: 'scale(.95)' }, { transform: 'scale(1)' }], { duration: 240, easing: 'cubic-bezier(.3,0,.2,1)' })
     await press()
     log.push({ t: +((performance.now() - t0.v) / 1000).toFixed(2), what: (e.textContent || '').trim().slice(0, 30) })
     e.click()
@@ -123,7 +124,11 @@
   body.style.outline = '2px solid rgba(255,255,255,.07)'
   body.style.boxShadow = '0 80px 200px rgba(0,0,0,.9)'
   const zoom = () => parseFloat(getComputedStyle(body).zoom) || 1
-  function frameOn(target, { s = 1, rx = 0, ry = 0, rz = 0, dx = 0, dy = 0 } = {}) {
+  // A standing offset for every shot in a take, e.g. { dx: 420, ry: -12 } keeps the product in the
+  // right half, turned toward text composed on the left.
+  const bias = { dx: 0, dy: 0, rx: 0, ry: 0 }
+  function frameOn(target, opts = {}) {
+    const { s = 1, rx = 0, ry = 0, rz = 0, dx = 0, dy = 0 } = { ...opts, dx: (opts.dx || 0) + bias.dx, dy: (opts.dy || 0) + bias.dy, rx: (opts.rx || 0) + bias.rx, ry: (opts.ry || 0) + bias.ry }
     const e = typeof target === 'string' ? (target.startsWith('text=') ? [...document.querySelectorAll('main *')].find((n) => n.textContent.trim().startsWith(target.slice(5)) && n.children.length < 30) : el(target)) : target
     const saved = body.style.transform
     const anims = body.getAnimations(); anims.forEach((a) => a.pause())
@@ -149,7 +154,20 @@
     for (const a of document.querySelectorAll('aside')) { a.style.height = h + 'px'; a.style.minHeight = '0' }
     return h
   }
+  // A fixed fade over the left of the frame, so text composed there in the edit sits on clean
+  // black whatever the camera is doing. Above the UI, below the cursor.
+  function scrim(on = true) {
+    let s = document.getElementById('film-scrim')
+    if (!on) { s?.remove(); return 'off' }
+    if (!s) {
+      s = document.createElement('div')
+      s.id = 'film-scrim'
+      s.style.cssText = 'position:fixed;inset:0;z-index:2147483645;pointer-events:none;background:linear-gradient(90deg,rgba(0,0,0,.97) 0%,rgba(0,0,0,.93) 30%,rgba(0,0,0,.55) 44%,rgba(0,0,0,0) 56%)'
+      html.appendChild(s)
+    }
+    return 'on'
+  }
   function start() { t0.v = performance.now(); log.length = 0 }
-  window.__film = { log, start, fit, frameOn, shot, cut, moveTo, click, press, camera, setCamera, focus, unfocus, hideCursor, sleep, byText }
+  window.__film = { scrim, bias, log, start, fit, frameOn, shot, cut, moveTo, click, press, camera, setCamera, focus, unfocus, hideCursor, sleep, byText }
   return 'ready'
 })()
