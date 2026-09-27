@@ -33,6 +33,7 @@ import { MediaPool, isDrawable, type MediaEntry } from './mediaPool'
 import type { CompositionPool } from './compositionPool'
 import { planTransition } from './transitions'
 import { BrfSurfaces, documentOf, layoutSizeOf, secondsAt } from './brf'
+import { paintGlassBackdrop, planGlass, releaseGlassBuffers, surfaceToDevice, type GlassPatch } from './glass'
 import { brfRuntime } from './brfCode'
 import { importedFonts } from './importedFonts'
 import type { BrfDocument } from '@shared/brf'
@@ -361,6 +362,7 @@ export class Compositor {
     this.#seeks.clear()
     this.#seekLatency.clear()
     this.#brf.reset()
+    releaseGlassBuffers()
   }
 
   // -- internals ------------------------------------------------------------
@@ -374,7 +376,9 @@ export class Compositor {
     item: Item,
     frame: number,
     alphaMul = 1,
-    stats?: DrawStats
+    stats?: DrawStats,
+    /** Glass panes on a `.brf` surface: their backdrop is drawn from the canvas before the surface. */
+    glass: GlassPatch[] = []
   ): void {
     const box = layoutBox(item)
     if (!box) return
@@ -406,6 +410,8 @@ export class Compositor {
       const dest = cropped
         ? cropDestRect(item.crop, box)
         : { dx: box.left, dy: box.top, dw: box.width, dh: box.height }
+
+      if (glass.length > 0) this.#glassBackdrop(ctx, item, glass, src, dest, alpha)
 
       // The grade replaces the source with a graded picture of the same framing, at the size it
       // will be drawn — everything else about the draw (alpha, blend, filter, rotation) is
@@ -444,6 +450,50 @@ export class Compositor {
       // went away). One missing item must not abandon the rest of the frame.
     } finally {
       ctx.restore()
+    }
+  }
+
+  /**
+   * Frosts what the canvas holds under each glass pane, inside the pane, before the surface that
+   * paints the pane's tint and rim is drawn over it. Mapped with the transform in force right now
+   * — the device scale, any transition offset, the item's rotation and zoom — and the same
+   * `src`/`dest` the surface is about to be drawn with, so crop and rotation place the frost where
+   * the pane lands, clipped to the surface's drawn rect and the scene inside it. A blend mode
+   * other than normal skips it: such an item is meant to combine with what is under it, and
+   * replacing that with a blur would contradict the mode — the pane then draws tint and rim only,
+   * which the guide says.
+   */
+  #glassBackdrop(
+    ctx: RenderTarget,
+    item: Item,
+    glass: GlassPatch[],
+    src: { sx: number; sy: number; sw: number; sh: number },
+    dest: { dx: number; dy: number; dw: number; dh: number },
+    alpha: number
+  ): void {
+    if (blendOperation(item.blendMode) !== 'source-over') return
+    const t = ctx.getTransform()
+    const toDevice = surfaceToDevice([t.a, t.b, t.c, t.d, t.e, t.f], src, dest)
+    if (!toDevice) return
+    const canvas = { width: ctx.canvas.width, height: ctx.canvas.height }
+    for (const patch of glass) {
+      const plan = planGlass(patch, toDevice, canvas, alpha)
+      if (!plan) continue
+      ctx.save()
+      try {
+        // Only where the surface itself lands (its box, or its crop), and only inside the scene
+        // there: a pane sliding in from off-scene must not frost what the tint and rim cannot reach.
+        ctx.beginPath()
+        ctx.rect(dest.dx, dest.dy, dest.dw, dest.dh)
+        ctx.clip()
+        ctx.setTransform(...toDevice)
+        ctx.beginPath()
+        ctx.rect(patch.scene.x, patch.scene.y, patch.scene.w, patch.scene.h)
+        ctx.clip()
+        paintGlassBackdrop(ctx, plan)
+      } finally {
+        ctx.restore()
+      }
     }
   }
 
@@ -594,7 +644,7 @@ export class Compositor {
         this.#placeholder(ctx, item, stats, asset.name, `${asset.name} (${painted.error})`)
         return
       }
-      this.#drawSource(ctx, painted.surface, item, frame, opts.alphaMul, stats)
+      this.#drawSource(ctx, painted.surface, item, frame, opts.alphaMul, stats, painted.glass)
       stats.drawn += 1
       return
     }

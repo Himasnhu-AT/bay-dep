@@ -24,6 +24,7 @@
  */
 
 import type { Asset } from './project'
+import { GLASS_MATERIALS, GLASS_SAFE, isGlassMaterial, parseTintTriple, resolveGlass, type GlassLook, type GlassMaterial } from './glass'
 
 // ---------------------------------------------------------------------------
 // The document
@@ -178,7 +179,28 @@ export interface GroupLayer extends LayerBase {
   layers: Layer[]
 }
 
-export type Layer = RectLayer | EllipseLayer | PathLayer | TextLayer | GroupLayer
+/**
+ * A pane of frosted glass: what is under it — lower tracks, and the clip's own background — is
+ * blurred, saturated and bent at the rim, then tinted, and a rim light is drawn round it. The
+ * material names and numbers are quick-liquid's (`./glass`). `blur` here is the frost on what
+ * is behind it, not a blur of the pane. A leaf: layers drawn after it sit on top of the glass.
+ */
+export interface GlassLayer extends LayerBase {
+  type: 'glass'
+  w: Animatable<Length>
+  h: Animatable<Length>
+  radius?: Animatable<Length>
+  material?: GlassMaterial
+  saturation?: Animatable<number>
+  /** A colour, or quick-liquid's `"255, 255, 255"`. Default white. */
+  tint?: string
+  tintOpacity?: Animatable<number>
+  edgeHighlight?: Animatable<number>
+  refraction?: Animatable<number>
+  bezel?: Animatable<number>
+}
+
+export type Layer = RectLayer | EllipseLayer | PathLayer | TextLayer | GroupLayer | GlassLayer
 
 export interface BrfDocument {
   brf: 1
@@ -212,7 +234,7 @@ const EASINGS = new Set<string>([
   'outElastic', 'outBounce', 'spring'
 ])
 const PRESETS = new Set<string>(['fade', 'up', 'down', 'left', 'right', 'pop', 'grow', 'wipe', 'blur', 'type'])
-const LAYER_TYPES = ['rect', 'ellipse', 'path', 'text', 'group'] as const
+const LAYER_TYPES = ['rect', 'ellipse', 'path', 'text', 'group', 'glass'] as const
 
 /** Every property each layer type accepts, so a misspelling is named rather than ignored. */
 const COMMON = ['type', 'id', 't', 'x', 'y', 'anchor', 'rotate', 'scale', 'sx', 'sy', 'opacity', 'blur', 'shadow', 'in', 'out']
@@ -222,8 +244,11 @@ const ALLOWED: Record<Layer['type'], Set<string>> = {
   ellipse: new Set([...COMMON, ...STYLE, 'w', 'h']),
   path: new Set([...COMMON, ...STYLE, 'd', 'draw']),
   text: new Set([...COMMON, ...STYLE, 'text', 'font', 'size', 'weight', 'italic', 'align', 'w', 'lineHeight', 'tracking', 'split', 'stagger', 'variations']),
-  group: new Set([...COMMON, 'w', 'h', 'clip', 'layers'])
+  group: new Set([...COMMON, 'w', 'h', 'clip', 'layers']),
+  glass: new Set([...COMMON, 'w', 'h', 'radius', 'material', 'saturation', 'tint', 'tintOpacity', 'edgeHighlight', 'refraction', 'bezel'])
 }
+/** Glass numbers, each held to the range where it still reads as glass (`GLASS_SAFE`). */
+const GLASS_NUMERIC = new Set(['saturation', 'tintOpacity', 'edgeHighlight', 'refraction', 'bezel'])
 const NUMERIC = new Set(['rotate', 'scale', 'sx', 'sy', 'opacity', 'blur', 'draw'])
 const LENGTH = new Set(['x', 'y', 'w', 'h', 'radius', 'strokeWidth', 'size'])
 const COLOR = new Set(['fill', 'stroke'])
@@ -306,10 +331,16 @@ export function parseBrf(input: unknown, options: { allowEmptyLayers?: boolean }
 
 function suggest(word: string, candidates: string[]): string {
   const lower = word.toLowerCase()
-  const close = candidates.find((c) => {
-    const a = c.toLowerCase()
-    return a === lower || editDistance(a, lower) <= 2
-  })
+  // The nearest within two edits, not the first: "thicc" is two from "thin" and one from "thick".
+  let close: string | undefined
+  let best = 3
+  for (const c of candidates) {
+    const distance = editDistance(c.toLowerCase(), lower)
+    if (distance < best) {
+      best = distance
+      close = c
+    }
+  }
   return close ? ` — did you mean "${close}"?` : ''
 }
 
@@ -382,6 +413,7 @@ function checkLayer(
   }
 
   for (const [key, value] of Object.entries(layer)) {
+    if (kind === 'glass' && GLASS_NUMERIC.has(key)) checkAnimatable(value, `${at}.${key}`, 'number', duration, vars, fault)
     if (NUMERIC.has(key)) checkAnimatable(value, `${at}.${key}`, 'number', duration, vars, fault)
     else if (LENGTH.has(key)) {
       if (STATIC_LENGTH.has(key) && kind === 'text' && Array.isArray(value)) {
@@ -399,7 +431,8 @@ function checkLayer(
     }
   }
 
-  if ((kind === 'rect' || kind === 'ellipse') && (layer.w === undefined || layer.h === undefined)) {
+  if (kind === 'glass') checkGlass(layer, at, vars, fault)
+  if ((kind === 'rect' || kind === 'ellipse' || kind === 'glass') && (layer.w === undefined || layer.h === undefined)) {
     fault(at, `a ${kind} needs "w" and "h"`)
   }
   if (kind === 'rect' || kind === 'ellipse' || kind === 'path') {
@@ -441,6 +474,44 @@ function checkLayer(
       fault(`${at}.layers`, 'a group needs a non-empty "layers" list')
     } else {
       layer.layers.forEach((child, i) => checkLayer(child, `${at}.layers[${i}]`, duration, vars, fault, depth + 1))
+    }
+  }
+}
+
+/** A glass layer's own props: its material, its tint, and each number inside its safe range. */
+function checkGlass(layer: Record<string, unknown>, at: string, vars: BrfValues, fault: (at: string, message: string) => void): void {
+  if (layer.material !== undefined && !isGlassMaterial(layer.material)) {
+    const given = layer.material
+    fault(
+      `${at}.material`,
+      `${JSON.stringify(given)} is not a material: use ${GLASS_MATERIALS.join(', ')} (clearest to most frosted)${typeof given === 'string' ? suggest(given, [...GLASS_MATERIALS]) : ''}`
+    )
+  }
+  if (layer.tint !== undefined) {
+    const tint = layer.tint
+    if (typeof tint === 'string' && tint.startsWith('$')) {
+      // Unchecked, an undeclared name resolves to nothing and the pane silently tints white.
+      const name = tint.slice(1)
+      if (!(name in vars)) fault(`${at}.tint`, `refers to $${name}, which "vars" does not declare — add it to "vars", or write the colour itself`)
+      else if (typeof vars[name] !== 'string' || (!parseColor(vars[name] as string) && !parseTintTriple(vars[name] as string))) {
+        fault(`${at}.tint`, `$${name} is ${JSON.stringify(vars[name])}, not a colour or "r, g, b"`)
+      }
+    } else if (typeof tint !== 'string' || (!isColorLike(tint) && !parseTintTriple(tint))) {
+      fault(`${at}.tint`, `${JSON.stringify(tint)} is not a tint: a colour ("#ffffff", "rgba(20,40,40,1)") or "r, g, b" as quick-liquid writes it — set its strength with tintOpacity`)
+    }
+  }
+  for (const key of Object.keys(GLASS_SAFE) as (keyof typeof GLASS_SAFE)[]) {
+    const value = layer[key]
+    if (value === undefined) continue
+    const { min, max, past } = GLASS_SAFE[key]
+    const numbers = Array.isArray(value)
+      ? value.map((k) => (Array.isArray(k) ? k[1] : undefined))
+      : [value]
+    for (const n of numbers) {
+      if (typeof n === 'number' && Number.isFinite(n) && (n < min || n > max)) {
+        fault(`${at}.${key}`, `${n} is outside ${min}–${max} for glass: ${past}`)
+        break
+      }
     }
   }
 }
@@ -722,6 +793,14 @@ export type DrawOp =
       /** For an unsplit layer under the `type` preset: fraction of characters shown. */
       reveal: number
     })
+  | (OpBase & {
+      kind: 'glass'
+      w: number
+      h: number
+      radius: number
+      /** The resolved material; `tint` as `rgba()` with `tintOpacity` folded into its alpha. */
+      look: GlassLook
+    })
   | { kind: 'clip'; matrix: Matrix; w: number; h: number }
   | { kind: 'unclip' }
 
@@ -959,7 +1038,9 @@ function emit(
   const matrix = multiply(parent, local)
   const alpha = parentAlpha * opacity * motion.alpha
   if (alpha <= 0.0005 && layer.type !== 'group') return
-  const base = { matrix, alpha, blur: blur + motion.blur, wipe: motion.wipe, ...(layer.shadow ? { shadow: layer.shadow } : {}) }
+  // A glass layer's `blur` is the frost on its backdrop, not a blur of the pane itself.
+  const ownBlur = layer.type === 'glass' ? 0 : blur
+  const base = { matrix, alpha, blur: ownBlur + motion.blur, wipe: motion.wipe, ...(layer.shadow ? { shadow: layer.shadow } : {}) }
   const style = (s: ShapeStyle) => ({
     ...(s.fill !== undefined ? { fill: sampleColor(s.fill, t, frame) } : {}),
     ...(s.stroke !== undefined ? { stroke: sampleColor(s.stroke, t, frame) } : {}),
@@ -973,6 +1054,22 @@ function emit(
     case 'ellipse':
       ops.push({ ...base, kind: 'ellipse', w, h, ...style(layer) })
       return
+    case 'glass': {
+      const n = (value: Animatable<number> | undefined): number | undefined => (value === undefined ? undefined : sample(value, t, 0, num))
+      const look = resolveGlass(layer.material, {
+        blur: n(layer.blur),
+        saturation: n(layer.saturation),
+        tintOpacity: n(layer.tintOpacity),
+        refraction: n(layer.refraction),
+        bezel: n(layer.bezel),
+        edgeHighlight: n(layer.edgeHighlight)
+      })
+      const tintText = layer.tint === undefined ? look.tint : String(resolve(layer.tint, frame))
+      const triple = parseTintTriple(tintText)
+      const rgba: RGBA = triple ? [...triple, 1] : (parseColor(tintText) ?? [255, 255, 255, 1])
+      ops.push({ ...base, kind: 'glass', w, h, radius: sample(layer.radius, t, 0, len('min')), look: { ...look, tint: formatColor([rgba[0], rgba[1], rgba[2], rgba[3] * look.tintOpacity]) } })
+      return
+    }
     case 'path':
       ops.push({ ...base, kind: 'path', d: layer.d, draw: Math.max(0, Math.min(1, sample(layer.draw, t, 1, num))), ...style(layer) })
       return

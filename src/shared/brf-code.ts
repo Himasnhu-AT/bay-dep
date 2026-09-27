@@ -15,7 +15,7 @@
  * The shipped lower third is 3663 characters of HTML, CSS and script; as a module (the guide's
  * example, with components and springs) it is 947 — held under a third by `brf-code.test.ts`.
  *
- * Nothing it returns is a DOM: `<scene>`, `<rect>`, `<ellipse>`, `<path>`, `<text>` and
+ * Nothing it returns is a DOM: `<scene>`, `<rect>`, `<ellipse>`, `<path>`, `<text>`, `<glass>` and
  * `<group>` resolve to the `.brf` scene format (`./brf`), which the compositor paints directly —
  * so the code gets everything a program can do (loops, maths, components, data) and the picture
  * still costs well under a millisecond, with no browser to capture.
@@ -51,7 +51,7 @@ export interface BrfElement {
   children: unknown[]
 }
 
-const PRIMITIVES = new Set(['scene', 'rect', 'ellipse', 'path', 'text', 'group'])
+const PRIMITIVES = new Set(['scene', 'rect', 'ellipse', 'path', 'text', 'group', 'glass'])
 
 /** The JSX factory: `<rect w={4}/>` compiles to `__brf_h('rect', { w: 4 })`. */
 export function h(type: string | Component, props: Record<string, unknown> | null, ...children: unknown[]): BrfElement {
@@ -422,7 +422,7 @@ function resolve(node: unknown, m: Moment, where: string): Layer[] {
     return resolve(type({ ...props, children: children.length <= 1 ? children[0] : children }), m, `${where}<${name}>`)
   }
   if (!PRIMITIVES.has(type)) {
-    throw new ResolveError(`${where}: <${type}> is not a bay element — use scene, rect, ellipse, path, text or group (DOM elements are not drawn)`)
+    throw new ResolveError(`${where}: <${type}> is not a bay element — use scene, rect, ellipse, path, text, group or glass (DOM elements are not drawn)`)
   }
   if (type === 'scene') throw new ResolveError(`${where}: <scene> can only be the root`)
   const layer: Record<string, unknown> = { type, ...props }
