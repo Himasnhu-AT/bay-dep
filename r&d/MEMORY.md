@@ -27,7 +27,9 @@ and **Open questions**. Keep entries short, and link to files instead of copying
 
 ## In progress
 
-- (none)
+- [ ] talk-to-short (clip 1): bay's agent is editing the raylib FOSDEM talk into a vertical short; run recorded to `~/Movies/bay-rnd/talk-to-short/bay-run.mp4`. Coordinator, started 2026-09-27.
+- [ ] perry film study → `research/perry-film-motion.md`. Research agent, started 2026-09-27.
+- [ ] Attest v3 brief (PDF + perry lessons). Coordinator, after the perry study.
 
 ## Research summaries
 
@@ -79,6 +81,9 @@ and **Open questions**. Keep entries short, and link to files instead of copying
 
 ## Decisions
 
+- 2026-09-27: **bay's Claude agent loads the skills a task needs on its own** (commit e4b793d). The prompt lists every skill with its description. New `launch-film` skill; `short-form` gained retention rules. Both carry the φ house style. **Verified live:** for the raylib brief, which named no skill, the agent loaded `short-form` and `highlights` and said why.
+- 2026-09-27: The owner's rule for all clips: **every edit happens in bay, by bay's agent.** We watch the input, output and edits, then fix bay (skills, tools, prompt) where the agent falls short.
+
 - 2026-09-27: The product in the first case study is **RedAssay Attest**. RedAssay is the company (an
   AI pentest agent is its main product). "Attest" fits because a SOC 2 report is an attestation. Runner-up
   name: Touchstone.
@@ -97,6 +102,13 @@ and **Open questions**. Keep entries short, and link to files instead of copying
   unverified. Replace it before publishing.
 
 ## Log
+
+- **2026-09-27** (coordinator):
+  - Skills auto-load and the launch-film skill are shipped, tested, mutation-checked and rebuilt into the running app.
+  - Downloaded raylib (FOSDEM, CC BY) and started clip 1 in bay.
+  - Saved `research/music-video-prompt.md` (the owner's PDF).
+  - Launched the perry film study.
+  - **bay gap seen:** `transcribe` output for a 25 min talk is too big for the agent to read, so it fell back to `find_highlights`. Candidate fix: a paginated or ranged transcript read.
 
 - **2026-09-27** (coordinator):
   - Created `r&d/` on `rnd/entertaining-edits`.
