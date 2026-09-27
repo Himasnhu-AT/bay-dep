@@ -189,7 +189,7 @@ export function allowedToolNames(): string[] {
 
 /**
  * The only built-in tools the in-app agent has: reading bay's MCP resources (its guides), and
- * `Skill`, so it can load a bay skill the user names anywhere in a message. Everything else built
+ * `Skill`, so it can load a bay skill the user names, or one the task calls for. Everything else built
  * in — shell, files, web, subagents — does not exist in the session at all. MCP tools are not
  * built-ins, so bay's own are unaffected.
  *

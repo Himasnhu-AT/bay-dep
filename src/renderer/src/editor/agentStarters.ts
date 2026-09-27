@@ -22,6 +22,7 @@ import {
   Sparkles,
   SquareUser,
   Star,
+  Rocket,
   Type,
   Wand2
 } from 'lucide-react'
@@ -51,7 +52,8 @@ const LOOK: Record<string, Pick<AgentStarter, 'icon' | 'tint' | 'badge'>> = {
   review: { icon: MessageSquareText, tint: ['#262a36', '#4a5270'] },
   'short-form': { icon: Smartphone, tint: ['#33222e', '#6e3f5f'] },
   highlights: { icon: Star, tint: ['#3a3120', '#7a6530'] },
-  dub: { icon: Languages, tint: ['#1f2f33', '#3a6570'] }
+  dub: { icon: Languages, tint: ['#1f2f33', '#3a6570'] },
+  'launch-film': { icon: Rocket, tint: ['#3a1f24', '#8a3a46'], badge: 'new' }
 }
 
 /** Every bay skill as a starter card, in the skills' own order. */

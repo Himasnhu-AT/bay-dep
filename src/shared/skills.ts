@@ -9,8 +9,10 @@
  * has besides the resource readers, allowed only as `Skill(<slug>)` for these slugs (see
  * `src/main/agent/cli.ts`) — because the CLI itself expands only a `/skill` at the very start.
  *
- * Skills are invoked by the user, never by the model on its own: the system prompt tells it to
- * load only the ones the user names.
+ * The Claude runtime loads a skill on its own when the task matches the skill's description, as
+ * well as any the user names; the system prompt lists every slug with its description so it can
+ * tell which apply. So a description is how the agent decides: say plainly what job it is for.
+ * Codex cannot load skills itself (see `skillsSection` in `src/main/agent/prompt.ts`).
  *
  * Each body is written to the agent. It names bay's tools, keeps to what they can do, and repeats
  * the one rule that matters inside bay: make the edit directly (the user gets a diff and a
@@ -33,6 +35,16 @@ const PROPOSE =
   'revert it. (If a write is refused because the user turned on "Ask before editing", propose ' +
   'with propose_edit and wait instead.) Look at the result with preview_frame before you report ' +
   'it done.'
+
+/**
+ * bay's house proportions, from the golden ratio (r&d/research/golden-ratio.md). A style choice,
+ * not a proven gain — the evidence for φ over thirds is weak — applied so every edit is consistent.
+ */
+const GOLDEN =
+  'House style (golden ratio — proportions to keep edits consistent): anchor subjects, titles and ' +
+  'key UI on the φ lines — x 733 or 1187 and y 413 or 668 px on 1920×1080, or x 413 or 668 and y 733 ' +
+  'or 1187 on 1080×1920. Size type from the scale 24, 39, 63, 102, 165 px. Time animations and ' +
+  'staggers in 3, 5, 8, 13, 21, 34 or 55 frames at 30 fps. Put the payoff near 62% of the runtime.'
 
 export const BAY_SKILLS: readonly BaySkill[] = [
   {
@@ -75,16 +87,19 @@ export const BAY_SKILLS: readonly BaySkill[] = [
       '1. Read the timeline (read_project). If the canvas is not 1080×1920, call set_canvas { preset: "vertical-1080", fit: "cover" } so the speaker fills the frame. Check a frame with preview_frame: the face should sit in the middle third, with room above the head for the graphics band.',
       '2. If the user has not named a subtitle design, ask once — Spotlight (the default: bold white, spoken word sky blue), Punch, Boxed, Clean or Reveal — and end your turn. Skip the question if they said "just do it" or named one.',
       '3. transcribe the clip (itemId) and read what is said. Find the beats: the hook (the first line, usually a question or a label), each claim or turn, the answer or reveal, and the closing question or call to action. Pick 4–8 moments for graphics — not every sentence.',
-      '4. add_subtitles with the chosen style over the clip.',
-      '5. Write ONE .brf module (write_brf — JSX like React/Remotion; bay://guide/brf has a top-band example to start from) covering the whole clip, for the top band. It draws one element at a time, each appearing on the word it names (use the transcript times, in seconds from the clip start) and leaving before the next: keep every element in the top quarter of the frame, over a dark gradient that fades from about 55% black at the top edge to clear, so it reads over any background. Use these elements, with the words copied verbatim from what is said and kept short:',
+      '4. Tighten it for retention before styling it. The first 3 seconds must state the promise: if the clip opens on a greeting or setup, remove_range it so it starts on the hook line. Cut long pauses, false starts and repeated takes with remove_range (leave 6–10 frames of breath). No shot may run past 3 seconds unchanged: at each jump cut alternate a punch-in — keyframe the clip\'s scale 1.00 ↔ 1.12 with a hold ease (and left/top so the face stays in frame) — or cover it with a graphic beat. Keep it under 60 seconds.',
+      '5. add_subtitles with the chosen style over the clip — 1 to 3 words on screen at a time reads best on a phone, so prefer Punch or Spotlight. If there is music, keep it about 20 dB under the voice.',
+      '6. Write ONE .brf module (write_brf — JSX like React/Remotion; bay://guide/brf has a top-band example to start from) covering the whole clip, for the top band. It draws one element at a time, each appearing on the word it names (use the transcript times, in seconds from the clip start) and leaving before the next: keep every element in the top quarter of the frame, over a dark gradient that fades from about 55% black at the top edge to clear, so it reads over any background. Use these elements, with the words copied verbatim from what is said and kept short:',
       '   - Label: one bold uppercase word in red (#EF4B3C) for the topic, at the hook ("OVERTHINKER").',
       '   - Stack: short chips that pile up one per item as each is said (dark translucent chip, thin red outline); the last, the punchline, slightly larger ("you" / "your friend" / "the top person in your list" / "everyone").',
       '   - Reveal: a small, widely spaced red kicker over a heavy two-line white headline, for an answer or a turn ("THE ANSWER" / "TOO MUCH INPUT").',
       '   - Key phrase: a short phrase with its key word in sky blue (#8EC8FF) ("CRITICAL thinking").',
       '   - Choice: two stacked rows with a coloured left edge, red then blue, for a closing either/or; the one being said is bright and the other dimmed ("consuming too much?" / "or thinking too much?").',
       '   Entrances are quick (about 0.2 s: in={[\'up\', 0.2]}); nothing loops or wobbles. Give each element a t={[start, end]} window in seconds from the clip start, or build the beats from an array in code. Leave out size so it lays out on the 9:16 canvas. Place it in the same call with atFrame at the clip\'s first frame; it lands on a track with room above the video.',
-      '6. Check a frame at each graphic with preview_frame: the band must clear the top of the head and never touch the subtitles; the subtitles must sit below the chin. If anything collides, read_brf, fix it, and write_brf with the same assetId.',
-      '7. Tell the user what you added, beat by beat, and offer to export (export_timeline, mp4, 1080×1920).',
+      '7. Check a frame at each graphic with preview_frame: the band must clear the top of the head and never touch the subtitles; the subtitles must sit below the chin. If anything collides, read_brf, fix it, and write_brf with the same assetId.',
+      '8. Run frame_grid over the whole short and fix anything that fails the rules above. Then tell the user what you added, beat by beat, and offer to export (export_timeline, mp4, 1080×1920).',
+      '',
+      GOLDEN,
       '',
       PROPOSE
     ].join('\n')
@@ -238,6 +253,28 @@ export const BAY_SKILLS: readonly BaySkill[] = [
       '3. Report what works, and what feels off: framing, pacing, B-roll on the wrong line, text that is hard to read or covers a face, black or stray frames at cuts. Say plainly that you cannot hear the audio. Finish with the one change you would make first.',
       '',
       'Change nothing unless the user then asks for a change.'
+    ].join('\n')
+  },
+  {
+    slug: 'launch-film',
+    title: 'Launch Film',
+    description: 'Use when the user wants a product launch video, promo, trailer or feature announcement built from screen recordings, product footage or brand assets — kinetic type, camera moves, sound on every action.',
+    body: [
+      'Make a launch film that feels alive: the product in motion, big type, a camera that never stops, and a sound on every action. Plain crops with fades read as a slideshow; avoid them.',
+      '',
+      '1. Plan before you place anything, and show the plan in your reply. Write a short style sheet (one accent colour on a neutral base, the typeface — use a font from the media pool if there is one — and how things move: settle, snap or drift). Then a shot list: for every beat, its seconds, which footage, what the camera does, the on-screen text, where that text sits and how big it is. Browse the footage with frame_grid first so the plan uses what is really there. Build straight after unless the user asked to approve the plan.',
+      '2. The hook is the first 2 seconds: huge on-screen text over the product already moving. The product UI must be on screen within 2 seconds; never open on a logo or a black card alone.',
+      '3. Music drives the cuts. detect_beats on the track and put every cut on a beat. Hold early shots longer (5–8 s), shorten through the middle, and end with a montage of 0.5–0.6 s cuts on consecutive beats before the close. Only 3–5 features; one idea per beat.',
+      '4. Every clip moves. Keyframe scale 1.00 → 1.06–1.10 across each shot and keyframe left/top with it so the push aims at the action — scale is always about the clip\'s centre. Drifts ease [0.45,0,0.55,1]; arrivals ease [0.16,1,0.3,1]. Keep any camera moves already recorded in the footage and add to them.',
+      '5. Type is kinetic, written as .brf with write_brf: split by word, each word rising and blurring in (blur 14 → 0, scale 1.08 → 1, outExpo, about 21 frames, staggered 3 frames), one key word in the accent colour, exits faster than entrances. Vary the size: huge for the hook and the payoff, subtitle-like elsewhere; leave the busy part of the picture clear of text. Words must be the product\'s own claims — nothing the footage does not show.',
+      '6. Sound on every action: a click on the exact frame each cursor press or toggle happens (find it with frame_grid), a soft impact on reveals, a sting when the payoff lands; effects sit 10–20 dB under the music, which ends on the last frame. If the cursor in the footage is small at 1080p, draw a ring at each press in a .brf over the clip (an ellipse that pops in over 8 frames and fades over 13).',
+      '7. Close on the product name and one line, over the product still moving (dimmed), with one call to action if the user gave one.',
+      '8. Review like an editor, twice: preview_frame at the start, middle and end of every shot, then frame_grid over the whole timeline. Look for text on busy picture, collisions, black flashes, a cursor you cannot find, a beat with nothing moving. Fix, run frame_grid again, and list what you changed in each pass.',
+      '9. If asked to export: export_timeline (mp4, quality best, loudness streaming), poll track_export until it is complete, and report beat by beat what is on screen plus anything you could not do as asked.',
+      '',
+      GOLDEN,
+      '',
+      PROPOSE
     ].join('\n')
   }
 ]

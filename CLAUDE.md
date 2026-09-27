@@ -211,8 +211,10 @@ CLI loads them with `--setting-sources project` from that directory (nothing els
 the user's own skills stay out; their CLAUDE.md files stay out by the switch above). The CLI
 itself expands only a `/skill` at the very start of a message, so the agent has the `Skill` tool:
 a `/name` anywhere in the message, several at once, is loaded by the model, and the system prompt
-(`src/main/agent/prompt.ts`) tells it to load only bay's skills the user named. Skills are still
-user-invoked.
+(`src/main/agent/prompt.ts`) lists every bay skill with its description and tells it to load the
+ones the task matches, not only the ones the user names. A skill's description is therefore how the
+agent decides to use it. Codex cannot load skills itself, so it gets only the ones named and says
+which it would have wanted.
 
 **The in-app agent reaches files only through `src/main/mcp/policy.ts`.** It has no filesystem
 tools, so a path argument is its only way to a file, and text it reads (a transcript, an asset
