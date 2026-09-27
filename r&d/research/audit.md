@@ -21,14 +21,15 @@ Either way it cannot go into a skill as a cited fact now.
 
 | Document | Verdict | Why |
 |---|---|---|
-| `editing-styles.md` | **Usable with corrections** | The measured core holds up: Tubefilter, PandaStudio MKBHD/DOAC/Fireship, ShotBook, ANFX, Guo, Calliope and TikTok's 6 s/90% all check out. But **12 quotes or numbers are not in the source they cite**, **2 numbers are wrong**, and several bay-capability statements are wrong in both directions. Every draft skill names real tools. Six parameter or usage errors would make the agent's calls fail or do the wrong thing. |
+| `editing-styles.md` | **Usable with corrections** | The measured core holds up: Tubefilter, PandaStudio MKBHD/DOAC/Fireship, ShotBook, ANFX, Guo, Calliope and TikTok's 6 s/90% all check out. But **12 quotes or numbers are not in the source they cite**, **3 claims are wrong**, and several bay-capability statements are wrong in both directions. Every draft skill names real tools. Six parameter or usage errors would make the agent's calls fail or do the wrong thing. |
 | `hypit.md` | **Trustworthy, one stale claim** | The licence is quoted accurately, and every file path and line I checked (12) is right. Stats are within a day's drift. There are two errors: "skills stay user-invoked" is stale, and bay has 14 skills, not 15. One omission matters: licence clause 1a (no multi-tenant or SaaS use). Its licence conclusion is correct and conservative. |
-| `style-clips.md` | **Does not exist** | `r&d/sources/` holds only `raw-talking-head.md` and `sample-footage.md` at audit time. Nothing to audit, and no licence or audio claims can be relied on yet. |
+| `style-clips.md` | **Trustworthy** (§7) | 11 licences checked on the live source: 8 Commons files (API `extmetadata` + wikitext) and 3 Mixkit pages. All match, including which reviews are pending and which passed. Three speech clips range-fetched and re-measured: streams, levels, pause counts and whisper openings all reproduce. One soft spot: the Mixkit **music** licence could not be confirmed, because the cited page redirects. Its self-reported gaps are accurate. |
 
-Counts across both documents: **WRONG 9**: 2 web numbers (arXiv count, Netflix cps), 6 bay
+Counts across both documents: **WRONG 10**: 3 web claims (arXiv count, Netflix cps, the "deceptively simple" attribution), 6 bay
 capabilities in editing-styles.md (blend-mode count, static rotation, canvas preset id, brf blur
 "gap", source fps check, `add_captions clean`) and 1 in hypit.md (skill count). **UNSOURCED 12**
-(§1 rows 17, 18, 19, 21, 23, 26, 28, 29, 31, 39, 40, 43). **STALE 1** (hypit "skills are
+(§1 rows 17, 18, 19, 21, 26, 28, 29, 31, 39, 40, 43, 46). style-clips.md adds **1 unverified
+licence** (Mixkit music) and no WRONG. **STALE 1** (hypit "skills are
 user-invoked"). VERIFIED ~50. PARTIAL 8.
 
 ---
@@ -41,7 +42,7 @@ user-invoked"). VERIFIED ~50. PARTIAL 8.
 | 2 | MrBeast tweet, 3 Mar 2024: "slowed down… let scenes breathe… our views have skyrocketed"; "ultra fast paced/overstim era" | **VERIFIED** | Same page, verbatim: "…longer videos, etc. And our views have skyrocketed! My fellow YouTubers lets get rid of the ultra fast paced/overstim era of content." |
 | 3 | "So the current style is ~23 cuts/min" (§2, and skill step 6 "hold near 23") | **PARTIAL**: over-generalised | One 60 s sample of one video. Fine as a target but not as "the style". The skill's 15–35 band is [E] and should say so. |
 | 4 | MKBHD 7.4 cuts/min (6.4–8.9), median shot 3.6–6.7 s, 48% TH / 43% B-roll, hook 1.1–1.9× body, one 32–55 s hold at 72–92% (§3) | **VERIFIED**, n=3 videos | https://www.writepanda.ai/blog/mkbhd-editing-style-measured/ PandaStudio is an AI-tool vendor, so [M] means "vendor-measured, 3 videos". |
-| 5 | Fireship ≈13 cuts/min (§14) | **VERIFIED** | Same page: "Fireship runs about 13 per minute" |
+| 5 | Fireship ≈13 cuts/min (§14) | **VERIFIED** | The MKBHD page says "Fireship runs about 13 per minute". The primary figure is in PandaStudio's own Fireship article: "11.8 to 15.4 hard cuts per minute across the three videos, 13.3 aggregate" (https://www.writepanda.ai/blog/fireship-editing-style-measured/). Cite that one. |
 | 6 | DOAC: cut every 4.1–6.3 s, ~2.5–3 s near payoff, 1–1.5 s reaction cutaways, 1–3 words, 60–70% height, host yellow / guest white, "completely dry", B-roll 0–6.5% (§4) | **VERIFIED**, n=3 clips | https://www.writepanda.ai/blog/how-diary-of-a-ceo-edits-podcast-clips/ |
 | 7 | DOAC clips 66–139 s; payoff "lands at 55–80%" [M] | **PARTIAL** | Measured 65.8–138.6 s. Measured payoffs are **55/62/69%**. "55–80%" is the article's *recipe target band*, not a measurement. The tag should be [C] for 80. |
 | 8 | ~5.1 s on emotional material (§4) | Not re-checked | — |
@@ -50,7 +51,7 @@ user-invoked"). VERIFIED ~50. PARTIAL 8.
 | 11 | TechSmith: most-desired instructional length 10–19 min; 30–35% prefer 3–6 min (§14), tagged **[I]** | **PARTIAL** + tag error | Secondary summaries of TechSmith's viewer study say ">30% preferred 3–6 min, the most popular band" *and* "most desired length… 10–19 min". The sources are internally inconsistent. The blog URL cited (techsmith.com/blog/video-length) says neither. **`[I]` is not in the doc's tag legend.** |
 | 12 | Microlearning 2–6 min, demos 5–10 min (§14) | **VERIFIED** | https://www.techsmith.com/blog/video-length/ |
 | 13 | Lower third held 4–7 s (2–3 s repeat), in 0.3–0.7 s, out 0.3–0.5 s, ≥~96 px left/bottom, secondary 50–65% (§13) | **VERIFIED** | https://anfx.co/blog/lower-thirds-design-rules-free-templates/ Note: 96 px is ~5% of 1920 (action-safe). The skill's step 5 demands the 10% title-safe area (192/108 px). Pick one. |
-| 14 | Title-safe 10%, action-safe 5% [C, Motion Array] | **RULE-OF-THUMB** (not fetched) | Standard SMPTE convention, correctly tagged [C]. |
+| 14 | Title-safe 10%, action-safe 5% [C, Motion Array]; "SMPTE convention" | **PARTIAL** | No Motion Array page states it. 10%/5% per edge is the legacy SD convention. SMPTE ST 2046-1 (HD) defines 93% action-safe and 90% title-safe *areas*, i.e. ~3.5%/5% per edge. Fine as a conservative rule, but it is not "SMPTE". |
 | 15 | Speed ramps: travel 100%→35–50% over 10–15 f; "2–3 ramps max per 30–60 s"; sports 100%→10–20% over 4–8 f; "slow hold 8–15 frames" (§6, §10) | **VERIFIED** | https://shotbook.art/blog/how-to-find-and-use-speed-ramp-references-for-video-editing |
 | 16 | Ken Burns 5–15% zoom (§15) | **VERIFIED** (5–15) | Frameo: "A zoom increase between 5 percent and 15 percent is typically effective." The "5–8% for subtlety" part was not found on Frameo. Cloudinary not fetched. |
 | 17 | UGC structure: hook 0–3 s, value 3–15, proof 15–25, CTA last 5 s; "15–30 s sweet spot" [C, Stackmatix] (§16) | **UNSOURCED / contradicted** | Stackmatix says **"9–15 seconds typically outperform longer formats for direct response"** and has no timed structure. https://www.stackmatix.com/blog/tiktok-creative-best-practices-startups |
@@ -59,7 +60,7 @@ user-invoked"). VERIFIED ~50. PARTIAL 8.
 | 20 | TikTok: first 6 s carry 90% of ad-recall impact [P] | **VERIFIED** (secondary) | TikTok Marketing Science, via Social Media Today: "first 6 seconds capture 90% cumulative impact on Ad Recall". https://www.socialmediatoday.com/news/tiktok-shares-new-notes-maximize-ad-effectiveness/694989/ |
 | 21 | "93% of top-performing TikTok videos use sound" [P] | **UNSOURCED** (no primary found) | The doc already flags this as secondary. Keep it out of skills until a TikTok page is found. |
 | 22 | OpusClip: emojis/animations "increase numbers of views by 42% on average" | **VERIFIED** as quoted, and correctly flagged as marketing | https://www.opus.pro/blog/create-videos-in-alex-hormozi-style-the-ultimate-guide |
-| 23 | OpusClip calls Hormozi style "deceptively simple — one person, one camera, minimal B-roll" (§1) | **UNSOURCED** (misattributed) | Not on the OpusClip page, and not on Joyspace. Source unknown. |
+| 23 | OpusClip calls Hormozi style "deceptively simple — one person, one camera, minimal B-roll" (§1) | **WRONG attribution** | Not on OpusClip. The quote is Choppity's: https://www.choppity.com/tools/recreate-video-editing-style/alex-hormozi/ |
 | 24 | Keywords go yellow or green [C, OpusClip] | **VERIFIED** | "highlight keywords or phrases in yellow and green color" |
 | 25 | Fonts TheBoldFont, Montserrat Bold, Anton [C, Riverside] | **VERIFIED** | https://riverside.com/blog/hormozi-style-videos |
 | 26 | SFX sparse by 2026, "voice carries the energy" [C, Joyspace] (§1) | **UNSOURCED / contradicted** | Joyspace says "Even if you tone down the visual text, keep the subtle sound design." The quoted phrase is absent. https://joyspace.ai/hormozi-editing-style-2026-analysis |
@@ -70,7 +71,7 @@ user-invoked"). VERIFIED ~50. PARTIAL 8.
 | 31 | White/black flash frame on beat hits [C, Inside Editors] (§10) | **UNSOURCED** | Inside Editors does not mention flash frames. |
 | 32 | Vox cuts every 1–3 s [C, Calliope] (§5) | **VERIFIED** | "cuts every 1-3 seconds in sync with narration beats" https://www.calliopelabs.co/guides/vox-style-shorts |
 | 33 | "12 fps stutter" (§5) | RULE-OF-THUMB, attributed to PremiumBeat (not fetched) | Calliope does not mention it. |
-| 34 | MrBeast editors cut "over 10 hours of footage" [C, C4E] | **VERIFIED** | "Editors cut over 10 hours of footage into a seamless arc" (about the Squid Game video). |
+| 34 | MrBeast editors cut "over 10 hours of footage" per video [C, C4E] | **PARTIAL** | "Editors cut over 10 hours of footage into a seamless arc" describes one video (Squid Game). The same page says "A single shoot can generate hundreds of hours of footage". "Per video" overstates it. |
 | 35 | Vidpros: commercials 2–5 s, vlogs 4–8 s, documentary 7–25 s | **VERIFIED**, correctly labelled unsourced | Vidpros cites nothing, and the doc says so. |
 | 36 | CapCut ramps: 4–5 speed points; smooth arcs over sharp angles [C, CapCutGuide] | **VERIFIED** | "Four or five purposeful points are easier to adjust than a row of tiny changes." |
 | 37 | CapCut 0.1×–10× [P, FlexClip] | **VERIFIED**, but mis-tagged | FlexClip is a third-party vendor, so the tag should be [C], not [P]. |
@@ -82,7 +83,7 @@ user-invoked"). VERIFIED ~50. PARTIAL 8.
 | 43 | Zoom 150–200% for screencasts [C] | **UNSOURCED** | No source is named, and TechSmith gives no percentage. Fine as [E]; it is not [C]. |
 | 44 | Captions.ai luxury: "Understated and unhurried", "Flowing script fonts and sans-serif labels", B&W | **VERIFIED** | https://captions.ai/styles/byline (an AI-vendor style page) |
 | 45 | "22 (Taylor's Version)" lyric type (§9) | **VERIFIED** | Fonts In Use: Montserrat + Mr Sheffield. |
-| 46 | Manfrotto: three movements, 24 fps, edge light | **Not verified** (HTTP 429) | Re-check before citing. |
+| 46 | Manfrotto: three movements; "24 fps with manual exposure" (§7) | **PARTIAL / UNSOURCED** | "the hero product reveal, the details, and the product in context" is on the page. **24 fps and manual exposure are not** (a teammate searched the full HTML; my own fetch hit 429). |
 | 47 | Hagerty quote on Kolder; Luxury Society; Nieman Lab | **Not verified** (HTTP 403 to curl) | Blocked, not dead. |
 | 48 | Every "bay fit %" | **RULE-OF-THUMB**, correctly tagged [E] | They are the author's estimates. Do not surface them to users as measurements. |
 | 49 | Luxury shots 4–8 s, news shots 3–6 s | **RULE-OF-THUMB**, correctly tagged [E] | — |
@@ -224,8 +225,8 @@ parameters, values and usage.
    user-facing text: UGC timing structure and "15–30 s sweet spot" (Stackmatix says 9–15 s), the
    3×3×3 matrix, "voice carries the energy" (Joyspace says the opposite), "deceptively simple",
    Recast's "faces outperform waveforms" and speaker labels, Inside Editors' flash frames, Blare's
-   Superhuman/Stripe lines, Shootsta's listener-cutaway line, "93% use sound", and 150–200% zoom
-   (relabel [E]).
+   Superhuman/Stripe lines, Shootsta's listener-cutaway line, "93% use sound", Manfrotto's "24 fps,
+   manual exposure", and 150–200% zoom (relabel [E]). Re-attribute "deceptively simple" to Choppity.
 2. **Fix the wrong numbers:** the arXiv ads were **99 real ads** (70 were AI-generated), and
    Netflix is **20 cps adult / 17 cps children**. Also fix `entertaining-editing.md`, which carries
    the same cps error. The DOAC payoff should read "measured 55–69%, target band 55–80%".
@@ -242,8 +243,11 @@ parameters, values and usage.
    not `@StripeDev`. Relabel `@johnnyharris` (Vox Borders is on `@Vox`). Re-check Manfrotto, which
    hit 429.
 7. **Add `[I]` to the tag legend or retag it.** Retag FlexClip's CapCut range from [P] to [C].
-8. **style-clips.md does not exist.** Nothing that depends on "raw clips with licences and audio"
-   can be implemented until it is written and audited.
+8. **style-clips.md:** re-confirm the Mixkit music licence on each track's live page before
+   shipping (the `free-stock-music/<slug>-<id>/` URLs redirect to `/discover/`). Pick CC0/PD/Mixkit
+   clips for anything bundled in the app. BY-SA picks (Candidate statement, both screencasts) pass
+   share-alike onto the edited preview. The two pending-review files (CSS-Podcast, Intel) should
+   not be the shipped hero until reviewed.
 
 ## 6. Safe to implement (verified inputs only)
 
@@ -263,3 +267,52 @@ parameters, values and usage.
   words, with **no hypit code, prose, kits or images copied**.
 - The gap ranking in editing-styles.md as a *direction* (SFX library, speed curves, reframing,
   diarisation). Treat the counts as [E], and remove "keyframeable blur" for brf from the gap list.
+
+---
+
+## 7. style-clips.md
+
+Added after the file appeared. Checked 27 Sep 2026. Scratch files are in the session scratchpad
+(`audit-clips/`), not the repo.
+
+### Licences (11 checked on the live source)
+
+| Pick | Claimed | Live source says | Status |
+|---|---|---|---|
+| Candidate statement (#1) | CC BY-SA 4.0, own work, Alhaj Darajaati | `{{self|cc-by-sa-4.0}}`, Artist User:Alhaj_Darajaati | **VERIFIED** |
+| James, West Riding Yorkshire (#1 alt) | CC0, Wikitongues | `{{cc-zero}}`, Artist "Wikitongues Inc" | **VERIFIED** |
+| CSS-Podcast 088 (#2) | CC BY 3.0, review **pending** | `{{YouTube CC-BY|Chrome for Developers}}` + bare `{{LicenseReview}}` | **VERIFIED**, including pending |
+| Houston, We Have a Podcast (#2 alt) | PD-NASA, review passed 2025-12-25 | `{{PD-NASA}}`, `{{LicenseReview|…|user=Sikander|date=2025-12-25}}` | **VERIFIED** |
+| Intel i7 unboxing (#6/#10 alt) | CC BY 3.0, review pending | `{{YouTube CC-BY|The Nvidians}}` + bare `{{LicenseReview}}` | **VERIFIED** |
+| Annotating the Schrödinger equation (#7) | CC BY-SA 4.0, Physikerwelt | `{{self|cc-by-sa-4.0}}`, User:Physikerwelt | **VERIFIED** |
+| Duck and Cover (#8) | PD-USGov | `{{PD-USGov}}`, US Office of Civil Defense / Archer Productions | **VERIFIED** |
+| Eagle Has Landed (#8 alt) | PD-USGov-NASA, YouTube review 2020-02-01 | `{{PD-USGov-NASA}}`, `{{YouTubeReview|…|date=2020-02-01}}`, US National Archives | **VERIFIED** |
+| Yarn Unboxing (#10) | CC BY 3.0, YouTube review passed 2019-12-16 | `{{YouTubeReview|id=3ivUax2MIYw|…|date=2019-12-16}}`, CC BY 3.0 (Yarnspirations) | **VERIFIED** |
+| Mixkit 43150 hiking selfie, 100874 vinyl (#4, #9) | Mixkit Free | Page shows "Mixkit Stock Video Free License", links `license/#videoFree` | **VERIFIED** |
+| Mixkit 43150 / 34382 / 44070 / 3649 files | Stable `-1080.mp4` URLs | All `HTTP/2 200` | **VERIFIED** |
+| Mixkit music "Let's Move" 836 (#11) | Free music licence (`#musicFree`) | `free-stock-music/lets-move-836/` **redirects to `/discover/lets-move-836/`**, where no licence text was found. The MP3 URL returns 200. | **UNVERIFIED** (not wrong; re-check) |
+
+### Audio on 3 speech clips (4 MB range fetch → bay's vendored ffprobe/ffmpeg → whisper.cpp `ggml-base`, `-l en`)
+
+| Clip | Claimed | Measured | Whisper, first 20 s |
+|---|---|---|---|
+| Candidate statement | opus mono, −21.8 dB, 41 pauses | `opus, 1 ch`, 270×480 vp9; mean **−21.8 dB**, **41** pauses (−35 dB/0.4 s) | "Hi everyone, my name is Abirrafi… in the Wikimedia movement I am known as…" **Speech: VERIFIED** |
+| Yarn Unboxing | opus stereo, −18.9 dB, 2 pauses in 88 s | `opus, 2 ch`; mean **−19.0 dB**, 1 pause in this shorter range | "Hey everybody, Christy Glass here… thanks to my friends at Spinrite, I have an unboxing video…" **VERIFIED** |
+| Annotating the Schrödinger equation | opus stereo, −32.0 dB, 30 pauses in 112 s | `opus, 2 ch`; mean **−32.3 dB**, 22 pauses in this range | "Hi, in this video, I'm going to demonstrate how to annotate the time-dependent [Schrödinger] equation…" **VERIFIED** |
+
+### Self-reported gaps: all accurate
+
+The travel pile is silent (Mixkit has no audio streams). The podcast pick's review is pending
+(confirmed above). Clean screencasts are BY-SA only. UGC creators are identifiable, and the Yarn
+video is sponsored ("thanks to my friends at Spinrite" is audible). One addition: the Candidate
+statement speaker is an identifiable Wikimedia community member giving an election statement, so
+the same publicity-rights caution applies to the #1 hero.
+
+### Safe to use from style-clips.md
+
+- For **bundling in the app** (no attribution, no share-alike): James/Wikitongues (CC0), Duck and
+  Cover and Eagle Has Landed (PD), NASA SVS Artemis II (PD + credit line; I did not re-check that page), and the Mixkit video sets.
+- For **demos with a credit line**: Yarn Unboxing (reviewed CC BY 3.0).
+- **Not yet**: CSS-Podcast and Intel (review pending) and Mixkit music (licence page unconfirmed).
+  BY-SA picks only if the edited preview is also released BY-SA.
+
