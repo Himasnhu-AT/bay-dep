@@ -28,12 +28,30 @@ vs v2 is a clean before/after on how much the brief and the footage decide the r
      then; a SOC 2 report is an attestation.
    - The agent built the timeline and exported. Result: `~/Movies/redassay-launch/RedAssay-launch-film-v2.mp4`.
 
+6. **v3** (after the owner's PDF + the perry film):
+   - **Footage:** 9 new takes (`tools/takes-v3.js`), with the product framed right, a black left scrim,
+     a 1.5× cursor and a button press.
+   - **Brief:** `prompt-v3.md`, clocked in bars with perry's motion rules and plan-then-two-reviews.
+   - **Run:** bay's agent loaded `launch-film` on its own. It measured the real click frames (0.12–0.17 s
+     earlier than our log), wrote a shot list, built the timeline, ran two review passes and exported.
+   - **Result:** `~/Movies/redassay-launch/RedAssay-launch-film-v3.mp4`, 52.4 s, −14.0 LUFS. Run
+     recording: `~/Movies/bay-release/bay-agent-run-attest-v3.mp4`.
+   - **Where the agent diverged, per its own report:**
+     - It moved the beat grid to 110 BPM from 0 s, because detection drifted in the intro and outro.
+     - The payoff lands at 69%, not 62%.
+     - The bar-5 headline runs to 4 lines.
+     - The people take plays at 1.25×.
+     - SFX levels are set by gain, not measured against the music.
+   - **Our review:** the layout works (text left, product right), but the UI still reads dark, the bar-5
+     headline is cramped, and "19 of 20" at 63 px is too small for the payoff.
+
 ## Outputs (outside git: media is too big)
 
 | File | What |
 |---|---|
 | `~/Movies/redassay-launch/RedAssay-launch-film.mp4` | v1, 60 s, −14 LUFS |
 | `~/Movies/redassay-launch/RedAssay-launch-film-v2.mp4` | v2, 60 s, 1080p, −14.1 LUFS |
+| `~/Movies/redassay-launch/RedAssay-launch-film-v3.mp4` | v3, 52.4 s, 1080p, −14.0 LUFS, bar-clocked perry system |
 | `~/Movies/redassay-launch/v2/*.mp4` | 8 choreographed 4K takes, SFX, music, font |
 | `~/Movies/redassay-launch/demo/` | v1 takes and stills |
 | `~/Movies/bay-release/bay-agent-run-redassay.mp4` | 35.7 min recording of bay's window over CDP |

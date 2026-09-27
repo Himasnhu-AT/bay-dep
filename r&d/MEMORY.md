@@ -29,7 +29,7 @@ and **Open questions**. Keep entries short, and link to files instead of copying
 
 - [~] talk-to-short (clip 1): **paused by owner** 2026-09-27, mid-edit. The project "raylib talk to short" is saved in bay with 12 segments (48.8 s); the speaker layer is not built yet.
 - [x] perry film study → `research/perry-film-motion.md`.
-- [ ] Attest v3: recorded 9 new takes (`tools/takes-v3.js`: product framed right, left scrim, 1.5× cursor, button press); brief `case-studies/redassay-attest/prompt-v3.md` (bar-clocked, perry motion rules, left-text layout, two review passes); bay run in progress, recorded to `~/Movies/bay-release/bay-agent-run-attest-v3.mp4`. Coordinator.
+- [x] Attest v3 exported (52.4 s); review notes in `case-studies/redassay-attest/README.md`. Recorded 9 new takes (`tools/takes-v3.js`: product framed right, left scrim, 1.5× cursor, button press); brief `case-studies/redassay-attest/prompt-v3.md` (bar-clocked, perry motion rules, left-text layout, two review passes); bay run in progress, recorded to `~/Movies/bay-release/bay-agent-run-attest-v3.mp4`. Coordinator.
 - [ ] Raw vertical talking-head footage search → `sources/raw-talking-head.md` (the owner's reference: an unedited selfie Reel). Research agent.
 
 ## Research summaries
