@@ -27,6 +27,13 @@ Chrome DevTools Protocol (CDP) directly: no npm installs, Node 22+ (global `WebS
 
 ## Gotchas measured
 
+- **Never render into a file an open bay project uses.** ffmpeg truncates its output the moment it starts, so bay's decoder saw a 0-byte `reveal.mp4` mid-export. Every frame using it became a placeholder, and the export was ruined (2026-09-27). Render to a temp folder and `mv` it into place, and only while bay isn't reading it.
+- **The render renderer (`render-frames.mjs`):**
+  - macOS has no `HeadlessExperimental.beginFrame` ("not supported on MacOS yet"), so each step is a virtual-time advance plus `Page.captureScreenshot`.
+  - A step without a produced frame leaves `requestAnimationFrame` idle, which is why a count-up read −2%. The settle loop captures 1-pixel frames.
+  - The page's own timers finish in fewer video frames than their nominal ms (about 0.7×). Click logs are nevertheless exact against the video, verified on the frame where Approve became Publish.
+- **quick-liquid flashes for one frame** whenever the glass is created or its material changes. Create the glass before recording, and only move it (it slides in), never fade it.
+
 - **Coordinates:** `getBoundingClientRect` under body `zoom:2` returns viewport (4K) px, so the cursor
   lives on `<html>`, outside the zoom.
 - **Stage buttons:** RedAssay's hidden stage buttons share text with the numbered risk markers. `byText`

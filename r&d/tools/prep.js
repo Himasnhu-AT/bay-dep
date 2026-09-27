@@ -1,4 +1,4 @@
-(()=>{document.body.style.zoom='2';
+(()=>{document.body.style.zoom=String(innerWidth/1920);
 const st=document.getElementById('film-css')||document.head.appendChild(Object.assign(document.createElement('style'),{id:'film-css'}));
 st.textContent='*{scrollbar-width:none!important}';
 const bar=document.querySelector('[aria-label="Jump to stage"]');if(bar)bar.closest('header').style.visibility='hidden';

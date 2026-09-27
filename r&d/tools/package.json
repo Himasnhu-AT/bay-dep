@@ -1,0 +1,8 @@
+{
+  "name": "bay-rnd-tools",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "quick-liquid": "^0.1.2"
+  }
+}
