@@ -146,6 +146,11 @@ const api: BayApi = {
     setLimits: (limits) => ipcRenderer.invoke(IPC.generationSetLimits, limits)
   },
 
+  styles: {
+    list: () => ipcRenderer.invoke(IPC.stylesList),
+    write: (style, options) => ipcRenderer.invoke(IPC.stylesWrite, style, options)
+  },
+
   agent: {
     start: (options?: { provider?: AgentProvider }) => ipcRenderer.invoke(IPC.agentStart, options),
     providers: () => ipcRenderer.invoke(IPC.agentProviders),

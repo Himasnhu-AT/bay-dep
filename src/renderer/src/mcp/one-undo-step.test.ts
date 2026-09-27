@@ -366,6 +366,7 @@ const TOOL_EXEMPT: Record<string, string> = {
   generate_video: 'starts a job in main and never edits the project; generation.test.ts asserts past is untouched',
   generate_speech: 'starts a job in main and never edits the project; generation-speech.test.ts asserts past is untouched',
   index_footage: 'starts an indexing job in main and never edits the project; footage.test.ts asserts past is untouched',
+  write_style: 'saves a style file through main and never edits the project; styles.test.ts asserts past is untouched',
   track_generation:
     'reads a job from main before it imports; generation.test.ts asserts import and place are one undo step',
   apply_dub: 'starts jobs in main and never edits the project; dub.test.ts asserts past is untouched',

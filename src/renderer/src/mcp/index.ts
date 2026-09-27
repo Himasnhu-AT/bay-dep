@@ -40,6 +40,10 @@ import { AsyncDryRunError, dryRun } from '@/store/dry-run'
 const missing = TOOLS.filter((tool) => !HANDLERS[tool.name]).map((t) => t.name)
 const extra = Object.keys(HANDLERS).filter((name) => !findTool(name))
 
+
+/** Tools that answer with no project open: they reach projects or the style catalog, never the timeline. */
+const NO_PROJECT_TOOLS: ReadonlySet<string> = new Set(['list_projects', 'open_project', 'search_styles', 'read_style', 'write_style'])
+
 /**
  * The mismatch as a value, so the status bar can say it out loud — `null` when the two agree.
  *
@@ -85,8 +89,9 @@ export async function executeToolCall(call: McpToolCall): Promise<McpToolResult>
 
   // No project open: the projects screen is showing and the store holds a placeholder nobody
   // chose. Acting on it would edit something invisible that disappears when the user opens a
-  // real project — so refuse, and say exactly how to get to one.
-  if (store().screen !== 'editor' && tool.name !== 'list_projects' && tool.name !== 'open_project') {
+  // real project — so refuse, and say exactly how to get to one. The tools that never touch a
+  // project (the way in, and the style catalog) still answer.
+  if (store().screen !== 'editor' && !NO_PROJECT_TOOLS.has(tool.name)) {
     return {
       id: call.id,
       ok: false,

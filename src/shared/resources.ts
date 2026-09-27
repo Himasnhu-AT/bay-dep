@@ -21,6 +21,7 @@
  */
 
 import { TEMPLATES, templateUri } from './templates'
+import { BUILT_IN_STYLES, styleMarkdown, styleUri } from './styles/index'
 
 export interface ResourceSpec {
   /** Stable across versions. An agent may cache against it. */
@@ -255,8 +256,25 @@ const TEMPLATE_RESOURCES: readonly ResourceSpec[] = TEMPLATES.map((template) => 
   mimeType: 'text/html'
 }))
 
-/** Everything servable over `resources/list`: the guides, then the templates. */
-export const ALL_RESOURCES: readonly ResourceSpec[] = [...RESOURCES, ...TEMPLATE_RESOURCES]
+/**
+ * The built-in editing styles, as resources — derived from `BUILT_IN_STYLES` like the templates,
+ * so a client without the style tools still sees them. User styles are not listed: they live in
+ * main's styles folder and are read through `read_style`, which checks them on the way.
+ */
+const STYLE_RESOURCES: readonly ResourceSpec[] = BUILT_IN_STYLES.map((style) => ({
+  uri: styleUri(style.id),
+  name: `Style: ${style.title}`,
+  description: `${style.summary} Steps with bay's tools plus design tokens; read_style returns the same as JSON.`,
+  mimeType: 'text/markdown'
+}))
+
+/** Each built-in style's resource body, by uri. */
+export function styleResourceBodies(): Record<string, string> {
+  return Object.fromEntries(BUILT_IN_STYLES.map((style) => [styleUri(style.id), styleMarkdown(style)]))
+}
+
+/** Everything servable over `resources/list`: the guides, then the templates, then the styles. */
+export const ALL_RESOURCES: readonly ResourceSpec[] = [...RESOURCES, ...TEMPLATE_RESOURCES, ...STYLE_RESOURCES]
 
 export function findResource(uri: string): ResourceSpec | undefined {
   return ALL_RESOURCES.find((resource) => resource.uri === uri)

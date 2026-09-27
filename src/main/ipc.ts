@@ -46,7 +46,8 @@ import { importFromUrl } from './media/url-import'
 import { isAllowed } from './protocol'
 import { vision } from './vision/host'
 import { checkSearchRequest, checkVisionAssets } from './vision/requests'
-import { downloadsDir } from './paths'
+import { downloadsDir, stylesDir } from './paths'
+import { listUserStyles, writeUserStyle } from './styles/store'
 import * as store from './project/store'
 import * as encode from './export/encode'
 import { mcpStatus, setExecutorReady, setMcpClients, settleToolCall } from './mcp/server'
@@ -143,6 +144,9 @@ interface ChannelApi {
   generationDubs: BayApi['generation']['dubs']
   generationSaveDub: BayApi['generation']['saveDub']
 
+  stylesList: BayApi['styles']['list']
+  stylesWrite: BayApi['styles']['write']
+
   compositionInspect: BayApi['composition']['inspect']
   compositionWrite: BayApi['composition']['write']
   compositionWriteTemplate: BayApi['composition']['writeTemplate']
@@ -222,6 +226,9 @@ const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
   generationRelease: (_event, reservationId) => releaseGeneration(reservationId),
   generationDubs: () => generationDubs(),
   generationSaveDub: (_event, record) => saveGenerationDub(record),
+
+  stylesList: () => listUserStyles(stylesDir()),
+  stylesWrite: (_event, style, options) => writeUserStyle(stylesDir(), style, { replace: options?.replace === true }),
 
   compositionInspect: async (_event, path, includeHtml) => inspectComposition(path, includeHtml),
   compositionWrite: async (_event, path, html) => {

@@ -42,11 +42,13 @@ import { tool as readComposition } from './read-composition'
 import { tool as readFeedback } from './read-feedback'
 import { tool as readProject } from './read-project'
 import { tool as readScript } from './read-script'
+import { tool as readStyle } from './read-style'
 import { tool as removeMarker } from './remove-marker'
 import { tool as removeRange } from './remove-range'
 import { tool as removeTransition } from './remove-transition'
 import { tool as resolveFeedback } from './resolve-feedback'
 import { tool as searchFootage } from './search-footage'
+import { tool as searchStyles } from './search-styles'
 import { tool as setCanvas } from './set-canvas'
 import { tool as setPlayhead } from './set-playhead'
 import { tool as splitAt } from './split-at'
@@ -58,6 +60,7 @@ import { tool as trimItem } from './trim-item'
 import { tool as undo } from './undo'
 import { tool as writeBrf } from './write-brf'
 import { tool as writeComposition } from './write-composition'
+import { tool as writeStyle } from './write-style'
 
 /** Every tool bay serves, in the order the manifest lists them. */
 export const TOOLS: ToolSpec[] = [
@@ -78,6 +81,9 @@ export const TOOLS: ToolSpec[] = [
   proposeEdit,
   writeBrf,
   readBrf,
+  searchStyles,
+  readStyle,
+  writeStyle,
   writeComposition,
   addTemplate,
   readComposition,

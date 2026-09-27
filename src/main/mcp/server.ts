@@ -295,13 +295,13 @@ function policyEnv(): PolicyEnv {
     home: homedir(),
     roots: [...temps],
     realpath: realpathNearest,
-    confirm: async (message, detail) => {
+    confirm: async (message, detail, accept) => {
       const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().find((w) => !isCompositionWindow(w))
       const options = {
         type: 'question' as const,
         message,
         detail,
-        buttons: ['Download', 'Cancel'],
+        buttons: [accept ?? 'Download', 'Cancel'],
         defaultId: 1,
         cancelId: 1
       }

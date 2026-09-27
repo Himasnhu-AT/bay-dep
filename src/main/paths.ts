@@ -66,6 +66,14 @@ export function downloadsDir(): string {
   return ensure(join(app.getPath('userData'), 'downloads'))
 }
 
+/**
+ * The user's own editing styles (`write_style`), one JSON file per id. Not a cache: a style is
+ * something the user asked bay to keep.
+ */
+export function stylesDir(): string {
+  return ensure(join(app.getPath('userData'), 'styles'))
+}
+
 /** Scratch space for export intermediates — half-written video before the audio is muxed. */
 export function exportScratchDir(): string {
   return ensure(join(cacheDir(), 'export'))

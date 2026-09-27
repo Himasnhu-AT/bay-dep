@@ -284,6 +284,14 @@ export interface ApprovalVerdict {
 }
 
 /**
+ * What a gated write tool does when that is not "changes the project" — so the refusal says what
+ * the call would really do. write_style saves a file outside the project, for later sessions.
+ */
+const OUTSIDE_PROJECT: Record<string, string> = {
+  write_style: 'saves a style file that later conversations will follow (outside the project)'
+}
+
+/**
  * May this call run?
  *
  * Pure, and takes the approval rather than reading it from anywhere, so the whole gate is
@@ -312,7 +320,7 @@ export function checkApproval(
     return {
       allowed: false,
       refusal:
-        `"${toolName}" changes the project, and nothing has been approved in this ` +
+        `"${toolName}" ${OUTSIDE_PROJECT[toolName] ?? 'changes the project'}, and nothing has been approved in this ` +
         `conversation yet. Propose it first: call propose_edit with what you intend and the ` +
         `exact calls it needs, then end your turn and wait for the user to approve. Reading tools ` +
         `(${readableToolNames()}) need no approval — use them to plan.`
