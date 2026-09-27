@@ -65,8 +65,13 @@ export const STYLE_LIMITS = {
   sources: 20,
   sourceLabel: 200,
   sourceUrl: 500,
-  /** The whole style, as the JSON main writes. */
+  /** The whole style, as compact JSON characters. */
   file: 48_000,
+  /**
+   * The file main writes, in UTF-8 bytes — what is checked on write and what bounds a read, so a
+   * style that saved can always be read back (CJK text is three bytes a character).
+   */
+  fileBytes: 96_000,
   /** How many user styles main keeps. */
   userStyles: 200
 } as const
@@ -255,7 +260,10 @@ function checkParams(
     return {}
   }
   const size = JSON.stringify(input).length
-  if (size > STYLE_LIMITS.params) errors.push(`params is ${size} characters as JSON; the limit is ${STYLE_LIMITS.params}.`)
+  if (size > STYLE_LIMITS.params) {
+    errors.push(`params is ${size} characters as JSON; the limit is ${STYLE_LIMITS.params}.`)
+    return {}
+  }
   const unknown = Object.keys(input).filter((key) => !(PARAM_FIELDS as readonly string[]).includes(key))
   if (unknown.length > 0) errors.push(`params has unknown field${unknown.length > 1 ? 's' : ''} ${unknown.join(', ')}; use ${PARAM_FIELDS.join(', ')}.`)
 
@@ -489,13 +497,52 @@ export function readUserStyles(raw: readonly unknown[]): { styles: EditingStyle[
   const styles: EditingStyle[] = []
   const skipped: string[] = []
   for (const entry of raw) {
-    const checked = checkStyle(entry, { origin: 'user', builtInIds: BUILT_IN_STYLE_IDS })
-    if (checked.ok) {
-      if (!styles.some((s) => s.id === checked.style.id)) styles.push(checked.style)
-    } else {
-      const id = isRecord(entry) && typeof entry.id === 'string' ? styleLine(entry.id).slice(0, 60) : '(no id)'
-      skipped.push(`${id}: ${checked.errors[0]}`)
+    // One odd entry (a cycle, a getter that throws) must not take search_styles down with it.
+    try {
+      const checked = checkStyle(entry, { origin: 'user', builtInIds: BUILT_IN_STYLE_IDS })
+      if (checked.ok) {
+        if (!styles.some((s) => s.id === checked.style.id)) styles.push(checked.style)
+      } else {
+        const id = isRecord(entry) && typeof entry.id === 'string' ? styleLine(entry.id).slice(0, 60) : '(no id)'
+        skipped.push(`${id}: ${checked.errors[0]}`)
+      }
+    } catch (error) {
+      skipped.push(`(unreadable entry): ${error instanceof Error ? error.message : String(error)}`)
     }
   }
   return { styles, skipped }
+}
+
+/** The file main writes for a style: what `fileBytes` is measured on, and what is read back. */
+export function styleFileText(style: EditingStyle): string {
+  return JSON.stringify(style, null, 2) + '\n'
+}
+
+/** How many lines of a body the save dialog shows. */
+const CONFIRM_BODY_LINES = 8
+
+/**
+ * The question put to the user before the in-app agent saves a style. A saved body is followed
+ * as steps by later sessions, and the agent may have read text (a transcript, a web page) that
+ * tried to put instructions there — so the person sees the id, the title and how the body starts.
+ * Built from the cleaned style, so what they approve is what is saved.
+ */
+export function styleConfirmation(style: EditingStyle): { message: string; detail: string } {
+  const lines = style.body.split('\n')
+  const shown = lines.slice(0, CONFIRM_BODY_LINES).map((line) => (line.length > 160 ? `${line.slice(0, 157)}…` : line))
+  return {
+    message: `Save the editing style "${style.title}"?`,
+    detail: [
+      `bay's agent wants to save a style that later conversations will follow as steps.`,
+      '',
+      `Id: ${style.id}`,
+      `Title: ${style.title}`,
+      '',
+      'The steps begin:',
+      ...shown,
+      ...(lines.length > CONFIRM_BODY_LINES ? [`… and ${lines.length - CONFIRM_BODY_LINES} more lines.`] : []),
+      '',
+      'Save it only if these read as editing steps you expect.'
+    ].join('\n')
+  }
 }

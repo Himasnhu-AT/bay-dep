@@ -571,9 +571,11 @@ export interface BayApi {
    * renderer uses (a built-in id, a bad slug, an oversize body are refused; markup is stripped) and
    * never runs anything in one. `list` hands back what is on disk, unvalidated: the renderer checks
    * each entry again as it reads (`readUserStyles`), because a file may have been edited by hand.
+   * `skipped` names every style file main could not read (too large, not JSON, id not matching
+   * the file name), so nothing vanishes without a word.
    */
   styles: {
-    list(): Promise<unknown[]>
+    list(): Promise<{ styles: unknown[]; skipped: string[] }>
     /**
      * Save one style. `replace` must be true to overwrite a user style with the same id; without
      * it the refusal names the existing id. Resolves with the style as saved (cleaned).

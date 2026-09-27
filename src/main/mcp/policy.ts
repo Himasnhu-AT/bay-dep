@@ -23,6 +23,7 @@ import { basename, dirname, extname, isAbsolute, join, resolve } from 'node:path
 import { isCompositionPath } from '@shared/composition'
 import { VALIDATE_ONLY } from '@shared/mcp'
 import { checkDownloadUrl, downloadConfirmation } from '@shared/url-import'
+import { BUILT_IN_STYLE_IDS, checkStyle, styleConfirmation } from '@shared/styles'
 import { findFileReference } from './file-args'
 
 export type CallOrigin = 'socket' | 'in-app'
@@ -40,7 +41,8 @@ export interface PolicyEnv {
    * Ask the person at the Mac, and resolve true only if they agreed. Absent where nobody can be
    * asked, which refuses anything that needs asking.
    */
-  confirm?(message: string, detail: string): Promise<boolean>
+  /** Asks the user in a native dialog; `accept` labels the button that agrees (default "Download"). */
+  confirm?(message: string, detail: string, accept?: string): Promise<boolean>
   /**
    * Where a path really leads, through symlinks — `realpathNearest` in the app. Absent, a path is
    * judged by its spelling only.
@@ -166,6 +168,22 @@ export async function checkCallPolicy(
       return agreed
         ? null
         : `The user declined the download from ${checked.host}. Nothing was downloaded; do not ask again unless they bring it up.`
+    }
+    case 'write_style': {
+      // A saved body is followed as steps by later sessions, and the agent may have read text (a
+      // transcript of a web video) that tried to plant instructions there. So the panel asks, with
+      // the id, title and the start of the body in front of the person. A terminal client is its
+      // user's own and is not asked, as with import_url; a dry run saves nothing and asks nobody.
+      if (!inApp || args[VALIDATE_ONLY] === true) return null
+      const { replace: _replace, ...input } = args
+      const checked = checkStyle(input, { origin: 'user', builtInIds: BUILT_IN_STYLE_IDS })
+      if (!checked.ok) return null // the tool's own check refuses it, with every fault listed
+      if (!env.confirm) {
+        return `Saving a style needs the user's go-ahead in bay's window, and bay could not ask. Nothing was saved.`
+      }
+      const { message, detail } = styleConfirmation(checked.style)
+      const agreed = await env.confirm(message, detail, 'Save style')
+      return agreed ? null : `The user declined to save the style "${checked.style.id}". Nothing was saved; do not ask again unless they bring it up.`
     }
     default:
       return null

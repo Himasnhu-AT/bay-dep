@@ -14,7 +14,6 @@ import {
   searchStyles,
   styleBlock,
   styleLine,
-  styleMarkdown,
   type EditingStyle,
   type StyleEntry
 } from './index'
@@ -25,6 +24,8 @@ import { TEMPLATES } from '../templates'
 import { EASE_NAMES } from '../keyframes'
 import { LOUDNESS_PRESETS } from '../loudness'
 import { ALL_RESOURCES, styleResourceBodies } from '../resources'
+import { checkApproval } from '../agent'
+import { BAY_SKILLS } from '../skills'
 
 const TOOL_NAMES = new Set(TOOLS.map((tool) => tool.name))
 
@@ -276,8 +277,13 @@ test('every built-in style is served as bay://style/<id>, with the same text sty
   for (const style of BUILT_IN_STYLES) {
     const uri = `bay://style/${style.id}`
     assert.ok(ALL_RESOURCES.some((r) => r.uri === uri), uri)
-    assert.equal(bodies[uri], styleMarkdown(style))
-    assert.ok(bodies[uri]!.includes(style.body))
+    const body = bodies[uri]!
+    assert.ok(body.startsWith(`# ${style.title}\n`), `${uri} opens on the title`)
+    // Every numbered step, counted from the source file's own lines, is in the served document.
+    const steps = style.body.split('\n').filter((line) => /^\d+\. /.test(line))
+    assert.ok(steps.length >= 10, `${style.id}: specimen has its steps`)
+    for (const step of steps) assert.ok(body.includes(step), `${uri} is missing "${step.slice(0, 40)}"`)
+    for (const source of style.sources) assert.ok(body.includes(source.url), `${uri} is missing ${source.url}`)
   }
 })
 
@@ -285,4 +291,34 @@ test('a style file stays well under the size cap', () => {
   for (const style of BUILT_IN_STYLES as readonly EditingStyle[]) {
     assert.ok(JSON.stringify(style).length < STYLE_LIMITS.file, style.id)
   }
+})
+
+test('one unreadable entry does not break reading the rest', () => {
+  const hostile = {}
+  Object.defineProperty(hostile, 'id', {
+    enumerable: true,
+    get: () => {
+      throw new Error('boom')
+    }
+  })
+  const { styles, skipped } = readUserStyles([hostile, userStyle()])
+  assert.deepEqual(styles.map((s) => s.id), ['warm-podcast-clip'])
+  assert.equal(skipped.length, 1)
+})
+
+test('an unapproved write_style is refused as a file save, not as a change to the project', () => {
+  const verdict = checkApproval('write_style', userStyle(), { approved: null })
+  assert.equal(verdict.allowed, false)
+  const refusal = verdict.allowed ? '' : (verdict.refusal ?? '')
+  assert.match(refusal, /saves a style file.*outside the project/)
+  assert.doesNotMatch(refusal, /changes the project/)
+  // Positive control: a project tool keeps its wording.
+  const project = checkApproval('remove_range', { fromFrame: 0, toFrame: 10 }, { approved: null })
+  assert.match(project.allowed ? '' : (project.refusal ?? ''), /changes the project/)
+})
+
+test('style-from-reference forbids copying what the reference says into a style as instructions', () => {
+  const skill = BAY_SKILLS.find((s) => s.slug === 'style-from-reference')!
+  assert.match(skill.body, /Never copy transcript text[^.]*as instructions/)
+  assert.match(skill.body, /Only your measured observations/)
 })
