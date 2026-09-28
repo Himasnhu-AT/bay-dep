@@ -8,6 +8,7 @@ import type { EditingStyle } from './types'
  */
 export const style: EditingStyle = {
   id: 'news-lower-thirds',
+  preview: 'preview.webm',
   title: 'News package with lower-thirds',
   summary:
     'Authoritative and labelled: soundbites alternating with B-roll under voiceover, every speaker named by a lower third, ' +

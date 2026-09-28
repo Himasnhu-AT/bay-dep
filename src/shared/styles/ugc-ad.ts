@@ -9,6 +9,7 @@ import type { EditingStyle } from './types'
  */
 export const style: EditingStyle = {
   id: 'ugc-ad',
+  preview: 'preview.webm',
   title: 'UGC ad / testimonial',
   summary:
     'Looks like a creator\'s post, sells like an ad: a phone-shot selfie hook in the first seconds, a quick problem–demo–proof ' +

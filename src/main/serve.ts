@@ -16,6 +16,9 @@ import { createReadStream } from 'node:fs'
 import { stat } from 'node:fs/promises'
 import { extname, isAbsolute, resolve as resolvePath, sep } from 'node:path'
 import { Readable } from 'node:stream'
+import { STYLE_ID } from '@shared/styles'
+import { STYLE_PREVIEW_HOST } from '@shared/styles/preview'
+import { STYLE_PREVIEW_FILES } from '@shared/styles/types'
 
 export const BAY_SCHEME = 'bay'
 
@@ -152,12 +155,65 @@ export function allowedBy(allowed: ReadonlySet<string>, root: string, path: stri
 }
 
 /**
+ * The styles' shipped preview media: `<root>/<style id>/<preview.webm|poster.webp>` and nothing
+ * else — not the folder, not a style's folder, not any other file in one. `root` is read-only
+ * app content (`Contents/Resources/styles` in the app, `resources/styles` in a checkout), never
+ * a user-writable folder, so admitting it cannot hand the page anything the user saved. The path
+ * is resolved before it is judged, so `<root>/../secret` does not pass for being under `root`.
+ */
+export function admitStylePreview(root: string, path: string): boolean {
+  // Resolved first so that the path judged is the path opened; the shape rule below (a slug,
+  // then one of two names) is what refuses every `..`.
+  const base = resolvePath(root)
+  const p = resolvePath(path)
+  if (!p.startsWith(base + sep)) return false
+  const parts = p.slice(base.length + 1).split(sep)
+  return parts.length === 2 && STYLE_ID.test(parts[0]!) && STYLE_PREVIEW_FILES.includes(parts[1]!)
+}
+
+/**
+ * `bay://style-preview/<id>/<file>` → the admitted file under `root`, or `null`. The URL parser
+ * has already collapsed plain `..` segments; an encoded slash (`%2F`) survives it, so the
+ * decoded segments are joined by concatenation and the result goes through `admitStylePreview`.
+ */
+export function stylePreviewPath(root: string, url: string): string | null {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    return null
+  }
+  if (parsed.protocol !== `${BAY_SCHEME}:` || parsed.host !== STYLE_PREVIEW_HOST) return null
+  let segments: string[]
+  try {
+    segments = parsed.pathname.replace(/^\//, '').split('/').map((s) => decodeURIComponent(s))
+  } catch {
+    return null
+  }
+  const path = resolvePath(root) + sep + segments.join(sep)
+  return admitStylePreview(root, path) ? resolvePath(path) : null
+}
+
+/**
+ * Routes one `bay://` request: a style preview is answered from `stylesRoot` alone and never
+ * consults the media allowlist; everything else is media, judged by `isAllowed`, and a media URL
+ * never reaches `stylesRoot`. A style-preview URL that is refused falls through to the media
+ * decoder, which rejects its host (400).
+ */
+export function serveBayRequest(request: Request, isAllowed: (path: string) => boolean, stylesRoot: string): Promise<Response> {
+  const preview = stylePreviewPath(stylesRoot, request.url)
+  if (preview) return serveFile(request, (path) => path === preview, () => preview)
+  return serveFile(request, isAllowed)
+}
+
+/**
  * Answers one `bay://` request. `isAllowed` is the allowlist predicate — injected so this
  * function needs neither Electron nor a userData directory to run.
  */
 export async function serveFile(
   request: Request,
-  isAllowed: (path: string) => boolean
+  isAllowed: (path: string) => boolean,
+  decode: (url: string) => string | null = decodeMediaUrl
 ): Promise<Response> {
   // Chromium does not preflight a media element's range requests, but `fetch()` from the
   // renderer will preflight anything carrying a Range header. Answering is cheaper than
@@ -173,7 +229,7 @@ export async function serveFile(
     })
   }
 
-  const path = decodeMediaUrl(request.url)
+  const path = decode(request.url)
   if (!path) return new Response('bad bay:// url', { status: 400, headers: headers({}) })
   if (!isAllowed(path)) return new Response('not permitted', { status: 403, headers: headers({}) })
 

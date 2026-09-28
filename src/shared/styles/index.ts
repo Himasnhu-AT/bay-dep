@@ -17,6 +17,7 @@ import { pinText } from '../pins'
 import {
   STYLE_APPLIES_TO,
   STYLE_BASES,
+  STYLE_PREVIEW_VIDEO,
   type EditingStyle,
   type StyleEase,
   type StyleOrigin,
@@ -225,8 +226,9 @@ export function checkStyle(
 
   let preview: string | undefined
   if (!user && input.preview !== undefined) {
-    if (typeof input.preview !== 'string') errors.push('preview must be a string.')
-    else preview = input.preview
+    if (input.preview !== STYLE_PREVIEW_VIDEO) {
+      errors.push(`preview must be "${STYLE_PREVIEW_VIDEO}", the loop in the style's folder of shipped media (resources/styles/<id>/).`)
+    } else preview = input.preview
   }
 
   if (errors.length > 0) return { ok: false, errors }

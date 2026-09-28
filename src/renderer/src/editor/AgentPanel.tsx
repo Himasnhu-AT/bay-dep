@@ -48,6 +48,7 @@ import { estimateToolCallUsd } from '@shared/generation'
 import { estimateSpeechToolCallUsd } from '@shared/speech'
 import { toolPreview } from '@shared/tool-preview'
 import { Composer } from './Composer'
+import { ReadStyleTile, StyleSearchTiles } from './StyleTiles'
 import { ASSET_DRAG_TYPE } from './AssetTile'
 import { findAsset } from '@shared/project'
 import { isAttachableFile, manyImagesNote, splitDrop, type AgentAttachmentView } from '@shared/agent-attachments'
@@ -361,7 +362,7 @@ export function AgentPanel(): ReactNode {
         ) : (
           <div className="flex flex-col gap-2 p-2">
             {log.map((entry) => (
-              <Entry key={entry.id} entry={entry} deliver={deliver} />
+              <Entry key={entry.id} entry={entry} deliver={deliver} onDraft={pickQuickAction} />
             ))}
             <ThinkingNow />
             <div ref={bottom} />
@@ -609,7 +610,7 @@ function Starters({ onPick }: { onPick: (starter: AgentStarter) => void }): Reac
   )
 }
 
-function Entry({ entry, deliver }: { entry: AgentEntry; deliver: Deliver }): ReactNode {
+function Entry({ entry, deliver, onDraft }: { entry: AgentEntry; deliver: Deliver; onDraft: (text: string) => void }): ReactNode {
   switch (entry.kind) {
     case 'user':
       return <UserEntry entry={entry} />
@@ -633,7 +634,7 @@ function Entry({ entry, deliver }: { entry: AgentEntry; deliver: Deliver }): Rea
       // would be the same thing twice. One that was refused keeps its card, because the refusal
       // is what the reader needs.
       if (entry.tool === 'propose_edit' && entry.state === 'done') return null
-      return <ToolCard entry={entry} />
+      return <ToolCard entry={entry} onDraft={onDraft} />
     case 'proposal':
       return <ProposalCard entry={entry} deliver={deliver} />
     case 'changes':
@@ -678,7 +679,7 @@ function ThinkingNow(): ReactNode {
   )
 }
 
-function ToolCard({ entry }: { entry: Extract<AgentEntry, { kind: 'tool' }> }): ReactNode {
+function ToolCard({ entry, onDraft }: { entry: Extract<AgentEntry, { kind: 'tool' }>; onDraft: (text: string) => void }): ReactNode {
   const [open, setOpen] = useState(false)
   const hasArgs = Object.keys(entry.args).length > 0
   // A failed call opens itself. Its text is the recovery instruction, and hiding that behind a
@@ -721,6 +722,9 @@ function ToolCard({ entry }: { entry: Extract<AgentEntry, { kind: 'tool' }> }): 
         )}
       </button>
       {entry.state === 'running' && entry.input && <StreamingInput tool={entry.tool} input={entry.input} />}
+      {/* Styles are looks: shown as tiles the user can see and pick, not only as JSON. */}
+      {entry.state === 'done' && entry.tool === 'search_styles' && <StyleSearchTiles result={entry.result} onUse={onDraft} />}
+      {entry.state === 'done' && entry.tool === 'read_style' && <ReadStyleTile args={entry.args} onUse={onDraft} />}
       {expanded && (
         <div className="border-t border-line px-2 py-1.5">
           {hasArgs && (

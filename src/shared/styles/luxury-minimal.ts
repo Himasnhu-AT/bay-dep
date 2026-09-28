@@ -8,6 +8,7 @@ import type { EditingStyle } from './types'
  */
 export const style: EditingStyle = {
   id: 'luxury-minimal',
+  preview: 'preview.webm',
   title: 'Luxury / minimal brand film',
   summary:
     'Restraint: few, long, beautifully composed shots, slow dissolves between moods, a muted or black-and-white grade, ' +

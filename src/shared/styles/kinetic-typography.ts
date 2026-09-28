@@ -8,6 +8,7 @@ import type { EditingStyle } from './types'
  */
 export const style: EditingStyle = {
   id: 'kinetic-typography',
+  preview: 'preview.webm',
   title: 'Kinetic typography / lyric video',
   summary:
     'The words are the picture: each word snaps in on its own sung or spoken onset, one hero word per line, a distinct ' +
