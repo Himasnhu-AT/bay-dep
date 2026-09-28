@@ -101,7 +101,7 @@ export const comparisons: Comparison[] = [
     title: "A selfie explanation turned into a lesson, drawn on a board as he speaks",
     style: "explainer",
     aspect: "16:9",
-    durationSec: 61.8,
+    durationSec: 52.8,
     prompt: "Make an educational explainer of about 60 seconds from Musuweu's video, 16:9. Use his passage from about 2:19 to 3:44, where he explains Namibia's three language families and the Bantu migration; tighten it with remove_silences and keep his words exactly as he says them. The structure: he speaks on camera to set it up, then the picture cuts to a drawboard — an HTML composition whose canvas draws the concept step by step, timed to his words while his voice continues — then back to him on camera to land it. On the drawboard, draw a simple family tree: a root for each family (Bantu, Khoisan, Germanic), branches growing as he names them, Dutch branching into Afrikaans, and an arrow sweeping down the map for the Bantu migration. Hand-drawn feel: strokes that draw themselves on, clean labels, a warm off-white board, one accent colour. Use these spellings for every label and caption, not the transcript's: Musuweu, Subiya, Namibia, Bantu, Khoisan, Germanic, Dutch, Afrikaans. Add word-by-word subtitles while he's on camera, a lower third \"Musuweu · Namibia\" at the start, and a small end credit: \"Video: Musuweu Theron Kolokwe / Wikitongues (CC BY-SA 4.0)\". When it's done and checked, export it with streaming loudness to ~/Movies/bay-rnd/explainer/after.mp4.",
     did: [
       "transcribe (English) to find his passage on Namibia's language families",
@@ -122,6 +122,8 @@ export const comparisons: Comparison[] = [
       },
     ],
     afterSound: true,
+    retouched:
+      "Trimmed for this page to 0:06.9–0:59.6 of the agent's 61.8 s export: 4 s either side of the drawboard, with a 0.15 s sound fade at each end. Both sides are cut on the same frames; nothing else was changed.",
   },
   {
     slug: "podcast-frisian",
