@@ -196,3 +196,4 @@ and **Open questions**. Keep entries short, and link to files instead of copying
     tracking.
 - **2026-09-28** (coordinator): OffscreenCanvas lockdown fix; AI layout merged and verified in the app; podcast and 3D branches reviewed (no blockers; fixes sent back); news job started.
 - **2026-09-28** (coordinator): podcast + 3D merged and verified in the app; news explainer on /compare; found the empty-palette and unmastered-re-export gaps from real runs.
+- **2026-09-28** (coordinator): /compare sync fixed for all entries (44ec441; before-from-project.py, player holds one clock, drift 10–16 ms). The explainer with an HTML-canvas drawboard replaces retention-short (f1def82). Its second run cost $11.89 from 176 track_export polls, so the progress tools now wait (waitSeconds, default 30, cap 120; export_timeline wait:true). Merged 6aaf1b4 and verified live: one call returned at done after 15.1 s.
