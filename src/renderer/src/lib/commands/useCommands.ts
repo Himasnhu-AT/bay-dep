@@ -46,7 +46,8 @@ export function useCommands(host: CommandHost): void {
       if (!spec) return
       const modalOpen = document.querySelector('[aria-modal="true"]') !== null
       const whileTyping = 'whileTyping' in spec && spec.whileTyping === true
-      if (!keyMayRun({ defaultPrevented: event.defaultPrevented, modalOpen, typing, whileTyping })) return
+      const whileModal = !('whileModal' in spec && spec.whileModal === false)
+      if (!keyMayRun({ defaultPrevented: event.defaultPrevented, modalOpen, typing, whileTyping, whileModal })) return
       // Claimed even when the command is disabled: Space would otherwise activate the last
       // button clicked, and arrows would scroll a panel.
       event.preventDefault()
@@ -61,7 +62,8 @@ export function useCommands(host: CommandHost): void {
         modalOpen: document.querySelector('[aria-modal="true"]') !== null,
         typing: isTyping(document.activeElement),
         whileTyping: spec?.whileTyping === true,
-        native: spec?.accelerator === 'native'
+        native: spec?.accelerator === 'native',
+        whileModal: spec?.whileModal !== false
       })
       if (!allowed) {
         // Said, not swallowed: a menu item that does nothing reads as broken.

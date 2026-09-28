@@ -43,6 +43,12 @@ export interface CommandSpec {
   readonly accelerator?: 'renderer' | 'native'
   /** Renderer-owned only: also runs while a text field has focus. Default false. */
   readonly whileTyping?: boolean
+  /**
+   * False: never runs while a dialog is open, even from the dialog's own text field. For
+   * `whileTyping` commands that are not text editing (the layout switch): `whileTyping` alone lets
+   * a key through the dialog gate when a field inside the dialog has focus. Default true.
+   */
+  readonly whileModal?: boolean
   /** False keeps it out of the native menu bar (it stays in the shortcuts sheet). Default true. */
   readonly menu?: boolean
 }

@@ -17,6 +17,9 @@
  * TopBar toggle is disabled on that page.
  *
  * Sizes and remembered-layout ids live in `PageLayout.tsx` (`PAGE_FRAMES`), not here.
+ *
+ * In the AI layout (`AiLayout.tsx`) a page's panels open in the Pages drawer, read from here too:
+ * its `left`, `right` and `besideTimeline` side by side, `aboveTimeline` over them.
  */
 
 import type { ReactNode } from 'react'

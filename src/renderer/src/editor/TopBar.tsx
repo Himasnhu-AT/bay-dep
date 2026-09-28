@@ -12,11 +12,11 @@ import {
   Undo2,
   Upload
 } from 'lucide-react'
-import { BayMark, Button, IconButton, Tooltip, ToolButton } from '@/components'
+import { BayMark, Button, IconButton, SegmentedControl, Tooltip, ToolButton } from '@/components'
 import { cn } from '@/lib/cn'
 import { runCommand, shortcutOf } from '@/lib/commands'
 import { useElementSize } from '@/lib/useElementSize'
-import { useEditor, type RegionId } from '@/store/editor'
+import { useEditor, type LayoutMode, type RegionId } from '@/store/editor'
 
 export interface TopBarProps {
   /** Export the timeline now (the quick export dialog). */
@@ -24,6 +24,29 @@ export interface TopBarProps {
   saving: boolean
   /** Which regions the current page has; a toggle for one it lacks is greyed, not hidden. */
   regions: Record<RegionId, boolean>
+  /** Whether the Library / Inspector / Timeline / Agent toggles apply (Resolve mode). */
+  panelToggles: boolean
+}
+
+const LAYOUT_OPTIONS: { value: LayoutMode; label: string }[] = [
+  { value: 'resolve', label: 'Resolve' },
+  { value: 'ai', label: 'AI' }
+]
+
+/**
+ * Resolve's pages or the agent-first layout. A radio group, so it reads as one choice; the
+ * command (and its shortcut) is in the tooltip.
+ */
+function LayoutSwitch(): ReactNode {
+  const mode = useEditor((state) => state.layoutMode)
+  const setLayoutMode = useEditor((state) => state.setLayoutMode)
+  return (
+    <Tooltip label="Layout" detail="Resolve's pages, or the agent with the viewer and media pool" shortcut={shortcutOf('workspace.toggleLayoutMode')}>
+      <span className="no-drag inline-flex">
+        <SegmentedControl<LayoutMode> label="Layout" value={mode} options={LAYOUT_OPTIONS} onChange={setLayoutMode} className="h-6" />
+      </span>
+    </Tooltip>
+  )
 }
 
 /**
@@ -141,7 +164,7 @@ function SaveButton({ saving }: { saving: boolean }): ReactNode {
 const WORDMARK_FROM = 980
 const LABELS_FROM = 930
 
-export function TopBar({ onExport, saving, regions }: TopBarProps): ReactNode {
+export function TopBar({ onExport, saving, regions, panelToggles }: TopBarProps): ReactNode {
   const canUndo = useEditor((state) => state.past.length > 0)
   const canRedo = useEditor((state) => state.future.length > 0)
   const undo = useEditor((state) => state.undo)
@@ -183,6 +206,7 @@ export function TopBar({ onExport, saving, regions }: TopBarProps): ReactNode {
           {wordmark && <span className="text-[14px] font-semibold tracking-tight text-ink-0">bay</span>}
         </div>
         <span aria-hidden="true" className="h-4 w-px shrink-0 bg-line-strong" />
+        {panelToggles && (
         <div role="group" aria-label="Panels" className="no-drag flex min-w-0 items-center gap-0.5">
           {region('side', 'Library', <PanelLeft className="size-4" />, 'workspace.toggleLibrary')}
           {region('inspector', 'Inspector', <PanelRight className="size-4" />, 'workspace.toggleInspector')}
@@ -197,6 +221,7 @@ export function TopBar({ onExport, saving, regions }: TopBarProps): ReactNode {
             onClick={() => setAgentDocked(!agentDocked)}
           />
         </div>
+        )}
       </div>
 
       <div className="flex min-w-0 max-w-[36vw] items-center gap-2">
@@ -205,6 +230,8 @@ export function TopBar({ onExport, saving, regions }: TopBarProps): ReactNode {
       </div>
 
       <div className="no-drag flex min-w-0 items-center justify-end gap-0.5">
+        <LayoutSwitch />
+        <span aria-hidden="true" className="mx-1 h-4 w-px shrink-0 bg-line-strong" />
         <IconButton
           label="Undo"
           shortcut={shortcutOf('edit.undo')}
