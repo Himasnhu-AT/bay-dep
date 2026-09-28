@@ -115,6 +115,8 @@ and **Open questions**. Keep entries short, and link to files instead of copying
 
 ## Decisions
 
+- **2026-09-28, owner:** no agency or organisation footage (NASA, NOAA, ESO or similar) on /compare or in shipped style tiles. Use only plain raw videos like the owner's example selfie (a raw talking head filmed by an ordinary person), and podcasts. The news explainer was reverted (e7f3ad5); `sources/informative-clips.md` is superseded. The edit stays in ~/Movies/bay-rnd/news/ for private testing only.
+
 - 2026-09-28: **The owner: do not publish the Attest (RedAssay) film** anywhere: not on the website, not as a style preview shipped in bay. Its footage stays internal. The product-launch-film style needs other, publishable footage for its preview; until then it shows the neutral tile.
 
 - 2026-09-27: **Focus is the launch film** (the owner). The target raw footage for future clips is **unedited vertical selfie talking-head video** (like the owner's reference Reel), not conference talks.
