@@ -181,6 +181,7 @@ export function TransitionDialog({
             step={2}
             suffix="f"
             onCommit={setRequested}
+            defaultValue={defaultTransitionFrames(junction, fps)}
             disabled={noRoom !== null}
           />
         </div>

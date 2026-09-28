@@ -187,6 +187,7 @@ function CutEditor({ junction, project, fps }: { junction: Junction; project: Pr
               step={2}
               suffix="f"
               onCommit={(next) => patch({ durationInFrames: Math.max(2, Math.round(next)) })}
+              defaultValue={defaultTransitionFrames(junction, fps)}
             />
           ) : (
             <Button variant="primary" className="mt-1 w-full" onClick={add}>

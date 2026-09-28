@@ -28,6 +28,19 @@ import {
   type Timeline
 } from './project'
 
+/**
+ * The speeds a person can type into the Inspector and the clip menu's Speed… — one range for both,
+ * where the two had 8× and 16× ceilings.
+ *
+ * The model itself takes any speed above 0 (`edit_item` refuses only ≤ 0) and export's `atempo`
+ * chain handles any of them. What does not is the preview: a media element honours `playbackRate`
+ * only within 1/16…16 and plays silence outside it (`playbackRateFor` in `engine/sync.ts`, which
+ * clamps to this ceiling). So 16× is the fastest speed whose sound the preview and the export
+ * agree on, and it is the ceiling. The floor stays 0.1×: the element's own 0.0625 reads as
+ * "0.06×" at two decimals, and nothing asked for slower.
+ */
+export const CLIP_SPEED_RANGE = { min: 0.1, max: 16 } as const
+
 export interface SpeedPlan {
   itemId: string
   speed: number

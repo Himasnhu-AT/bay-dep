@@ -8,6 +8,7 @@ import { useEditor } from '@/store/editor'
 import { editItems } from './inspectorEdit'
 import { Keyed } from './KeyframeControls'
 import { timecodeField } from './timecodeField'
+import { LIVE } from './liveGesture'
 
 /**
  * A clip's sound: level in dB (keyable), pan, the J/L cut, and ducking under another track.
@@ -95,15 +96,12 @@ export function AudioSection({
           mixed={volume.mixed}
           format={formatDb}
           onCommit={(next) => onVolume(dbToGain(next))}
+          defaultValue={0}
+          gesture={LIVE}
         />
       </Keyed>
-      {/* Double-click anywhere on the row centres it, as on a mixer's pan knob. Static, not keyed. */}
-      <div
-        className="mt-1.5"
-        onDoubleClick={() => {
-          if (pan.mixed || pan.value !== 0) editItems(ids, () => ({ pan: 0 }))
-        }}
-      >
+      {/* Static, not keyed. Double-click the caption, track or readout to centre. */}
+      <div className="mt-1.5">
         <SliderField
           label="Pan"
           ariaLabel="Pan, left to right. Double-click to centre"
@@ -115,6 +113,8 @@ export function AudioSection({
           mixed={pan.mixed}
           format={formatPan}
           onCommit={(next) => editItems(ids, () => ({ pan: next }))}
+          defaultValue={0}
+          gesture={LIVE}
         />
       </div>
 
@@ -132,6 +132,7 @@ export function AudioSection({
           value={lead.value ?? 0}
           mixed={lead.mixed}
           min={0}
+          defaultValue={0}
           {...tc}
           onCommit={(next) => editItems(ids, () => ({ audioLeadFrames: Math.max(0, Math.round(next)) }))}
         />
@@ -142,6 +143,7 @@ export function AudioSection({
           value={trail.value ?? 0}
           mixed={trail.mixed}
           min={0}
+          defaultValue={0}
           {...tc}
           onCommit={(next) => editItems(ids, () => ({ audioTrailFrames: Math.max(0, Math.round(next)) }))}
         />
@@ -204,6 +206,7 @@ export function AudioSection({
             step={0.5}
             precision={1}
             suffix="dB"
+            defaultValue={6}
             onCommit={(next) => editItems(ids, (id) => ({ duck: { keyTrackId: keyOf(items, id, suggested?.id), amountDb: next } }))}
           />
           <NumberField
@@ -213,6 +216,7 @@ export function AudioSection({
             value={attack.value ?? 0}
             mixed={attack.mixed}
             min={0}
+            defaultValue={Math.round(fps * 0.25)}
             {...tc}
             onCommit={(next) => editItems(ids, (id) => ({ duck: { keyTrackId: keyOf(items, id, suggested?.id), attackFrames: Math.round(next) } }))}
           />
@@ -223,6 +227,7 @@ export function AudioSection({
             value={release.value ?? 0}
             mixed={release.mixed}
             min={0}
+            defaultValue={Math.round(fps * 0.5)}
             {...tc}
             onCommit={(next) => editItems(ids, (id) => ({ duck: { keyTrackId: keyOf(items, id, suggested?.id), releaseFrames: Math.round(next) } }))}
           />

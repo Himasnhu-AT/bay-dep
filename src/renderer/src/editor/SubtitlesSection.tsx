@@ -308,6 +308,7 @@ export function SubtitlesSection(): ReactNode {
             step={0.05}
             format={(v) => `${Math.round(v * 100)}%`}
             onCommit={setScale}
+            defaultValue={1}
           />
           <SliderField
             label="Bottom"
@@ -318,6 +319,7 @@ export function SubtitlesSection(): ReactNode {
             step={1}
             format={(v) => `${Math.round(v)}%`}
             onCommit={setBottom}
+            defaultValue={style.bottom}
           />
         </div>
       </Section>

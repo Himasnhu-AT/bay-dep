@@ -6,6 +6,7 @@ import { cn } from '@/lib/cn'
 import { selectTimeline, useEditor } from '@/store/editor'
 import { useExportSession } from '../export-session'
 import { AudioMeter } from '../viewer/AudioMeter'
+import { LIVE } from '../liveGesture'
 import { mixerChannels, type MixerChannel } from './channels'
 
 export interface MixerProps {
@@ -122,7 +123,7 @@ function TrackFader({ trackId, name, volume, pan }: { trackId: string; name: str
   const shownDb = Number.isFinite(db) ? Math.max(VOLUME_DB_FLOOR, db) : VOLUME_DB_FLOOR
   return (
     <div className="flex flex-col gap-1">
-      <div title="Track volume. Double-click for 0 dB." onDoubleClick={() => patchTrack(trackId, { volume: 1 })}>
+      <div title="Track volume. Double-click for 0 dB.">
         <div className="flex items-baseline justify-between text-[9px] text-ink-2">
           <span>Vol</span>
           <span className="font-mono text-ink-1 tabular-nums">{formatDb(shownDb)}</span>
@@ -135,14 +136,16 @@ function TrackFader({ trackId, name, volume, pan }: { trackId: string; name: str
           origin={0}
           value={shownDb}
           onCommit={(next) => patchTrack(trackId, { volume: dbToGain(next) })}
+          defaultValue={0}
+          gesture={LIVE}
         />
       </div>
-      <div title="Track pan. Double-click to centre." onDoubleClick={() => patchTrack(trackId, { pan: 0 })}>
+      <div title="Track pan. Double-click to centre.">
         <div className="flex items-baseline justify-between text-[9px] text-ink-2">
           <span>Pan</span>
           <span className="font-mono text-ink-1 tabular-nums">{formatPan(pan)}</span>
         </div>
-        <Slider label={`${name} pan, left to right`} min={-1} max={1} step={0.01} bipolar value={pan} onCommit={(next) => patchTrack(trackId, { pan: next })} />
+        <Slider label={`${name} pan, left to right`} min={-1} max={1} step={0.01} bipolar value={pan} onCommit={(next) => patchTrack(trackId, { pan: next })} defaultValue={0} gesture={LIVE} />
       </div>
     </div>
   )

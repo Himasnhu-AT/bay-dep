@@ -3,7 +3,7 @@ import { useShallow } from 'zustand/react/shallow'
 import { AlertTriangle, Check, FolderOpen, Loader2, Upload } from 'lucide-react'
 import type { ExportFormat } from '@shared/ipc'
 import { formatFps, formatTimecode, timelineDuration } from '@shared/project'
-import { describeTarget, rememberedTarget, type LoudnessPreset } from '@shared/loudness'
+import { describeTarget, LOUDNESS_PRESETS, rememberedTarget, type LoudnessPreset } from '@shared/loudness'
 import { parseTime } from '@shared/pins'
 import {
   EXPORT_PRESETS,
@@ -310,6 +310,7 @@ export function LoudnessFields(): ReactNode {
               max={-5}
               precision={1}
               suffix="LUFS"
+              defaultValue={LOUDNESS_PRESETS.streaming.integratedLufs}
               disabled={locked}
               onClamp={(asked, kept) => setClampNote(`${formatLevel(asked)} LUFS is outside the target range, so it is ${formatLevel(kept)}.`)}
               onCommit={(integratedLufs) => {
@@ -325,6 +326,7 @@ export function LoudnessFields(): ReactNode {
               max={0}
               precision={1}
               suffix="dBTP"
+              defaultValue={LOUDNESS_PRESETS.streaming.truePeakDb}
               disabled={locked}
               onClamp={(asked, kept) => setClampNote(`${formatLevel(asked)} dBTP is outside the peak range, so it is ${formatLevel(kept)}.`)}
               onCommit={(truePeakDb) => {

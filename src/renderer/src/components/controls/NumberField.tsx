@@ -1,6 +1,8 @@
 import { useRef, useState, type ReactNode } from 'react'
 import { cn } from '@/lib/cn'
 import { useDrag } from '@/lib/useDrag'
+import { useGestureBracket, useWheelSteps, type Gesture } from './gesture'
+import { clamp, dragValue, keyStep, modifiersOf } from './values'
 
 export interface NumberFieldProps {
   label: string
@@ -40,23 +42,34 @@ export interface NumberFieldProps {
   onClamp?(asked: number, kept: number): void
   /** Accessible name when the visible label is an abbreviation. */
   ariaLabel?: string
-}
-
-function clamp(value: number, min: number | undefined, max: number | undefined): number {
-  let out = value
-  if (min !== undefined) out = Math.max(min, out)
-  if (max !== undefined) out = Math.min(max, out)
-  return out
+  /**
+   * What a double-click on the label puts back, as one commit (one undo step). Without it a
+   * double-click does nothing.
+   */
+  defaultValue?: number
+  /**
+   * The caller's live-edit bracket (`beginGesture`/`endGesture`). With one, a drag commits on
+   * every move so the preview follows it, and is still one undo step; without one it commits
+   * once, on release. See `Gesture`.
+   */
+  gesture?: Gesture
+  /** The scroll wheel steps the value while the field is hovered and focused. Default true. */
+  wheel?: boolean
 }
 
 /**
  * A number you can drag. Every NLE has this and its absence is immediately felt: without
  * it, nudging a clip's position means select-all, type, tab, repeat.
  *
- * **It commits on release, not on every move.** The store snapshots the whole project for
- * undo on each mutation, so writing through on `pointermove` would bury the previous state
- * under four hundred one-pixel edits. The trade is that the preview does not update live
- * during a drag — that needs a transient-edit mode on the store, which does not exist yet.
+ * Drag the label (or type in the box); Shift is coarse (×10), Cmd/Ctrl or Alt is fine (×0.1) —
+ * for the drag, the arrow keys and the wheel alike (`MODIFIER_SCALE`). Double-click the label to
+ * reset to `defaultValue`.
+ *
+ * **Live, one undo step per gesture.** The store snapshots the whole project for undo on each
+ * mutation, so writing through on every move would bury the previous state under four hundred
+ * one-pixel edits. A caller that passes `gesture` (the store's `beginGesture`/`endGesture`) gets
+ * a live preview during the drag that still lands as one step; a caller that does not gets one
+ * commit on release.
  */
 export function NumberField({
   label,
@@ -75,9 +88,13 @@ export function NumberField({
   parse,
   onInvalid,
   onClamp,
-  ariaLabel
+  ariaLabel,
+  defaultValue,
+  gesture,
+  wheel = true
 }: NumberFieldProps): ReactNode {
   const inputRef = useRef<HTMLInputElement>(null)
+  const boxRef = useRef<HTMLDivElement>(null)
   // While dragging or typing the field shows its own value; otherwise it mirrors the store.
   const [draft, setDraft] = useState<string | null>(null)
   const dragStart = useRef(0)
@@ -85,6 +102,7 @@ export function NumberField({
   // was typed. Read from a ref because the blur runs inside the same key event, before the
   // `setDraft(null)` above it has re-rendered the handler.
   const cancelling = useRef(false)
+  const bracket = useGestureBracket(gesture)
 
   const shown = (n: number): string => (format ? format(n) : n.toFixed(precision))
   const read = (text: string): number | null => {
@@ -94,7 +112,8 @@ export function NumberField({
   }
   const display = draft ?? (mixed ? 'Mixed' : shown(value))
 
-  const commit = (next: number): void => {
+  /** `live` commits are the moves inside a gesture: they write, but do not report a clamp. */
+  const commit = (next: number, live = false): void => {
     const rounded = Number(clamp(next, min, max).toFixed(precision))
     // Not defensive — measured. Every *typed* route into here is already gated by a
     // `Number.isFinite` at its call site, so it is tempting to read this as unreachable and
@@ -107,6 +126,7 @@ export function NumberField({
     // commits NaN to the project; with it, 3 -> 3.
     if (!Number.isFinite(rounded)) return
     onCommit(rounded)
+    if (live) return
     // After the commit, so a caller that clears its note on every commit still shows this one.
     const asked = Number(next.toFixed(precision))
     if (Number.isFinite(asked) && asked !== rounded) onClamp?.(asked, rounded)
@@ -122,17 +142,22 @@ export function NumberField({
     },
     onMove: (state) => {
       if (disabled) return
-      // Shift is fine (1/10), Alt is coarse (10×) — the convention every editor shares.
-      const scale = state.shift ? 0.1 : state.alt ? 10 : 1
-      const next = clamp(dragStart.current + state.dx * step * scale, min, max)
+      const next = clamp(dragValue(dragStart.current, state.dx, step, state), min, max)
       setDraft(shown(Number(next.toFixed(precision))))
+      if (bracket.live && state.travel >= 3) {
+        bracket.begin()
+        commit(next, true)
+      }
     },
     onEnd: (state) => {
       document.body.style.cursor = ''
-      if (disabled) return
-      const scale = state.shift ? 0.1 : state.alt ? 10 : 1
+      if (disabled) {
+        bracket.end()
+        return
+      }
       setDraft(null)
-      commit(dragStart.current + state.dx * step * scale)
+      commit(dragValue(dragStart.current, state.dx, step, state))
+      bracket.end()
     },
     onClick: () => {
       document.body.style.cursor = ''
@@ -141,10 +166,38 @@ export function NumberField({
     }
   })
 
+  /** One arrow press or wheel notch: `steps` increments with the held modifier. */
+  const nudge = (steps: number, mods: { shift: boolean; alt: boolean; meta: boolean }, fromDraft: boolean): void => {
+    const base = fromDraft && draft !== null && draft !== '' ? read(draft) : value
+    if (base === null || !Number.isFinite(base)) return
+    const next = clamp(base + steps * keyStep(step, mods, precision), min, max)
+    if (fromDraft) setDraft(shown(Number(next.toFixed(precision))))
+    commit(next)
+  }
+
+  useWheelSteps(boxRef, wheel && !disabled && !mixed, (steps, mods) => {
+    if (bracket.live) bracket.touch()
+    nudge(steps, mods, true)
+  })
+
+  const reset = (): void => {
+    if (disabled || defaultValue === undefined) return
+    // A double-click's first click focused the box with the old value as its draft; leaving
+    // that draft would commit the old value straight back on blur.
+    if (document.activeElement === inputRef.current) {
+      cancelling.current = true
+      inputRef.current?.blur()
+    }
+    setDraft(null)
+    commit(defaultValue)
+  }
+
   const handle = (
     <span
       aria-hidden="true"
       onPointerDown={disabled ? undefined : onPointerDown}
+      onDoubleClick={reset}
+      title={defaultValue !== undefined && !disabled ? `Drag to change · double-click to reset to ${shown(defaultValue)}${suffix ? ` ${suffix}` : ''}` : undefined}
       className={cn(
         'shrink-0 text-[11px] select-none',
         // Two lines rather than an ellipsis: "Letter spacing" is wider than the column, and
@@ -159,6 +212,7 @@ export function NumberField({
 
   const box = (
     <div
+      ref={boxRef}
       className={cn(
         'flex h-7 min-w-0 items-center rounded-sm border border-line bg-surface-2 t-fast',
         // The global focus ring is a 2px accent outline; a composite control's input has its
@@ -172,7 +226,13 @@ export function NumberField({
       {!row && handle}
       <input
         ref={inputRef}
+        role="spinbutton"
         aria-label={ariaLabel ?? label}
+        aria-valuenow={mixed || !Number.isFinite(value) ? undefined : value}
+        aria-valuemin={min}
+        aria-valuemax={max}
+        aria-valuetext={mixed ? 'Mixed' : `${shown(value)}${suffix ? ` ${suffix}` : ''}`}
+        aria-disabled={disabled || undefined}
         disabled={disabled}
         inputMode="decimal"
         value={display}
@@ -200,13 +260,7 @@ export function NumberField({
             event.currentTarget.blur()
           } else if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
             event.preventDefault()
-            const direction = event.key === 'ArrowUp' ? 1 : -1
-            const scale = event.shiftKey ? 10 : 1
-            const base = draft !== null && draft !== '' ? read(draft) : value
-            if (base === null || !Number.isFinite(base)) return
-            const next = clamp(base + direction * step * scale, min, max)
-            setDraft(shown(Number(next.toFixed(precision))))
-            commit(next)
+            nudge(event.key === 'ArrowUp' ? 1 : -1, modifiersOf(event), true)
           }
         }}
       />

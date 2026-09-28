@@ -200,6 +200,7 @@ export function VariableControl({
             value={Number(value)}
             format={(v) => `${Number(v.toFixed(2))}${variable.unit ?? ''}`}
             onCommit={(next) => onChange(next)}
+            defaultValue={typeof variable.default === 'number' ? variable.default : undefined}
           />
         </div>
       ) : (
@@ -211,6 +212,7 @@ export function VariableControl({
           step={variable.step}
           suffix={variable.unit}
           onCommit={(next) => onChange(next)}
+          defaultValue={typeof variable.default === 'number' ? variable.default : undefined}
           className="flex-1"
         />
       )

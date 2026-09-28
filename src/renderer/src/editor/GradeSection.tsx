@@ -9,9 +9,10 @@ import {
   type GradeWheel
 } from '@shared/grade'
 import { ColorField, Field, NumberField, Section, SectionReset, Select, SliderField } from '@/components'
-import { centredRange } from '@/components/Slider'
+import { centredRange } from '@/components/controls/Slider'
 import { useEditor } from '@/store/editor'
 import { Disclosure } from './Disclosure'
+import { LIVE } from './liveGesture'
 
 /**
  * Colour grade. The common controls first — white balance, saturation, the three wheels as
@@ -188,6 +189,8 @@ export function GradeSection({ items, luts }: { items: Item[]; luts: Asset[] }):
             step={control.step}
             format={control.format}
             onCommit={(next) => update((g) => ({ ...g, [control.key]: next }))}
+            defaultValue={control.identity}
+            gesture={LIVE}
           />
         ))}
       </div>
@@ -203,6 +206,8 @@ export function GradeSection({ items, luts }: { items: Item[]; luts: Asset[] }):
             step={0.005}
             format={signed(3)}
             onCommit={(next) => setWheel(control.key, next)}
+            defaultValue={0}
+            gesture={LIVE}
           />
         ))}
       </div>
@@ -226,6 +231,8 @@ export function GradeSection({ items, luts }: { items: Item[]; luts: Asset[] }):
                   step={0.005}
                   precision={3}
                   onCommit={(next) => setChannel(control.key, channel.key, next)}
+                  defaultValue={0}
+                  gesture={LIVE}
                 />
               ))}
             </div>
@@ -267,6 +274,8 @@ export function GradeSection({ items, luts }: { items: Item[]; luts: Asset[] }):
             step={0.01}
             format={percent}
             onCommit={(next) => update((g) => (g.lut ? { ...g, lut: { ...g.lut, intensity: next } } : g))}
+            defaultValue={1}
+            gesture={LIVE}
           />
         )}
       </div>
@@ -282,6 +291,8 @@ export function GradeSection({ items, luts }: { items: Item[]; luts: Asset[] }):
             step={0.01}
             format={percent}
             onCommit={(next) => setAmount(control.key, next)}
+            defaultValue={0}
+            gesture={LIVE}
           />
         ))}
       </div>
@@ -302,6 +313,8 @@ export function GradeSection({ items, luts }: { items: Item[]; luts: Asset[] }):
                   onCommit={(next) =>
                     update((g) => (g.halation ? { ...g, halation: { ...g.halation, threshold: next } } : g))
                   }
+                  defaultValue={DEFAULT_HALATION_THRESHOLD}
+                  gesture={LIVE}
                 />
                 <NumberField
                   row
@@ -317,6 +330,8 @@ export function GradeSection({ items, luts }: { items: Item[]; luts: Asset[] }):
                   onCommit={(next) =>
                     update((g) => (g.halation ? { ...g, halation: { ...g.halation, radius: next } } : g))
                   }
+                  defaultValue={DEFAULT_HALATION_RADIUS}
+                  gesture={LIVE}
                 />
                 <Field label="Glow">
                   <ColorField
@@ -342,6 +357,8 @@ export function GradeSection({ items, luts }: { items: Item[]; luts: Asset[] }):
                 precision={1}
                 suffix="px"
                 onCommit={(next) => update((g) => (g.grain ? { ...g, grain: { ...g.grain, size: next } } : g))}
+                defaultValue={DEFAULT_GRAIN_SIZE}
+                gesture={LIVE}
               />
             )}
           </div>
