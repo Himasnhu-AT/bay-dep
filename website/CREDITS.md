@@ -42,18 +42,14 @@ entry is marked ready, its footage and sound are listed here, one table per entr
 shape as the one above (title, author, page, file downloaded, licence), and the same rows are
 the entry's `credits`, which the page prints under the figure.
 
-### retention-short
+### kinetic-type
 
 | Title | Author | Page | File downloaded | Licence |
 |---|---|---|---|---|
-| James speaking West Riding Yorkshire English | Wikitongues | https://commons.wikimedia.org/wiki/File:James_speaking_West_Riding_Yorkshire_English.webm | the original `.webm` (1080×1920, 6:20); the page uses 5:15–6:01 as "before" | CC0 1.0 |
+| James speaking West Riding Yorkshire English | Wikitongues | https://commons.wikimedia.org/wiki/File:James_speaking_West_Riding_Yorkshire_English.webm | the original `.webm` (1080×1920, 6:20); the page uses 2:34.4–2:53.0, with its sound | CC0 1.0 |
 
 The person on camera keeps his personality and publicity rights; the page presents the clip as
 material the agent was given and implies no endorsement.
-
-### kinetic-type
-
-The same Wikitongues clip as retention-short (CC0 1.0); the page uses 2:34.4–2:53.0, with its sound.
 The first export came out at −26.9 LUFS because the prompt didn't ask for mastering; the agent
 re-exported it, unchanged, mastered to −14 LUFS, when asked in a follow-up message.
 
@@ -78,6 +74,16 @@ maker's name); a faint generic "…S MADE" remains at the edge of the dial in th
 Share-alike: the edit (`public/compare/podcast-frisian/after.*`) is an adaptation and is
 shared under CC BY-SA 4.0 too. The two speakers are private people talking about themselves;
 neither they nor Wikitongues endorse bay. The lower third and credit were drawn by bay's agent.
+
+### explainer-drawboard
+
+| Title | Author | Page | File downloaded | Licence |
+|---|---|---|---|---|
+| WIKITONGUES: Musuweu speaking English and Subiya | Musuweu Theron Kolokwe / Wikitongues | https://commons.wikimedia.org/wiki/File:WIKITONGUES-_Musuweu_speaking_English_and_Subiya.webm | https://upload.wikimedia.org/wikipedia/commons/8/85/WIKITONGUES-_Musuweu_speaking_English_and_Subiya.webm | CC BY-SA 4.0 |
+
+Share-alike: the edit (`public/compare/explainer-drawboard/after.*`) is an adaptation and is
+shared under CC BY-SA 4.0 too. The drawboard (tree, map, labels) was drawn by bay's agent from
+what he says; two small captions are its paraphrase. Neither he nor Wikitongues endorses bay.
 
 ## Sound
 

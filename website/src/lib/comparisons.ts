@@ -57,7 +57,8 @@ export type StyleId =
   | "luxury-minimal"
   | "product-launch-film"
   | "ugc-ad"
-  | "podcast";
+  | "podcast"
+  | "explainer";
 
 /** The built-in styles' titles, as `../src/shared/styles/*.ts` spells them. */
 export const STYLE_TITLES: Record<StyleId, string> = {
@@ -68,6 +69,7 @@ export const STYLE_TITLES: Record<StyleId, string> = {
   "product-launch-film": "Product launch film",
   "ugc-ad": "UGC ad / testimonial",
   podcast: "Podcast edit (bay's podcast skill and tools)",
+  explainer: "Educational explainer with a drawboard",
 };
 
 export type Credit = { text: string; url: string; licence: string; licenceUrl?: string };
@@ -94,31 +96,29 @@ const PENDING = "Pending: filled from the run's own record when the edit is expo
 
 export const comparisons: Comparison[] = [
   {
-    slug: "retention-short",
+    slug: "explainer-drawboard",
     status: "ready",
-    title: "A six-minute selfie cut into a vertical short",
-    style: "retention-talking-head",
-    aspect: "9:16",
-    durationSec: 46.5,
-    prompt: "Turn this into a vertical short of about 45 seconds in the retention talking-head style. James speaks English with a Yorkshire accent, so transcribe it as English. Pick his most interesting 45 seconds, open on the strongest line, and keep his words exactly as he says them. When it's done and checked, export it to ~/Movies/bay-rnd/retention/after.mp4.",
+    title: "A selfie explanation turned into a lesson, drawn on a board as he speaks",
+    style: "explainer",
+    aspect: "16:9",
+    durationSec: 61.8,
+    prompt: "Make an educational explainer of about 60 seconds from Musuweu's video, 16:9. Use his passage from about 2:19 to 3:44, where he explains Namibia's three language families and the Bantu migration; tighten it with remove_silences and keep his words exactly as he says them. The structure: he speaks on camera to set it up, then the picture cuts to a drawboard — an HTML composition whose canvas draws the concept step by step, timed to his words while his voice continues — then back to him on camera to land it. On the drawboard, draw a simple family tree: a root for each family (Bantu, Khoisan, Germanic), branches growing as he names them, Dutch branching into Afrikaans, and an arrow sweeping down the map for the Bantu migration. Hand-drawn feel: strokes that draw themselves on, clean labels, a warm off-white board, one accent colour. Use these spellings for every label and caption, not the transcript's: Musuweu, Subiya, Namibia, Bantu, Khoisan, Germanic, Dutch, Afrikaans. Add word-by-word subtitles while he's on camera, a lower third \"Musuweu · Namibia\" at the start, and a small end credit: \"Video: Musuweu Theron Kolokwe / Wikitongues (CC BY-SA 4.0)\". When it's done and checked, export it with streaming loudness to ~/Movies/bay-rnd/explainer/after.mp4.",
     did: [
-      "read_style retention-talking-head, with the short-form and highlights skills loaded",
-      "set_canvas to vertical 1080×1920",
-      "find_highlights and transcribe (English) to choose his strongest passage",
-      "remove_range to cut the dead air and everything outside the passage",
-      "Cold open moved to the front: \"I'm trying to do my bit to keep dialect alive\"",
-      "split_at into 13 shots of 2–4.5 s",
-      "edit_item to alternate a 12% punch-in on every other shot",
-      "write_brf for word-by-word Punch subtitles, the spoken word in yellow",
-      "write_brf for the hook title over the first two seconds",
+      "transcribe (English) to find his passage on Namibia's language families",
+      "remove_silences, then split_at, remove_range and delete_items to tighten it to 61.8 s, dropping two whole-sentence asides; every remaining word is his, in his order",
+      "write_composition for the drawboard: a canvas that draws the family tree, the map and the migration arrow stroke by stroke, timed to his words",
+      "add_subtitles, then write_composition for one word-by-word layer shown only while he is on camera, with the spellings from the prompt",
+      "add_template for the lower third; write_brf for the credit",
+      "preview_frame and frame_grid to check the board, the subtitles and the credit",
       "export_timeline, mastered to −14 LUFS",
+      "A second message asked for more of him on camera: the board now cuts away and back, resuming where it stopped, and the lower third got a dark plate",
     ],
     credits: [
       {
-        text: "James speaking West Riding Yorkshire English (Wikitongues)",
-        url: "https://commons.wikimedia.org/wiki/File:James_speaking_West_Riding_Yorkshire_English.webm",
-        licence: "CC0 1.0",
-        licenceUrl: "https://creativecommons.org/publicdomain/zero/1.0/",
+        text: "WIKITONGUES: Musuweu speaking English and Subiya (Musuweu Theron Kolokwe / Wikitongues)",
+        url: "https://commons.wikimedia.org/wiki/File:WIKITONGUES-_Musuweu_speaking_English_and_Subiya.webm",
+        licence: "CC BY-SA 4.0",
+        licenceUrl: "https://creativecommons.org/licenses/by-sa/4.0/",
       },
     ],
     afterSound: true,
