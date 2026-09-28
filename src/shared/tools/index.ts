@@ -39,6 +39,7 @@ import { tool as placeAsset } from './place-asset'
 import { tool as planDub } from './plan-dub'
 import { tool as previewFrame } from './preview-frame'
 import { tool as proposeEdit } from './propose-edit'
+import { tool as putBehindSubject } from './put-behind-subject'
 import { tool as readBrf } from './read-brf'
 import { tool as readComposition } from './read-composition'
 import { tool as readFeedback } from './read-feedback'
@@ -100,6 +101,7 @@ export const TOOLS: ToolSpec[] = [
   editAsset,
   editItem,
   detachAudio,
+  putBehindSubject,
   trimItem,
   applyScript,
   splitAt,

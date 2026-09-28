@@ -10,6 +10,7 @@ import { applyRelinks } from '@shared/relink'
 import { shiftKeyframes, withKeyframe } from '@shared/keyframes'
 import { applyTrimPlan, planTrim, type TrimPlan } from '@shared/trim'
 import { detachAudio, linkedPartners, reattachAudio, unlinkItems, withLinked } from '@shared/links'
+import { planBehindSubject, type BehindSubjectResult } from '@shared/behind-subject'
 import { describeDuplicate, duplicateClips, type DuplicateResult } from '@shared/clipboard'
 import { formatTimecode } from '@shared/timecode'
 import { applySpeedPlan, planSpeed, retimedLength, type SpeedPlan } from '@shared/speed'
@@ -41,6 +42,7 @@ type Actions = Pick<
   | 'detachAudio'
   | 'reattachAudio'
   | 'unlinkItems'
+  | 'putBehindSubject'
   | 'patchLayout'
   | 'setKeyframe'
   | 'addTrack'
@@ -639,6 +641,23 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
         holder.value = unlinkItems(tl, itemIds)
       })
       return holder.value
+    },
+
+    putBehindSubject(spec) {
+      const holder: { value: BehindSubjectResult } = { value: { ok: false, error: 'No timeline is open.' } }
+      editTimeline((tl) => {
+        holder.value = planBehindSubject(tl, spec, {
+          makeId: newId,
+          makeVideoTrack: (timeline) => {
+            const track = makeTrack('video', 1)
+            track.name = nextTrackName(timeline, 'video')
+            return track
+          }
+        })
+      })
+      const result = holder.value
+      if (result.ok) set({ selection: [result.cutoutItemId] })
+      return result
     },
 
     patchLayout(itemId, patch) {

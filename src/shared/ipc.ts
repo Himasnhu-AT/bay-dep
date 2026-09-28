@@ -13,6 +13,7 @@ import type { AgentEntry, AgentEvent, AgentProvider, AgentProviderStatus } from 
 import type { AgentAttachmentInput } from './agent-attachments'
 import type { TranscriptSegment } from './transcribe'
 import type { BeatGrid } from './beats'
+import type { SubjectMatteIndex, SubjectMatteRequest, SubjectMatteResult } from './matte'
 import type { WhisperDownload, WhisperStatus } from './whisper'
 import type {
   GenerationJob,
@@ -508,6 +509,15 @@ export interface BayApi {
      * `bay://`. A time past the last frame, or a file with no picture, is refused in words.
      */
     freezeFrame(request: FreezeFrameRequest): Promise<{ ok: true; path: string } | { ok: false; error: string }>
+    /**
+     * The subject matte (which pixels are the person) for one source range of a file, from the
+     * cache or computed now by Apple Vision in main (`main/matte/`). Content-addressed by file
+     * content, range and engine. Refused for a path `bay://` would not serve. Takes ~11 ms per
+     * source frame the first time.
+     */
+    subjectMatte(request: SubjectMatteRequest): Promise<SubjectMatteResult>
+    /** Where a computed matte's frames are, for the compositor to read through `bay://` with Range. */
+    subjectMatteIndex(key: string): Promise<{ ok: true; index: SubjectMatteIndex } | { ok: false; error: string }>
   }
 
   /**
@@ -911,6 +921,8 @@ export const IPC = {
   mediaReadCaptions: 'media:read-captions',
   mediaSaveCaptions: 'media:save-captions',
   mediaFreezeFrame: 'media:freeze-frame',
+  mediaSubjectMatte: 'media:subject-matte',
+  mediaSubjectMatteIndex: 'media:subject-matte-index',
 
   /**
    * renderer -> main: AI generation (the fourth network exception). Keys in, set/not-set out;

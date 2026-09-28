@@ -29,6 +29,7 @@ import type { OpenSpanResult } from '@shared/insert-edit'
 import type { TrackMove } from '@shared/track-move'
 import type { TrimPlan, TrimRefusal, TrimSpec } from '@shared/trim'
 import type { DetachResult, ReattachResult } from '@shared/links'
+import type { BehindSubjectResult, BehindSubjectSpec } from '@shared/behind-subject'
 import type { SpeedPlan } from '@shared/speed'
 import type { CaptionCue } from '@shared/captions'
 import type { ScriptOp } from '@shared/script'
@@ -399,6 +400,13 @@ export interface EditorActions {
   reattachAudio(itemIds: string[]): ReattachResult
   /** Breaks the links of these clips and their partners. Returns the ids that were linked. */
   unlinkItems(itemIds: string[]): string[]
+  /**
+   * "Text behind the subject" (`@shared/behind-subject`): the clip, then the title (moved above the
+   * clip if it was under it), then a linked, silent cut-out copy of the clip with a subject mask, in
+   * one undo step. The subject matte itself is the caller's to compute and record first
+   * (`put_behind_subject`). Returns what it made, or why not.
+   */
+  putBehindSubject(spec: BehindSubjectSpec): BehindSubjectResult
   /**
    * Set one of a composition clip's declared variables, on that clip alone.
    *

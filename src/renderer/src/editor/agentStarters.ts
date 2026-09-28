@@ -87,7 +87,7 @@ export const AGENT_STARTERS: readonly AgentStarter[] = BAY_SKILLS.map((skill) =>
 /** The icons `@shared/footage-mode` names as hints, by name. An unknown name draws the wand. */
 const FOOTAGE_ICONS: Record<string, LucideIcon> = {
   Mic, AudioWaveform, SwitchCamera, Scissors, SlidersHorizontal, Sparkles, AudioLines, Captions,
-  ListOrdered, ScanSearch, Film, Music, Blend, Wand2, Eye
+  ListOrdered, ScanSearch, Film, Music, Blend, Wand2, Eye, Layers
 }
 
 const FOOTAGE_TINT: Record<FootageMode, [string, string]> = {

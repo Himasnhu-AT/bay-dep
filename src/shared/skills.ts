@@ -132,6 +132,7 @@ export const BAY_SKILLS: readonly BaySkill[] = [
       '2. Build it with write_brf: a JSX module written like React or Remotion (interpolate, spring, useCurrentFrame, Sequence, components, loops over data) that bay draws natively — bay://guide/brf has the elements and worked examples. It is run across its whole duration before anything changes, and an error comes back with its line and frame. Put the words and colours the user may change in export const vars. For extruded 3D text or a camera that flies through a title, use <scene3d> with <text3d> (the guide\'s "Fly through a 3D title"); keep it to one or two short lines.',
       '3. Only if it needs a web page (CSS layout, embedded video, a JS library) write HTML with write_composition instead, after reading bay://guide/composition/contract.',
       '4. Place it (atFrame in the same write_brf call), then look at frames at its start, mid-entrance, at rest and mid-exit with preview_frame.',
+      '   To put a title BEHIND the person in the shot (the words between the background and the speaker), make it large over the clip, then call put_behind_subject with the title and the clip; check a frame where the head crosses the words.',
       '5. Walk the user through what you made and iterate on their feedback.',
       '',
       PROPOSE

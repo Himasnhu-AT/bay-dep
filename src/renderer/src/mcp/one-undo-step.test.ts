@@ -219,7 +219,13 @@ function stubLevels(_path: string, span: { startUs: number; durationUs: number }
       loudness: async () => ({ ok: true, value: { integratedLufs: -22, truePeakDb: -6 } }),
       importPaths: async (paths: string[]) => paths.map(importedAsset),
       // import_url's download is main's; here it has already landed.
-      importUrl: async () => ({ ok: true, path: '/downloads/one/talk [abc].mp4', ytDlp: '/opt/homebrew/bin/yt-dlp' })
+      importUrl: async () => ({ ok: true, path: '/downloads/one/talk [abc].mp4', ytDlp: '/opt/homebrew/bin/yt-dlp' }),
+      // put_behind_subject's matte is main's; here it is found, with a person in every frame.
+      subjectMatte: async (request: { fromUs: number; toUs: number }) => ({
+        ok: true,
+        matte: { key: 'c'.repeat(32), fromUs: request.fromUs, toUs: request.toUs, engine: 'apple-vision-person-balanced', frames: 60, width: 512, height: 384 },
+        report: { cached: true, frames: 60, coverage: 1, meanArea: 0.3, msPerFrame: 0, visionMsMedian: 0, visionMsP90: 0, bytes: 1, megabytesPerMinute: 1, engineBuild: 'stub', seconds: 0 }
+      })
     },
     composition: {
       write: async () => ({ ok: true }),
@@ -300,6 +306,11 @@ const TOOL_CASES: Record<string, ToolCase[]> = {
       },
       args: (f) => ({ itemIds: [f.d, f.c] })
     }
+  ],
+  put_behind_subject: [
+    // The title (c, on V2) over the clip (a, on V1): the matte is recorded silently, the cut-out made
+    // on V3 and linked to the clip — several store changes, one step.
+    { delta: 1, args: (f) => ({ itemId: f.c, videoItemId: f.a }) }
   ],
   detach_audio: [
     // Two clips at once, with a transition between them: new items on an audio track (a new one,
@@ -621,6 +632,13 @@ const STORE_CASES: Record<string, StoreCase> = {
       const before = past()
       state().reattachAudio([f.a, f.c])
       assert.equal(past() - before, 1)
+    }
+  },
+  putBehindSubject: {
+    delta: 1,
+    run: (f) => {
+      const result = state().putBehindSubject({ videoItemId: f.a, overlayItemId: f.c })
+      assert.ok(result.ok, JSON.stringify(result))
     }
   },
   unlinkItems: {

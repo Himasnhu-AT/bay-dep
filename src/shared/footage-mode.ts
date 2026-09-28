@@ -313,9 +313,16 @@ export const FOOTAGE_MODES: Record<FootageMode, FootageModeInfo> = {
     label: 'Talking head',
     layout: 'ai',
     skills: ['talking-head', 'captions', 'short-form'],
-    tools: ['remove_silences', 'transcribe', 'add_subtitles', 'find_highlights', 'level_voices'],
+    tools: ['remove_silences', 'transcribe', 'add_subtitles', 'find_highlights', 'level_voices', 'put_behind_subject'],
     actions: [
       { id: 'tighten', label: 'Tighten the take', icon: 'Scissors', prompt: '/talking-head Remove the silences, false starts and repeated lines.' },
+      {
+        id: 'text-behind',
+        label: 'Text behind me',
+        icon: 'Layers',
+        prompt:
+          '/motion-graphics Put a big title behind me: ask me for the words (or suggest a few from what I say at the start), make them large over the clip, then put_behind_subject so they sit between the background and me. Show me a frame where my head crosses the words.'
+      },
       { id: 'remove-silences', label: 'Remove silences', icon: 'AudioLines', prompt: 'Remove the silences from the recording (remove_silences), keeping a breath at each cut.' },
       { id: 'subtitles', label: 'Add subtitles', icon: 'Captions', prompt: '/captions Add word-by-word subtitles.' },
       { id: 'make-clips', label: 'Make 3 clips', icon: 'Sparkles', prompt: '/short-form Make three vertical clips from the best moments.' }
