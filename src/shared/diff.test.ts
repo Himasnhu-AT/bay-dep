@@ -254,3 +254,12 @@ test('fourteen changes are all shown; the fifteenth turns the last line into a c
   assert.equal(fifteen[12]!.text, 'Added “interview.mp4” on V1, 00:00:04:00–00:00:04:10', 'thirteen real lines')
   assert.equal(fifteen[13]!.text, '…and 2 more changes')
 })
+
+test('a motion graphic rewritten in place is named, not left to "settings"', () => {
+  const panel = asset('b1', 'Explainer side panel', { kind: 'brf', brfCode: 'export default () => <scene duration={30} />' })
+  const before = project([], { assets: [panel] })
+  const after = project([], { assets: [{ ...panel, brfCode: 'export default () => <scene duration={30}><rect /></scene>' }] })
+  assert.deepEqual(texts(describeChanges(before, after)), ['Rewrote the motion graphic “Explainer side panel”'])
+  // Control: the same asset with its code unchanged reports nothing.
+  assert.deepEqual(texts(describeChanges(before, project([], { assets: [{ ...panel }] }))), [])
+})

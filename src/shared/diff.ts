@@ -50,6 +50,10 @@ export function describeChanges(before: Project, after: Project): ChangeLine[] {
     if (!old) out.push({ kind: 'added', text: `Imported “${asset.name}”` })
     else if (old.name !== asset.name || old.text !== asset.text) {
       out.push({ kind: 'changed', text: `Changed the text of “${old.text ?? old.name}” to “${asset.text ?? asset.name}”` })
+    } else if (old.brfCode !== asset.brfCode || !same(old.brf, asset.brf)) {
+      // A motion graphic rewritten in place (write_brf on an existing asset): the clip and its
+      // placement are unchanged, so without this the card could only say "settings".
+      out.push({ kind: 'changed', text: `Rewrote the motion graphic “${asset.name}”` })
     } else if (!same(old.compositionVariables, asset.compositionVariables) || old.durationUs !== asset.durationUs) {
       // A composition re-read after its file was rewritten: new knobs, or a new length.
       out.push({ kind: 'changed', text: `Updated “${asset.name}”` })
