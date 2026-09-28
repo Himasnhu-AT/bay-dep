@@ -14,15 +14,20 @@
 
 import type { ExportFormat, ExportProgress, IncompleteFrames } from '@shared/ipc'
 import { timelineDuration } from '@shared/project'
-import { parseLoudness } from '@shared/loudness'
+import { chooseExportLoudness, describeTarget, rememberedTarget, unmasteredLevelWarning, type LoudnessTarget } from '@shared/loudness'
 import { checkExportRange } from '@shared/export-presets'
 import { hasBlocking, type Finding } from '@shared/findings'
 import { FrameExporter } from '@/engine'
 import { bay } from '@/lib/bay'
-import { fail, project, timeline, type Handlers } from './helpers'
+import { fail, project, store, timeline, type Handlers } from './helpers'
 
 interface Job {
   jobId: string
+  /** Where the delivery decision is remembered when a mastered export finishes. */
+  projectId: string
+  timelineId: string
+  /** Asked for "off" over a remembered target: forgotten when — only when — the export is done. */
+  forget: boolean
   outputPath: string
   format: ExportFormat
   fromFrame: number
@@ -44,7 +49,16 @@ function subscribe(): void {
   subscribed = true
   api.export.onProgress((update) => {
     const job = jobs.get(update.jobId)
-    if (job) job.progress = update
+    if (!job) return
+    job.progress = update
+    // A mastered export finished: that target is now the timeline's delivery decision, so the
+    // next export without a `loudness` argument keeps it rather than silently dropping it.
+    if (update.stage === 'done' && update.loudness) {
+      store().rememberDelivery(job.projectId, job.timelineId, update.loudness.target)
+    }
+    // "off" is a decision too, but only a delivered file makes it one: a failed or cancelled
+    // export must leave the remembered target where it was.
+    if (update.stage === 'done' && job.forget) store().rememberDelivery(job.projectId, job.timelineId, null)
   })
 }
 
@@ -60,16 +74,20 @@ export async function exportTimeline(
   }
   const format = String(args.format) as ExportFormat
 
-  // Refused before anything starts: an export that ran for minutes and then ignored a
-  // misspelled preset would deliver a file at the wrong level with no word about it.
-  const loudness = parseLoudness(args.loudness)
-  if ('error' in loudness) fail(loudness.error)
   const quality = args.quality === undefined ? 'good' : String(args.quality)
   if (quality !== 'draft' && quality !== 'good' && quality !== 'best') {
     fail(`quality must be "draft", "good" or "best"; got "${quality}".`)
   }
 
   const tl = timeline()
+  // Refused before anything starts: an export that ran for minutes and then ignored a
+  // misspelled preset would deliver a file at the wrong level with no word about it. No
+  // argument means the timeline's remembered target, when it has one.
+  // The remembered target is checked like an argument: a shared `.bay` can hold anything.
+  const remembered = rememberedTarget(tl.delivery?.loudness)
+  const loudness = chooseExportLoudness(args.loudness, remembered.target ?? undefined)
+  if ('error' in loudness) fail(loudness.error)
+  const projectId = project().id
   const duration = timelineDuration(tl)
   if (duration === 0) {
     fail(
@@ -109,6 +127,10 @@ export async function exportTimeline(
 
   const record: Job = {
     jobId: job.jobId,
+    projectId,
+    timelineId: tl.id,
+    // An invalid remembered value is forgotten by "off" too.
+    forget: loudness.source === 'off' && (loudness.forget !== null || remembered.warning !== null),
     outputPath,
     format,
     fromFrame,
@@ -170,8 +192,41 @@ export async function exportTimeline(
     framesTotal: toFrame - fromFrame + 1,
     quality,
     ...(loudness.target ? { loudnessTarget: loudness.target } : {}),
+    ...loudnessResult(loudness.target, loudness.source, loudness.forget),
+    ...(remembered.warning && args.loudness === undefined ? { warning: remembered.warning } : {}),
     note: 'Poll track_export with this jobId. Do not assume success — check the final stage.'
   }
+}
+
+/**
+ * How the export's loudness was decided, said in the result so a remembered target is never a
+ * surprise and a forgotten one is never silent.
+ */
+function loudnessResult(
+  target: LoudnessTarget | null,
+  source: 'argument' | 'remembered' | 'off' | 'default',
+  forgot: LoudnessTarget | null
+): Record<string, unknown> {
+  if (source === 'remembered' && target) {
+    return {
+      loudness: {
+        target,
+        source: 'remembered from the last export',
+        note: `Mastering to ${describeTarget(target)} because the last export of this timeline did. Pass loudness: "off" to export unmastered (and forget it).`
+      }
+    }
+  }
+  if (source === 'argument' && target) return { loudness: { target, source: 'this call' } }
+  if (source === 'off' && forgot) {
+    return {
+      loudness: {
+        target: null,
+        source: 'off',
+        note: `Unmastered. The remembered target (${describeTarget(forgot)}) is forgotten once this export is done — kept if it fails or is cancelled — and later exports stay unmastered until one passes loudness.`
+      }
+    }
+  }
+  return {}
 }
 
 export function trackExport(args: Record<string, unknown>): Record<string, unknown> {
@@ -205,7 +260,8 @@ export function exportStatus(
   // Main's read-back of the file is the only thing that can say it lacks audio or runs short;
   // the frames' own faults are known only here. Any blocking one makes the export not complete.
   const findings = progress.stage === 'done' ? doneFindings(progress, incomplete) : null
-  return {
+  const levelWarning = progress.stage === 'done' ? unmasteredLevelWarning(progress) : null
+  const status: Record<string, unknown> = {
     jobId: progress.jobId,
     stage: progress.stage,
     framesDone: progress.framesDone,
@@ -227,6 +283,16 @@ export function exportStatus(
             gainDb: Number(progress.loudness.gainDb.toFixed(2)),
             passes: progress.loudness.passes,
             summary: progress.loudness.summary
+          }
+        }
+      : {}),
+    // Every export with sound, mastered or not: the level the file will play at.
+    ...(progress.stage === 'done' && progress.deliveredLoudness
+      ? {
+          deliveredLoudness: {
+            integratedLufs: finiteOrNull(progress.deliveredLoudness.integratedLufs),
+            truePeakDbtp: finiteOrNull(progress.deliveredLoudness.truePeakDb),
+            mastered: progress.loudness !== undefined
           }
         }
       : {}),
@@ -262,6 +328,14 @@ export function exportStatus(
           : { complete: true }
         : {})
   }
+  // After the faults that make the export not complete, which hide better and matter more.
+  if (levelWarning) status.warning = typeof status.warning === 'string' ? `${status.warning} ${levelWarning}` : levelWarning
+  return status
+}
+
+/** One decimal for the reader; `null` for the −∞ of digital silence, which JSON cannot carry. */
+function finiteOrNull(value: number): number | null {
+  return Number.isFinite(value) ? Number(value.toFixed(1)) : null
 }
 
 /**
@@ -279,6 +353,8 @@ export function doneFindings(progress: ExportProgress, incomplete: IncompleteFra
       fix: 'Wait for the named items to load (or fix the ones that failed), then export again.'
     })
   }
+  const level = unmasteredLevelWarning(progress)
+  if (level) out.push({ severity: 'warn', message: level, fix: 'Export again with loudness: "streaming" (or "podcast"), and it is remembered for later exports.' })
   if (progress.framesDone === 0 && progress.framesTotal !== 0) {
     out.push({ severity: 'blocking', message: 'The export finished with zero frames.', fix: 'Check fromFrame/toFrame cover the edit, and export again.' })
   }

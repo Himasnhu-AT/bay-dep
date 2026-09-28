@@ -19,6 +19,7 @@ import type { BrfDocument } from './brf'
 import type { BeatGrid } from './beats'
 import type { Grade, LutData } from './grade'
 import type { Mask, SubjectMatte } from './matte'
+import type { DeliverySettings } from './loudness'
 
 /**
  * `lut` is a colour look-up table (`.cube`): it has no picture of its own and is never placed on a
@@ -766,6 +767,13 @@ export interface Timeline {
    * existed still loads; absent rather than `[]` once the last one is removed.
    */
   comments?: ReviewComment[]
+  /**
+   * The delivery decision the last successful mastered export of this timeline made, so the next
+   * export without a `loudness` argument keeps it instead of silently dropping it
+   * (`chooseExportLoudness`). Written when a mastered export finishes; cleared by an export with
+   * loudness "off". Optional, absent until then, so every earlier `.bay` loads unchanged.
+   */
+  delivery?: DeliverySettings
 }
 
 export interface Project {

@@ -36,6 +36,7 @@ import type { ScriptOp } from '@shared/script'
 import type { WhisperDownload } from '@shared/whisper'
 import type { ClipboardPayload, PasteAttribute } from '@shared/clipboard'
 import type { FreezeResult } from '@shared/freeze-frame'
+import type { LoudnessTarget } from '@shared/loudness'
 import type { AgentCheckpoint, AgentRevert } from './agent-turns'
 
 /** What `placeDub` lays down: lines on one audio track, and what happens to the original sound. */
@@ -262,6 +263,13 @@ export interface EditorActions {
   setCanvasPreset(presetId: string, fit?: CanvasFit): { refitted: number } | { error: string }
   /** The colour shown wherever no video covers the canvas. `#RRGGBB`. */
   setBackground(color: string): void
+  /**
+   * Remember (a target) or forget (null) the loudness the last mastered export of a timeline used
+   * (`Timeline.delivery`). Keyed by project and timeline id because an export finishes minutes
+   * after it started, when another project or timeline may be open; a mismatch does nothing.
+   * Not an undo step (past and future are left alone), but it marks the document dirty.
+   */
+  rememberDelivery(projectId: string, timelineId: string, loudness: LoudnessTarget | null): void
   // agent ---------------------------------------------------------------------
   /** Begin an in-app agent session: from here writes are gated until something is approved. */
   startAgentSession(): void
