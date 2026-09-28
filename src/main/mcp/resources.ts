@@ -36,6 +36,7 @@ import variablesAndMedia from './docs/compositions/variables-and-media.md?raw'
 import subCompositions from './docs/compositions/sub-compositions.md?raw'
 import editingRecipes from './docs/compositions/editing-recipes.md?raw'
 import fullScreenMotion from './docs/compositions/full-screen-motion.md?raw'
+import motionDesign from './docs/compositions/motion-design.md?raw'
 
 const BODIES: Record<string, string> = {
   'bay://guide/editing': editing,
@@ -64,6 +65,7 @@ const BODIES: Record<string, string> = {
   'bay://guide/composition/sub-compositions': subCompositions,
   'bay://guide/composition/editing-recipes': editingRecipes,
   'bay://guide/composition/full-screen-motion': fullScreenMotion,
+  'bay://guide/motion-design': motionDesign,
   ...TEMPLATE_BODIES,
   // Rendered from the styles themselves, so the resource and read_style cannot disagree.
   ...styleResourceBodies()

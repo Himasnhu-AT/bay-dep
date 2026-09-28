@@ -228,6 +228,16 @@ export const RESOURCES: readonly ResourceSpec[] = [
     name: 'Full-screen motion',
     description: 'Authoring full-frame motion with shared backgrounds.',
     mimeType: 'text/markdown'
+  },
+  {
+    uri: 'bay://guide/motion-design',
+    name: 'Motion design: a film as a program',
+    description:
+      'Read before a launch film, promo or title sequence: a canvas program drawn as a function ' +
+      'of time — a protagonist, morphs instead of fades, the UI redrawn and choreographed, ' +
+      'meaning in the transitions — with a tested kit (curves, spring, masked words, scramble, ' +
+      'tabular count-ups, morphing boxes, cursor and tap, sub-frame motion blur).',
+    mimeType: 'text/markdown'
   }
 ] as const
 

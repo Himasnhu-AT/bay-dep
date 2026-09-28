@@ -97,16 +97,37 @@ test('every script in the guides parses, fragments included', () => {
 })
 
 /** A DOM stand-in just wide enough for the examples: every lookup answers, every style write is kept. */
+/**
+ * A 2D context that records every drawing call, so a canvas example (bay://guide/motion-design)
+ * is run rather than exempted, and two moments can be told apart by what was drawn.
+ */
+function recordingContext(ops: string[]): unknown {
+  return new Proxy({} as Record<string | symbol, unknown>, {
+    get(target, key) {
+      if (key in target) return target[key]
+      if (key === 'measureText') return (s: string) => ({ width: String(s).length * 10, actualBoundingBoxAscent: 10 })
+      if (key === 'createPattern' || key === 'createLinearGradient' || key === 'createRadialGradient')
+        return () => ({ addColorStop() {} })
+      return (...args: unknown[]) => { ops.push(`${String(key)}(${args.map((a) => (typeof a === 'number' ? a.toFixed(2) : typeof a === 'string' ? a : typeof a)).join(',')})`) }
+    },
+    set(target, key, value) { target[key] = value; ops.push(`${String(key)}=${String(value)}`); return true }
+  })
+}
+
 function standIn(): { document: unknown; styles: () => string } {
   const made = new Map<string, Record<string, unknown>>()
+  const ops: string[] = []
   const element = (key: string): Record<string, unknown> => {
     let el = made.get(key)
     if (!el) {
       el = {
         style: {},
         textContent: '',
+        width: 1920,
+        height: 1080,
         setAttribute() {},
         getAttribute: () => null,
+        getContext: () => recordingContext(ops),
         classList: { add() {}, remove() {}, toggle() {} },
         querySelector: (sel: string) => element(`${key} ${sel}`),
         querySelectorAll: (sel: string) => [element(`${key} ${sel}`)]
@@ -115,13 +136,18 @@ function standIn(): { document: unknown; styles: () => string } {
     }
     return el
   }
+  let fresh = 0
   const document = {
     getElementById: (id: string) => element(`#${id}`),
     querySelector: (sel: string) => element(sel),
-    querySelectorAll: (sel: string) => [element(sel)]
+    querySelectorAll: (sel: string) => [element(sel)],
+    createElement: (tag: string) => element(`<${tag}>#${fresh++}`)
   }
-  const styles = (): string =>
-    JSON.stringify([...made].map(([key, el]) => [key, el['style']]).sort())
+  // What a moment looks like: every element's style, and everything drawn since the last read.
+  const styles = (): string => {
+    const drawn = ops.splice(0).join(';')
+    return JSON.stringify([[...made].map(([key, el]) => [key, el['style']]).sort(), drawn])
+  }
   return { document, styles }
 }
 
@@ -174,4 +200,19 @@ test('the minimal example moves: two moments are two pictures', () => {
   // And seeking back reproduces the first picture: time(t) is a function of t, not of history.
   timeline.time(0)
   assert.equal(styles(), before, 'seeking back to 0 did not restore the first picture')
+})
+
+test('the motion-design kit draws a different picture at two moments, and the same one on return', () => {
+  const kit = DOCUMENTS.find((b) => b.file === 'motion-design.md')
+  assert.ok(kit, 'motion-design.md has a whole-document example')
+  const { timeline, styles } = seekable(kit)
+  styles() // drop what the script drew while it loaded
+  timeline.time(0.2)
+  const early = styles()
+  timeline.time(1.8)
+  const later = styles()
+  assert.ok(early.includes('fillRect') || early.includes('drawImage'), 'the kit drew nothing at 0.2 s')
+  assert.notEqual(early, later, 'the kit drew the same thing at 0.2 s and 1.8 s: nothing animates')
+  timeline.time(0.2)
+  assert.equal(styles(), early, 'seeking back to 0.2 s drew something else: time(t) depends on history')
 })
