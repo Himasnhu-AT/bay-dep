@@ -44,7 +44,7 @@ export function refuseChannel(channel: string, status: AccessStatus): string | n
   return lockedMessage(status)
 }
 
-export type ToolRunner<O> = (tool: string, args: Record<string, unknown>) => Promise<O>
+export type ToolRunner<O> = (tool: string, args: Record<string, unknown>, signal?: AbortSignal) => Promise<O>
 
 /**
  * Wraps the runner behind both MCP sockets. A locked bay answers every tool call with the unlock
@@ -55,9 +55,9 @@ export function gateToolRunner<O>(
   currentStatus: () => AccessStatus,
   refusal: (message: string) => O
 ): ToolRunner<O> {
-  return async (tool, args) => {
+  return async (tool, args, signal) => {
     const status = currentStatus()
     if (!isEntitled(status)) return refusal(lockedMessage(status))
-    return inner(tool, args)
+    return inner(tool, args, signal)
   }
 }

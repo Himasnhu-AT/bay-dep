@@ -52,7 +52,11 @@ export type McpContent =
   | { type: 'text'; text: string }
   | { type: 'image'; data: string; mimeType: string }
 
-export type RunTool = (name: string, args: Record<string, unknown>) => Promise<ToolOutcome>
+/**
+ * `signal` is the caller going away — its connection closed. A tool waiting on a job stops
+ * waiting when it fires; nothing else reads it.
+ */
+export type RunTool = (name: string, args: Record<string, unknown>, signal?: AbortSignal) => Promise<ToolOutcome>
 
 /** What MCP puts on the wire for a tool, which is a subset of what `ToolSpec` carries. */
 function publicTool(spec: ToolSpec): Record<string, unknown> {
@@ -335,7 +339,8 @@ async function callTool(
   name: string,
   args: Record<string, unknown>,
   runTool: RunTool,
-  mode: ToolMode
+  mode: ToolMode,
+  signal?: AbortSignal
 ): Promise<{ content: McpContent[]; isError: boolean }> {
   if (!findTool(name)) {
     // Not a JSON-RPC method error: the method exists, the tool does not. Naming the real
@@ -348,13 +353,14 @@ async function callTool(
       isError: true
     }
   }
-  return rendered(await runTool(name, args))
+  return rendered(await runTool(name, args, signal))
 }
 
 /** Gateway `execute`: unwrap `{ tool, args }` and take the ordinary path. */
 async function execute(
   args: Record<string, unknown>,
-  runTool: RunTool
+  runTool: RunTool,
+  signal?: AbortSignal
 ): Promise<{ content: McpContent[]; isError: boolean }> {
   const tool = args['tool']
   const inner = args['args'] ?? {}
@@ -377,14 +383,15 @@ async function execute(
       isError: true
     }
   }
-  return callTool(tool, inner as Record<string, unknown>, runTool, 'gateway')
+  return callTool(tool, inner as Record<string, unknown>, runTool, 'gateway', signal)
 }
 
 export async function handleRequest(
   request: JsonRpcRequest,
   runTool: RunTool,
   readResource: ReadResource = () => null,
-  mode: ToolMode = 'full'
+  mode: ToolMode = 'full',
+  signal?: AbortSignal
 ): Promise<JsonRpcResponse | null> {
   const id = request.id ?? null
   if (request.id === undefined) return null
@@ -425,11 +432,11 @@ export async function handleRequest(
         if (params.name === 'get_active_project') {
           return success(id, rendered(await activeProject(runTool)))
         }
-        if (params.name === 'execute') return success(id, await execute(args, runTool))
+        if (params.name === 'execute') return success(id, await execute(args, runTool, signal))
       }
       // A catalog tool called by name still works in gateway mode. A client that learned a
       // name from get_guidelines and calls it directly is not wrong enough to refuse.
-      return success(id, await callTool(params.name, args, runTool, mode))
+      return success(id, await callTool(params.name, args, runTool, mode, signal))
     }
 
     case 'resources/list':

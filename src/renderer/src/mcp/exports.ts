@@ -16,10 +16,12 @@ import type { ExportFormat, ExportProgress, IncompleteFrames } from '@shared/ipc
 import { timelineDuration } from '@shared/project'
 import { chooseExportLoudness, describeTarget, rememberedTarget, unmasteredLevelWarning, type LoudnessTarget } from '@shared/loudness'
 import { checkExportRange } from '@shared/export-presets'
+import { WAIT_MAX_SECONDS } from '@shared/tools/fields'
 import { hasBlocking, type Finding } from '@shared/findings'
 import { FrameExporter } from '@/engine'
 import { bay } from '@/lib/bay'
-import { fail, project, store, timeline, type Handlers } from './helpers'
+import { fail, project, store, timeline, type CallContext, type Handlers } from './helpers'
+import { stillWorking, waitSecondsOf, waitUntil } from './wait'
 
 interface Job {
   jobId: string
@@ -63,7 +65,8 @@ function subscribe(): void {
 }
 
 export async function exportTimeline(
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  context?: CallContext
 ): Promise<Record<string, unknown>> {
   const api = bay()
   if (!api) fail('This window has no bridge to the app, so nothing can be exported.')
@@ -169,8 +172,8 @@ export async function exportTimeline(
       }
     })
     record.exporter = exporter
-    // Deliberately not awaited: the tool returns a job id so the agent can poll rather than
-    // hold a turn open for minutes. Failures land on the job record, which is what
+    // Deliberately not awaited: the tool returns a job id, and any wait (`wait: true`,
+    // `track_export { waitSeconds }`) is a bounded one that reads the job record. Failures land on the job record, which is what
     // track_export reads.
     void exporter.run().catch((error: unknown) => {
       const current = jobs.get(job.jobId)
@@ -183,7 +186,7 @@ export async function exportTimeline(
     })
   }
 
-  return {
+  const started = {
     jobId: job.jobId,
     outputPath,
     format,
@@ -194,8 +197,15 @@ export async function exportTimeline(
     ...(loudness.target ? { loudnessTarget: loudness.target } : {}),
     ...loudnessResult(loudness.target, loudness.source, loudness.forget),
     ...(remembered.warning && args.loudness === undefined ? { warning: remembered.warning } : {}),
-    note: 'Poll track_export with this jobId. Do not assume success — check the final stage.'
+    note: `Call track_export { jobId: "${job.jobId}", waitSeconds: ${WAIT_MAX_SECONDS} } to wait for it. Do not assume success — check the final stage.`
   }
+  if (args.wait !== true) return started
+
+  // Asked to wait: the same wait `track_export` does, and its answer when the job finished. The
+  // start's own facts (quality, the loudness decision) stay beside it; the stage is the status's.
+  const status = await trackExport({ jobId: job.jobId, waitSeconds: WAIT_MAX_SECONDS }, context)
+  const { note: _note, ...rest } = started
+  return { ...rest, ...status }
 }
 
 /**
@@ -229,7 +239,12 @@ function loudnessResult(
   return {}
 }
 
-export function trackExport(args: Record<string, unknown>): Record<string, unknown> {
+const FINISHED: readonly string[] = ['done', 'failed', 'cancelled']
+
+/** How often a waiting `track_export` looks at the job: a map read, so often. */
+const EXPORT_POLL_MS = 250
+
+export async function trackExport(args: Record<string, unknown>, context?: CallContext): Promise<Record<string, unknown>> {
   const jobId = String(args.jobId)
   const job = jobs.get(jobId)
   if (!job) {
@@ -242,9 +257,16 @@ export function trackExport(args: Record<string, unknown>): Record<string, unkno
     )
   }
 
+  const seconds = waitSecondsOf(args)
+  // The record is replaced in place by progress events, so each look reads the latest.
+  const outcome = await waitUntil(() => FINISHED.includes(job.progress.stage), { seconds, pollMs: EXPORT_POLL_MS, context })
+
   // Read live from the exporter, not from main's progress: main encodes what it is handed and
   // cannot know a frame was missing something. Final before `done` can arrive (see the getter).
-  return exportStatus(job.progress, job.outputPath, job.exporter?.incomplete ?? null)
+  const status = exportStatus(job.progress, job.outputPath, job.exporter?.incomplete ?? null)
+  status.waited = outcome.waited
+  if (!status.finished) status.note = stillWorking('track_export', `jobId "${jobId}"`, outcome)
+  return status
 }
 
 /**
@@ -297,9 +319,6 @@ export function exportStatus(
         }
       : {}),
     ...(progress.message && progress.stage === 'done' ? { message: progress.message } : {}),
-    ...(finished
-      ? {}
-      : { note: 'Still working. Poll again in a few seconds rather than in a tight loop.' }),
     // The catalog warns that an export can finish having written nothing; saying it here
     // means the agent sees it at the moment it is about to report success.
     ...(progress.stage === 'done' && progress.framesDone === 0
@@ -361,9 +380,30 @@ export function doneFindings(progress: ExportProgress, incomplete: IncompleteFra
   return out.sort((a, b) => (a.severity === b.severity ? 0 : a.severity === 'blocking' ? -1 : 1))
 }
 
-/** Test seam: forget everything this session knows about exports. */
+/**
+ * Test seam: a job as `export_timeline` would record it, with no encoder behind it. Returns the
+ * setter main's progress events would call.
+ */
+export function recordJobForTest(jobId: string, progress: Omit<ExportProgress, 'jobId'>): (next: Omit<ExportProgress, 'jobId'>) => void {
+  const job: Job = {
+    jobId,
+    projectId: 'test',
+    timelineId: 'test',
+    forget: false,
+    outputPath: `/tmp/${jobId}.mp4`,
+    format: 'mp4',
+    fromFrame: 0,
+    toFrame: (progress.framesTotal ?? 1) - 1,
+    progress: { ...progress, jobId },
+    exporter: null
+  }
+  jobs.set(jobId, job)
+  return (next) => {
+    job.progress = { ...next, jobId }
+  }
+}
 
 export const handlers: Handlers = {
-  export_timeline: (args) => exportTimeline(args),
-  track_export: (args) => trackExport(args),
+  export_timeline: (args, context) => exportTimeline(args, context),
+  track_export: (args, context) => trackExport(args, context),
 }

@@ -33,6 +33,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { existsSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { createConnection, type Socket } from 'node:net'
 import { join } from 'node:path'
 import { describeSocket, startSocketServer } from './socket-server'
 import { socketPathIn, MAX_SOCKET_PATH, SOCKET_NAME } from './socket-path'
@@ -173,5 +174,43 @@ test('a working socket says nothing', { timeout: 5000 }, async () => {
   const dir = scratchDir()
   const running = await startSocketServer(() => socketPathIn(dir), refuse)
   assert.equal(describeSocket(running.status), null)
+  await running.close()
+})
+
+test('a caller closing its connection aborts the call it left running; one that stays does not', { timeout: 5000 }, async () => {
+  // bay's proxy opens one connection per call and drops it when its client goes (a stopped turn).
+  // The close is the only word main gets, so it must reach the tool as an abort — that is what
+  // stops a waiting `track_export` sleeping on for nobody.
+  const signals: AbortSignal[] = []
+  const hold: RunTool = (_name, _args, signal) => {
+    if (signal) signals.push(signal)
+    return new Promise(() => undefined)
+  }
+  const dir = scratchDir()
+  const running = await startSocketServer(() => socketPathIn(dir), hold)
+  assert.ok(running.status.ready)
+  const open = async (): Promise<Socket> => {
+    const client = createConnection(running.status.path!)
+    await new Promise<void>((resolve) => client.once('connect', () => resolve()))
+    client.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'track_export', arguments: { jobId: 'j' } } }) + '\n')
+    return client
+  }
+  // Bounded, so a failure is a failure rather than a test process that never exits.
+  const until = async (ok: () => boolean): Promise<void> => {
+    const deadline = Date.now() + 3000
+    while (!ok()) {
+      if (Date.now() > deadline) assert.fail('the condition did not come true within 3 s')
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+  }
+  const leaving = await open()
+  const staying = await open()
+  await until(() => signals.length === 2)
+  assert.deepEqual(signals.map((s) => s.aborted), [false, false])
+  leaving.destroy()
+  await until(() => signals[0]!.aborted)
+  assert.equal(signals[1]!.aborted, false, 'the other caller is still there')
+  staying.destroy()
+  await until(() => signals[1]!.aborted)
   await running.close()
 })

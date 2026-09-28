@@ -73,7 +73,7 @@ import {
 } from './generate/service'
 
 /** Channels pushed *to* the renderer. They carry no handler, so the table excludes them. */
-type PushChannel = 'exportProgress' | 'appMenuCommand' | 'mcpToolCall' | 'agentEvent' | 'whisperProgress' | 'visionChanged' | 'accessChanged' | 'updateChanged'
+type PushChannel = 'exportProgress' | 'appMenuCommand' | 'mcpToolCall' | 'mcpToolCancel' | 'agentEvent' | 'whisperProgress' | 'visionChanged' | 'accessChanged' | 'updateChanged'
 type InvokeChannel = Exclude<keyof typeof IPC, PushChannel | 'mcpToolResult' | 'mcpExecutorReady'>
 
 interface ChannelApi {

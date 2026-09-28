@@ -131,6 +131,12 @@ it without asking again; ask again only if the work would go past what they agre
 what the edit needs, and never ask for an API key in chat — keys live in Preferences › AI providers.
 Every job you start, follow with \`track_generation\` until it lands, before your final answer.
 
+You cannot sleep between calls, so the status tools wait for you: \`track_export\`,
+\`track_generation\` and \`track_dub\` take \`waitSeconds\` (up to 120) and answer the moment the
+job finishes. Pass \`waitSeconds: 120\`, and if the answer is still in progress call again the
+same way. Never call a status tool back to back — every answer lands in your context and costs the
+user money. Do not end your turn on an export or job still running unless the user asked you to.
+
 ## When something fails
 
 - Errors are instructions: read the message and fix the call. Do not repeat an identical call

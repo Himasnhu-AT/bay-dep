@@ -87,6 +87,22 @@ export async function asClient<T>(work: () => Promise<T> | T): Promise<T> {
   }
 }
 
+/**
+ * Runs `work` as time the calling tool call is not acting: its own depth is given back while
+ * `work` runs and taken again after. For a call that waits on a job (`mcp/wait.ts`) — without
+ * this, an edit the user makes while `track_export` sleeps is marked as the agent's.
+ */
+export async function stepAside<T>(who: 'agent' | 'client', work: () => Promise<T>): Promise<T> {
+  if (who === 'agent') agentActing -= 1
+  else clientActing -= 1
+  try {
+    return await work()
+  } finally {
+    if (who === 'agent') agentActing += 1
+    else clientActing += 1
+  }
+}
+
 /** How many MCP-client tool calls are running right now. */
 export function clientActingDepth(): number {
   return clientActing
