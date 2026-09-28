@@ -27,6 +27,12 @@ and **Open questions**. Keep entries short, and link to files instead of copying
 
 ## In progress
 
+- [ ] podclip audit → `research/podclip.md` (podcast editing, subtitles, clips; licence; smart-mode signals). Research agent, 2026-09-28. Then fact-check it; then design the smart podcast editor (modes by footage type, one-click tool buttons).
+- [ ] Informative raw clips (facts suited to motion graphics) → `sources/informative-clips.md`. Research agent.
+- [ ] Workspace layout modes: "Resolve" (current) vs "AI" (chat + preview + media only; the rest behind buttons). Engineer in a worktree.
+- [ ] `/compare` no-scroll UX (before/after both visible in one viewport, labelled, caption moved aside). Engineer in a worktree.
+- [ ] News explainer: the NASA re-download (verified parts), then a bay job.
+
 - [~] talk-to-short (clip 1): **paused by owner** 2026-09-27, mid-edit. The project "raylib talk to short" is saved in bay with 12 segments (48.8 s); the speaker layer is not built yet.
 - [x] perry film study → `research/perry-film-motion.md`.
 - [x] Attest v3 exported (52.4 s); review notes in `case-studies/redassay-attest/README.md`. Recorded 9 new takes (`tools/takes-v3.js`: product framed right, left scrim, 1.5× cursor, button press); brief `case-studies/redassay-attest/prompt-v3.md` (bar-clocked, perry motion rules, left-text layout, two review passes); bay run in progress, recorded to `~/Movies/bay-release/bay-agent-run-attest-v3.mp4`. Coordinator.
