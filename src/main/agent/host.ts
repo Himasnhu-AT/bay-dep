@@ -12,7 +12,15 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { app, BrowserWindow, shell } from 'electron'
 import { IPC } from '@shared/ipc'
-import type { AgentEntry, AgentEvent, AgentProvider, AgentProviderStatus } from '@shared/agent'
+import {
+  DEFAULT_AGENT_TUNING,
+  parseAgentTuning,
+  type AgentEntry,
+  type AgentEvent,
+  type AgentProvider,
+  type AgentProviderStatus,
+  type AgentTuning
+} from '@shared/agent'
 import { claudeProjectFolder, transcriptFolderName, transcriptMarkdown } from '@shared/transcript'
 import { AGENT_SOCKET_NAME, socketPathIn } from '../mcp/socket-path'
 import { CliAgentRuntime } from './cli'
@@ -38,6 +46,11 @@ let offEvents: (() => void) | null = null
  */
 let lastSessionId: string | null = null
 let lastProvider: AgentProvider = 'claude'
+/**
+ * Preferences › Agent's effort, model and longest turn, as the renderer last sent them. Kept past
+ * `dispose` so the next conversation starts with them; parsed on arrival, never trusted.
+ */
+let tuning: AgentTuning = DEFAULT_AGENT_TUNING
 
 /**
  * Where the agent's own files go.
@@ -108,15 +121,19 @@ export async function agentProviders(): Promise<AgentProviderStatus[]> {
 }
 
 export async function startAgent(
-  options: { provider?: AgentProvider } = {}
+  options: { provider?: AgentProvider; tuning?: AgentTuning } = {}
 ): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
+  if (options.tuning !== undefined) tuning = parseAgentTuning(options.tuning)
   // The Settings choice unless `BAY_AGENT_RUNTIME` overrides it. Read per start rather than at
   // import, so a disposed conversation can be restarted under another runtime without relaunching.
   const choice = runtimeFor(process.env[RUNTIME_ENV], options.provider)
   if (!choice.ok) return { ok: false, error: choice.error }
   const provider = providerOf(choice.kind)
 
-  if (runtime && runtimeProvider === provider) return { ok: true, id: runtime.id }
+  if (runtime && runtimeProvider === provider) {
+    runtime.configure(tuning)
+    return { ok: true, id: runtime.id }
+  }
   // A start for the other provider replaces the conversation rather than quietly answering with
   // the one already running — the user picked a different model and would be talking to the old.
   if (runtime) disposeAgent()
@@ -127,7 +144,8 @@ export async function startAgent(
     // The agent's own socket, under the in-app file policy (`mcp/policy.ts`).
     socketPath: socketPathIn(app.getPath('userData'), AGENT_SOCKET_NAME),
     cwd: workspace(),
-    systemPrompt: agentSystemPrompt(provider)
+    systemPrompt: agentSystemPrompt(provider),
+    tuning
   }
 
   let created: HostedAgentRuntime
@@ -198,6 +216,12 @@ const delivery = new MessageDelivery({
 
 export async function sendToAgent(text: string, attachments?: unknown): Promise<{ ok: boolean; error?: string }> {
   return delivery.send(text, attachments)
+}
+
+/** Preferences › Agent changed: the running conversation takes it from its next turn. */
+export function configureAgent(value: unknown): void {
+  tuning = parseAgentTuning(value)
+  runtime?.configure(tuning)
 }
 
 export function stopAgent(): void {

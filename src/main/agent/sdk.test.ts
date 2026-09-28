@@ -94,6 +94,25 @@ test("only the workspace's project settings load — bay's skills, not the user'
   assert.deepEqual(options.settingSources, ['project'])
 })
 
+test('the same effort and model as the CLI: high by default, the chosen ones when set', () => {
+  assert.equal(cliValueAfter('--effort'), 'high')
+  assert.equal(options.effort, 'high')
+  assert.equal(options.model, undefined, 'Default model passes nothing, as the CLI passes no --model')
+  const chosen = sdkOptions(
+    { ...BASE, tuning: { effort: 'xhigh', model: 'sonnet', turnMinutes: 40 } },
+    { resume: null, abortController: new AbortController() }
+  )
+  assert.equal(chosen.effort, 'xhigh')
+  assert.equal(chosen.model, 'sonnet')
+  // A value that is not a choice is the default here too.
+  const bogus = sdkOptions(
+    { ...BASE, tuning: { effort: 'ultra', model: 'gpt', turnMinutes: 1 } as never },
+    { resume: null, abortController: new AbortController() }
+  )
+  assert.equal(bogus.effort, 'high')
+  assert.equal(bogus.model, undefined)
+})
+
 test("bay's own system prompt and workspace are the ones in force", () => {
   assert.equal(options.systemPrompt, BASE.systemPrompt)
   assert.equal(options.cwd, BASE.cwd)

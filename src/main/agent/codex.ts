@@ -50,11 +50,11 @@ import {
 } from 'node:fs'
 import { homedir, setPriority } from 'node:os'
 import { dirname, join } from 'node:path'
-import type { AgentEvent } from '@shared/agent'
+import { parseAgentTuning, type AgentEvent, type AgentTuning } from '@shared/agent'
 import { TOOLS } from '@shared/mcp'
 import { typedText } from '@shared/pins'
 import { skillSegments, type BaySkill } from '@shared/skills'
-import { AGENT_NICENESS, bayMcpServer, childEnv, killTree, TURN_TIMEOUT_MS } from './cli'
+import { AGENT_NICENESS, bayMcpServer, childEnv, killTree, turnTimeoutFor } from './cli'
 import { codexToAgentEvents, newCodexStreamState, parseCodexLine, type CodexStreamState } from './codex-stream'
 import type { HostedAgentRuntime } from './runtime'
 
@@ -75,8 +75,13 @@ export interface CodexOptions {
    * checked after every turn and on stop (`reconcileCodexAuth`).
    */
   authSource?: string
-  /** How long a turn may run. `TURN_TIMEOUT_MS` unless a test needs to see one run out. */
+  /** How long a turn may run. From `tuning` unless a test needs to see one run out. */
   turnTimeoutMs?: number
+  /**
+   * Preferences › Agent. Codex reads only the turn limit: effort and model are Claude's (bay
+   * gives Codex no model or effort choice; it runs at its own defaults).
+   */
+  tuning?: AgentTuning
 }
 
 /**
@@ -440,9 +445,16 @@ export class CodexAgentRuntime implements HostedAgentRuntime {
   /** Codex's thread id, from the first turn's `thread.started`. Every later turn resumes it. */
   #threadId: string | null = null
   readonly #options: CodexOptions
+  #tuning: AgentTuning
 
   constructor(options: CodexOptions) {
     this.#options = options
+    this.#tuning = parseAgentTuning(options.tuning)
+  }
+
+  /** Preferences › Agent changed. One process per turn, so the next turn has it. */
+  configure(tuning: AgentTuning): void {
+    this.#tuning = parseAgentTuning(tuning)
   }
 
   get sessionId(): string | null {
@@ -522,7 +534,7 @@ export class CodexAgentRuntime implements HostedAgentRuntime {
 
     // Stopped means killed: failing the turn alone told the panel it had stopped while codex
     // carried on calling tools against the timeline.
-    const timeout = this.#options.turnTimeoutMs ?? TURN_TIMEOUT_MS
+    const timeout = this.#options.turnTimeoutMs ?? turnTimeoutFor(this.#tuning.turnMinutes)
     this.#timer = setTimeout(
       () => this.#abort(`The turn ran past ${Math.round(timeout / 60000)} minutes and was stopped.`),
       timeout

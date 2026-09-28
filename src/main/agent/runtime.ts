@@ -15,7 +15,7 @@
  * No `electron` import here, so the selection logic runs under `pnpm test`.
  */
 
-import type { AgentEvent, AgentProvider } from '@shared/agent'
+import type { AgentEvent, AgentProvider, AgentTuning } from '@shared/agent'
 
 export interface HostedAgentRuntime {
   readonly id: string
@@ -35,6 +35,11 @@ export interface HostedAgentRuntime {
   send(text: string, images?: readonly string[]): string
   /** Abandon the current turn. Safe to call when nothing is running. */
   stop(): void
+  /**
+   * Preferences › Agent changed. Applies from the next turn, never to the one running: a runtime
+   * whose flags are fixed at spawn replaces its process at the next `send`.
+   */
+  configure(tuning: AgentTuning): void
   dispose(): void
 }
 
