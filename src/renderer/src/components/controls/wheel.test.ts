@@ -95,6 +95,19 @@ test('the puck moves the cast, keeping the level', () => {
   assert.ok(sameWheel(centred, { r: 0.2, g: 0.2, b: 0.2 }))
 })
 
+test('a cast strong enough to clamp a channel still keeps the level', () => {
+  // Lift is −1…1. A master of 0.8 with a strong red cast wants red past 1.
+  const start = { r: 0.8, g: 0.8, b: 0.8 }
+  const toward = balanceOf({ r: 0.6, g: -0.3, b: -0.3 })
+  const next = withBalance(start, toward.x, toward.y, -1, 1)
+  assert.ok(next.r <= 1 && next.g >= -1 && next.b >= -1, 'channels stay in range')
+  assert.equal(next.r, 1, 'the specimen really clamps red')
+  assert.ok(close(balanceOf(next).master, 0.8, 1e-12), `the level moved to ${balanceOf(next).master}`)
+  // A master outside the range cannot be kept; the nearest reachable level is.
+  const beyond = withBalance({ r: 3, g: 3, b: 3 }, 0, 0, -1, 1)
+  assert.deepEqual(beyond, { r: 1, g: 1, b: 1 })
+})
+
 test('a red cast points the puck toward the red axis, blue toward blue', () => {
   const toward = (w: WheelRgb): number => {
     const { x, y } = balanceOf(w)

@@ -39,6 +39,58 @@ export function modifiersOf(event: { shiftKey: boolean; altKey: boolean; metaKey
   return { shift: event.shiftKey, alt: event.altKey, meta: event.metaKey || event.ctrlKey }
 }
 
+/**
+ * **The one guard every control commits through** — the value to commit, or null for none.
+ *
+ * Not defensive — measured, in `NumberField` first (CLAUDE.md): every *typed* route in is already
+ * finite, but a value arriving *from the store* is not always — seed `layout.rotation = NaN` or
+ * `track.volume = NaN`, and a drag, an arrow or a wheel notch carries the NaN through its
+ * arithmetic into a commit, which writes NaN into the project and pushes an undo step for it. The
+ * undo stack is the observable: `past` moves with the guard gone and stays still with it.
+ * `silence` lets `-Infinity` through, which is a fader's −∞ and a real level.
+ */
+export function committable(value: number, silence = false): number | null {
+  if (Number.isFinite(value)) return value
+  if (silence && value === Number.NEGATIVE_INFINITY) return value
+  return null
+}
+
+/** `onCommit` behind `committable`: a non-finite value is dropped rather than written. */
+export function guardCommit(onCommit: (value: number) => void, silence = false): (value: number) => void {
+  return (value) => {
+    const safe = committable(value, silence)
+    if (safe !== null) onCommit(safe)
+  }
+}
+
+/**
+ * A drag accumulated move by move, each move's delta scaled by the modifier held *during that
+ * move* — so pressing Cmd halfway through a drag makes the rest of it fine instead of jumping the
+ * value to a tenth of the whole drag so far. `move` takes the drag's total offset (as `useDrag`
+ * reports it) and a function turning one move's delta into a value change; repeating the same
+ * offset (the release after the last move) changes nothing. `hold` clamps after each move, so a
+ * drag past an end turns back from the end rather than from where the pointer overshot to.
+ */
+export function createDragAccumulator(
+  start: number,
+  hold: (value: number) => number = (value) => value
+): { move(dx: number, dy: number, change: (ddx: number, ddy: number) => number): number; readonly value: number } {
+  let value = start
+  let lastX = 0
+  let lastY = 0
+  return {
+    move(dx, dy, change) {
+      value = hold(value + change(dx - lastX, dy - lastY))
+      lastX = dx
+      lastY = dy
+      return value
+    },
+    get value() {
+      return value
+    }
+  }
+}
+
 export function clamp(value: number, min: number | undefined, max: number | undefined): number {
   let out = value
   if (min !== undefined) out = Math.max(min, out)

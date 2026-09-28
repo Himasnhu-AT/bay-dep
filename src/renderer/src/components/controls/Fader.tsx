@@ -1,9 +1,9 @@
 import { useRef, useState, type ReactNode } from 'react'
 import { cn } from '@/lib/cn'
 import { useDrag } from '@/lib/useDrag'
-import { faderDb, faderPosition, parseDb, positionDragScale, FADER_UNITY } from './dial'
+import { faderDb, faderPosition, faderStep, parseDb, positionDragScale, FADER_UNITY } from './dial'
 import { useGestureBracket, useWheelSteps, type Gesture } from './gesture'
-import { keyStep, modifiersOf, roundTo, MODIFIER_SCALE } from './values'
+import { createDragAccumulator, guardCommit, keyStep, modifiersOf, roundTo, MODIFIER_SCALE } from './values'
 
 export interface FaderProps {
   /** The accessible name — "Dialogue volume". */
@@ -57,6 +57,8 @@ export function Fader({
   marks = true,
   className
 }: FaderProps): ReactNode {
+  // −∞ is a level (silence); NaN from the store is not, and is never written back.
+  const commit = guardCommit(onCommit, true)
   const trackRef = useRef<HTMLDivElement>(null)
   // The travel: the track less half a cap at each end, so the cap sits inside it at both ends.
   const travelRef = useRef<HTMLDivElement>(null)
@@ -64,7 +66,7 @@ export function Fader({
   const [draft, setDraft] = useState<number | null>(null)
   const [typing, setTyping] = useState<string | null>(null)
   const bracket = useGestureBracket(gesture)
-  const start = useRef(0)
+  const start = useRef(createDragAccumulator(0))
   const current = draft ?? value
   const position = faderPosition(current, floorDb, maxDb)
   const hollow = mixed && draft === null
@@ -76,14 +78,15 @@ export function Fader({
   const reached = (dy: number, mods: { shift: boolean; alt: boolean; meta: boolean }): number => {
     const height = travelRef.current?.getBoundingClientRect().height ?? 0
     if (height <= 0) return current
-    const next = start.current - (dy / height) * positionDragScale(mods)
-    return tidy(faderDb(Math.max(0, Math.min(1, next)), floorDb, maxDb))
+    // Each move scaled by the modifier held during it: Cmd pressed mid-drag slows the rest.
+    const next = start.current.move(0, dy, (_ddx, ddy) => -(ddy / height) * positionDragScale(mods))
+    return tidy(faderDb(next, floorDb, maxDb))
   }
 
   const onPointerDown = useDrag({
     onStart: () => {
       if (disabled) return
-      start.current = position
+      start.current = createDragAccumulator(position, (p) => Math.max(0, Math.min(1, p)))
       document.body.style.cursor = 'ns-resize'
     },
     onMove: (state) => {
@@ -92,14 +95,14 @@ export function Fader({
       setDraft(next)
       if (bracket.live && state.travel >= 3) {
         bracket.begin()
-        onCommit(next)
+        commit(next)
       }
     },
     onEnd: (state) => {
       document.body.style.cursor = ''
       if (!disabled) {
         setDraft(null)
-        onCommit(reached(state.dy, state))
+        commit(reached(state.dy, state))
       }
       bracket.end()
     },
@@ -110,15 +113,12 @@ export function Fader({
   })
 
   /** A step in dB from where the level is; from −∞ the first step up lands on the floor. */
-  const stepBy = (db: number): number => {
-    if (!Number.isFinite(current)) return db > 0 ? floorDb + db : current
-    return clampDb(roundTo(current + db, 2))
-  }
+  const stepBy = (db: number): number => faderStep(current, db, floorDb, maxDb)
 
   useWheelSteps(trackRef, !disabled, (steps, mods) => {
     if (bracket.live) bracket.touch()
-    onCommit(stepBy(steps * keyStep(step, mods, 1)))
-  })
+    commit(stepBy(steps * keyStep(step, mods, 1)))
+  }, bracket.rest)
 
   const shown = hollow ? 'Mixed' : format(current)
   const spoken = hollow ? 'Mixed' : Number.isFinite(current) && current > floorDb ? `${roundTo(current, 1)} dB` : 'minus infinity'
@@ -158,7 +158,7 @@ export function Fader({
           onDoubleClick={() => {
             if (disabled) return
             setDraft(null)
-            onCommit(defaultValue)
+            commit(defaultValue)
           }}
           onKeyDown={(event) => {
             if (disabled) return
@@ -172,7 +172,7 @@ export function Fader({
             if (event.key === 'End') next = maxDb
             if (next === null) return
             event.preventDefault()
-            onCommit(next)
+            commit(next)
           }}
           className={cn(
             'group relative w-6 shrink-0 touch-none rounded-sm outline-none',
@@ -226,7 +226,7 @@ export function Fader({
           cancelling.current = false
           const parsed = typing === null || cancelled ? null : parseDb(typing)
           setTyping(null)
-          if (parsed !== null) onCommit(clampDb(parsed))
+          if (parsed !== null) commit(clampDb(parsed))
         }}
         onKeyDown={(event) => {
           if (event.key === 'Enter') event.currentTarget.blur()

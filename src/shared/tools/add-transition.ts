@@ -57,8 +57,9 @@ export const tool: ToolSpec = {
       ease: {
         description:
           'How the transition travels across its window, as a keyframe ease: "linear" (the ' +
-          'default), "in", "out", "inOut", "hold", or a CSS cubic-bezier [x1, y1, x2, y2] with x1 ' +
-          'and x2 in 0..1 (y may overshoot). It shapes the picture and the audio cross-fade alike. ' +
+          'default), "in", "out", "inOut", "hold", or a CSS cubic-bezier [x1, y1, x2, y2] with all ' +
+          'four in 0..1 (a transition cannot overshoot its ends; y outside 0..1 is refused). It ' +
+          'shapes the picture and the audio cross-fade alike. ' +
           'A push with "inOut" eases off the cut instead of sliding at one speed.'
       }
     },

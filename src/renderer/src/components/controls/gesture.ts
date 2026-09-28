@@ -25,6 +25,11 @@ export interface GestureBracket {
   end(): void
   /** Opens the gesture if it is not open and closes it after `WHEEL_GESTURE_IDLE_MS` of rest. */
   touch(): void
+  /**
+   * The wheel has stopped for sure (the pointer left, focus left): a gesture opened by `touch`
+   * closes now instead of at its timer. A drag's gesture is left alone — it ends on release.
+   */
+  rest(): void
 }
 
 /**
@@ -66,6 +71,9 @@ export function createGestureBracket(
       cancelIdle()
       idle = timers.set(end, WHEEL_GESTURE_IDLE_MS)
     },
+    rest() {
+      if (idle !== null) end()
+    },
     dispose: end
   }
 }
@@ -78,7 +86,7 @@ export function useGestureBracket(gesture: Gesture | undefined): GestureBracket 
   if (bracket.current === null) bracket.current = createGestureBracket(() => latest.current)
   const current = bracket.current
   useEffect(() => () => current.dispose(), [current])
-  return { live: gesture !== undefined, begin: current.begin, end: current.end, touch: current.touch }
+  return { live: gesture !== undefined, begin: current.begin, end: current.end, touch: current.touch, rest: current.rest }
 }
 
 // One timestamp for the whole document: any scroll anywhere means a wheel belongs to the page.
@@ -99,10 +107,17 @@ function watchScrolls(): void {
 export function useWheelSteps(
   element: React.RefObject<HTMLElement | null>,
   enabled: boolean,
-  onSteps: (steps: number, mods: Modifiers) => void
+  onSteps: (steps: number, mods: Modifiers) => void,
+  /**
+   * Called when the pointer leaves the control or focus leaves it: a wheel's gesture closes
+   * then rather than lingering for its idle timer, inside which anything else would land.
+   */
+  onRest?: () => void
 ): void {
   const latest = useRef(onSteps)
   latest.current = onSteps
+  const rested = useRef(onRest)
+  rested.current = onRest
   useEffect(() => {
     const target = element.current
     if (!target || !enabled) return
@@ -115,6 +130,10 @@ export function useWheelSteps(
     }
     const leave = (): void => {
       hovered = false
+      rested.current?.()
+    }
+    const blur = (event: FocusEvent): void => {
+      if (!(event.relatedTarget instanceof Node && target.contains(event.relatedTarget))) rested.current?.()
     }
     const wheel = (event: WheelEvent): void => {
       const focused = target.contains(document.activeElement)
@@ -127,7 +146,9 @@ export function useWheelSteps(
     target.addEventListener('pointerenter', enter)
     target.addEventListener('pointerleave', leave)
     target.addEventListener('wheel', wheel, { passive: false })
+    target.addEventListener('focusout', blur)
     return () => {
+      target.removeEventListener('focusout', blur)
       target.removeEventListener('pointerenter', enter)
       target.removeEventListener('pointerleave', leave)
       target.removeEventListener('wheel', wheel)

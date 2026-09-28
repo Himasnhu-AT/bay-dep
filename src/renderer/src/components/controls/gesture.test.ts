@@ -82,3 +82,19 @@ test('a run of wheel notches is one gesture that closes after the wheel rests', 
   clock.advance(WHEEL_GESTURE_IDLE_MS)
   assert.deepEqual(log, ['begin', 'end', 'begin', 'end'])
 })
+
+test('a wheel gesture closes the moment the pointer or focus leaves, not only at its timer', () => {
+  const { gesture, log } = recorder()
+  const clock = fakeTimers()
+  const bracket = createGestureBracket(() => gesture, clock.timers)
+  bracket.touch()
+  bracket.rest()
+  assert.deepEqual(log, ['begin', 'end'], 'closed at once, so an undo or an agent edit right after lands outside it')
+  clock.advance(WHEEL_GESTURE_IDLE_MS)
+  assert.deepEqual(log, ['begin', 'end'], 'and the timer does not close it a second time')
+  // A drag's gesture is not the wheel's: leaving the control mid-drag must not end it.
+  bracket.begin()
+  bracket.rest()
+  assert.deepEqual(log, ['begin', 'end', 'begin'])
+  bracket.end()
+})

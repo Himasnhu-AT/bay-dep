@@ -2,7 +2,7 @@ import { useRef, useState, type ReactNode } from 'react'
 import { cn } from '@/lib/cn'
 import { useDrag } from '@/lib/useDrag'
 import { useGestureBracket, useWheelSteps, type Gesture } from './gesture'
-import { clamp, dragValue, keyStep, modifiersOf } from './values'
+import { clamp, committable, createDragAccumulator, dragValue, keyStep, modifiersOf } from './values'
 
 export interface NumberFieldProps {
   label: string
@@ -100,7 +100,7 @@ export function NumberField({
   const boxRef = useRef<HTMLDivElement>(null)
   // While dragging or typing the field shows its own value; otherwise it mirrors the store.
   const [draft, setDraft] = useState<string | null>(null)
-  const dragStart = useRef(0)
+  const drag = useRef(createDragAccumulator(0))
   // Escape blurs to leave the field; the blur must then neither commit nor complain about what
   // was typed. Read from a ref because the blur runs inside the same key event, before the
   // `setDraft(null)` above it has re-rendered the handler.
@@ -127,25 +127,30 @@ export function NumberField({
     // is NaN both before and after and cannot distinguish "wrote" from "returned early":
     // without this line, seeding `layout.left = NaN` and dragging takes `past` 3 -> 4 and
     // commits NaN to the project; with it, 3 -> 3.
-    if (!Number.isFinite(rounded)) return
-    onCommit(rounded)
+    const safe = committable(rounded)
+    if (safe === null) return
+    onCommit(safe)
     if (live) return
     // After the commit, so a caller that clears its note on every commit still shows this one.
     const asked = Number(next.toFixed(precision))
     if (Number.isFinite(asked) && asked !== rounded) onClamp?.(asked, rounded)
   }
 
+  /** The drag so far, each move scaled by the modifier held during it (`createDragAccumulator`). */
+  const dragged = (state: { dx: number; shift: boolean; alt: boolean; meta: boolean }): number =>
+    drag.current.move(state.dx, 0, (ddx) => dragValue(0, ddx, step, state))
+
   const onPointerDown = useDrag({
     onStart: () => {
       if (disabled) return
-      dragStart.current = value
+      drag.current = createDragAccumulator(value)
       // A drag that starts on a 40px label and travels 300px must not look like a
       // text-selection gesture halfway across the inspector.
       document.body.style.cursor = 'ew-resize'
     },
     onMove: (state) => {
       if (disabled) return
-      const next = clamp(dragValue(dragStart.current, state.dx, step, state), min, max)
+      const next = clamp(dragged(state), min, max)
       setDraft(shown(Number(next.toFixed(precision))))
       if (bracket.live && state.travel >= 3) {
         bracket.begin()
@@ -159,7 +164,7 @@ export function NumberField({
         return
       }
       setDraft(null)
-      commit(dragValue(dragStart.current, state.dx, step, state))
+      commit(dragged(state))
       bracket.end()
     },
     onClick: () => {
@@ -181,7 +186,7 @@ export function NumberField({
   useWheelSteps(boxRef, wheel && !disabled && !mixed, (steps, mods) => {
     if (bracket.live) bracket.touch()
     nudge(steps, mods, true)
-  })
+  }, bracket.rest)
 
   const reset = (): void => {
     if (disabled || defaultValue === undefined) return

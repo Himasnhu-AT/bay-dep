@@ -3,7 +3,7 @@ import { cn } from '@/lib/cn'
 import { useDrag } from '@/lib/useDrag'
 import { angleDelta, foldAngle, knobAngle, knobDragValue, pointerAngle, positionDragScale, KNOB_SWEEP_DEG } from './dial'
 import { useGestureBracket, useWheelSteps, type Gesture } from './gesture'
-import { clamp, decimalsOf, keyStep, modifiersOf, roundTo, MODIFIER_SCALE } from './values'
+import { clamp, createDragAccumulator, decimalsOf, guardCommit, keyStep, modifiersOf, roundTo, MODIFIER_SCALE } from './values'
 
 /** A point on a circle, `deg` clockwise from straight up. */
 function polar(c: number, r: number, deg: number): [number, number] {
@@ -77,35 +77,39 @@ export function Knob({
   readout = true,
   className
 }: KnobProps): ReactNode {
+  const commit = guardCommit(onCommit)
   const ref = useRef<HTMLDivElement>(null)
   const [draft, setDraft] = useState<number | null>(null)
   const bracket = useGestureBracket(gesture)
-  const start = useRef(0)
+  const drag = useRef(createDragAccumulator(0))
   const current = draft ?? value
   const decimals = decimalsOf(step)
   const hollow = mixed && draft === null
   const settle = (next: number): number => roundTo(clamp(Math.round(next / step) * step, min, max), decimals)
+  /** The drag so far, each move scaled by the modifier held during it (`createDragAccumulator`). */
+  const reach = (state: { dx: number; dy: number; shift: boolean; alt: boolean; meta: boolean }): number =>
+    drag.current.move(state.dx, state.dy, (ddx, ddy) => knobDragValue(0, ddx, ddy, min, max, 160, positionDragScale(state)))
 
   const onPointerDown = useDrag({
     onStart: () => {
       if (disabled) return
-      start.current = current
+      drag.current = createDragAccumulator(current, (v) => clamp(v, min, max))
       document.body.style.cursor = 'ns-resize'
     },
     onMove: (state) => {
       if (disabled) return
-      const next = settle(knobDragValue(start.current, state.dx, state.dy, min, max, 160, positionDragScale(state)))
+      const next = settle(reach(state))
       setDraft(next)
       if (bracket.live && state.travel >= 3) {
         bracket.begin()
-        onCommit(next)
+        commit(next)
       }
     },
     onEnd: (state) => {
       document.body.style.cursor = ''
       if (!disabled) {
         setDraft(null)
-        onCommit(settle(knobDragValue(start.current, state.dx, state.dy, min, max, 160, positionDragScale(state))))
+        commit(settle(reach(state)))
       }
       bracket.end()
     },
@@ -117,8 +121,8 @@ export function Knob({
 
   useWheelSteps(ref, !disabled, (steps, mods) => {
     if (bracket.live) bracket.touch()
-    onCommit(settle(current + steps * keyStep(step, mods, decimals)))
-  })
+    commit(settle(current + steps * keyStep(step, mods, decimals)))
+  }, bracket.rest)
 
   const c = size / 2
   const r = c - 3
@@ -150,7 +154,7 @@ export function Knob({
         onDoubleClick={() => {
           if (disabled || defaultValue === undefined) return
           setDraft(null)
-          onCommit(defaultValue)
+          commit(defaultValue)
         }}
         onKeyDown={(event) => {
           if (disabled) return
@@ -164,7 +168,7 @@ export function Knob({
           if (event.key === 'End') next = max
           if (next === null) return
           event.preventDefault()
-          onCommit(settle(next))
+          commit(settle(next))
         }}
         className={cn(
           'group shrink-0 touch-none rounded-full outline-none focus-visible:ring-2 focus-visible:ring-accent',
@@ -233,10 +237,11 @@ export function AngleDial({
   size = 24,
   className
 }: AngleDialProps): ReactNode {
+  const commit = guardCommit(onCommit)
   const ref = useRef<HTMLDivElement>(null)
   const [draft, setDraft] = useState<number | null>(null)
   const bracket = useGestureBracket(gesture)
-  const drag = useRef({ value: 0, pointer: 0, turned: 0 })
+  const drag = useRef({ value: 0, pointer: 0 })
   const current = draft ?? value
   const hollow = mixed && draft === null
 
@@ -246,27 +251,35 @@ export function AngleDial({
     return pointerAngle(x - (box.left + box.width / 2), y - (box.top + box.height / 2))
   }
 
+  /**
+   * Follows the pointer around the dial: each move adds its own angle, scaled by the modifier held
+   * during *that* move, so pressing Cmd mid-drag slows the rest rather than jumping the value.
+   */
+  const turn = (state: { x: number; y: number; shift: boolean; alt: boolean; meta: boolean }): number => {
+    const now = pointerAt(state.x, state.y)
+    drag.current.value += angleDelta(drag.current.pointer, now) * positionDragScale(state)
+    drag.current.pointer = now
+    return roundTo(drag.current.value, 1)
+  }
+
   const onPointerDown = useDrag({
     onStart: (state) => {
       if (disabled) return
-      drag.current = { value: current, pointer: pointerAt(state.x, state.y), turned: 0 }
+      drag.current = { value: current, pointer: pointerAt(state.x, state.y) }
     },
     onMove: (state) => {
       if (disabled) return
-      const now = pointerAt(state.x, state.y)
-      drag.current.turned += angleDelta(drag.current.pointer, now)
-      drag.current.pointer = now
-      const next = roundTo(drag.current.value + drag.current.turned * positionDragScale(state), 1)
+      const next = turn(state)
       setDraft(next)
       if (bracket.live && state.travel >= 3) {
         bracket.begin()
-        onCommit(next)
+        commit(next)
       }
     },
     onEnd: (state) => {
       if (!disabled) {
         setDraft(null)
-        onCommit(roundTo(drag.current.value + drag.current.turned * positionDragScale(state), 1))
+        commit(turn(state))
       }
       bracket.end()
     },
@@ -275,8 +288,8 @@ export function AngleDial({
 
   useWheelSteps(ref, !disabled, (steps, mods) => {
     if (bracket.live) bracket.touch()
-    onCommit(roundTo(current + steps * keyStep(1, mods, 1), 1))
-  })
+    commit(roundTo(current + steps * keyStep(1, mods, 1), 1))
+  }, bracket.rest)
 
   const c = size / 2
   const r = c - 2
@@ -296,7 +309,7 @@ export function AngleDial({
       onDoubleClick={() => {
         if (disabled || defaultValue === undefined) return
         setDraft(null)
-        onCommit(defaultValue)
+        commit(defaultValue)
       }}
       onKeyDown={(event) => {
         if (disabled) return
@@ -306,7 +319,7 @@ export function AngleDial({
         if (event.key === 'ArrowDown' || event.key === 'ArrowLeft') next = current - one
         if (next === null) return
         event.preventDefault()
-        onCommit(roundTo(next, 1))
+        commit(roundTo(next, 1))
       }}
       className={cn(
         'group shrink-0 touch-none rounded-full outline-none focus-visible:ring-2 focus-visible:ring-accent',

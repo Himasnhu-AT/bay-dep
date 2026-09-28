@@ -3,7 +3,7 @@ import { cn } from '@/lib/cn'
 import { useDrag } from '@/lib/useDrag'
 import { Field } from '../Panel'
 import { useGestureBracket, useWheelSteps, type Gesture } from './gesture'
-import { clamp, decimalsOf, keyStep, modifiersOf, roundTo, MODIFIER_SCALE, type Modifiers } from './values'
+import { clamp, decimalsOf, guardCommit, keyStep, modifiersOf, roundTo, MODIFIER_SCALE, type Modifiers } from './values'
 
 export interface SliderProps {
   label: string
@@ -89,6 +89,7 @@ export function Slider({
   mixed = false,
   wheel = true
 }: SliderProps): ReactNode {
+  const commit = guardCommit(onCommit)
   const origin = originProp ?? (bipolar ? (min + max) / 2 : undefined)
   const trackRef = useRef<HTMLDivElement>(null)
   const [draft, setDraft] = useState<number | null>(null)
@@ -142,7 +143,7 @@ export function Slider({
       onInput?.(next)
       if (bracket.live) {
         bracket.begin()
-        onCommit(next)
+        commit(next)
       }
     },
     onEnd: (state) => {
@@ -151,23 +152,23 @@ export function Slider({
         return
       }
       setDraft(null)
-      onCommit(reached(state.x, state))
+      commit(reached(state.x, state))
       bracket.end()
     },
     // A click is still a set: the pointer landed somewhere on the track on purpose.
     onClick: (state) => {
       if (disabled || pressCount.current >= 2 || state.alt || state.meta) return
       setDraft(null)
-      onCommit(valueAt(state.x))
+      commit(valueAt(state.x))
     }
   })
 
-  const commitKey = (next: number): void => onCommit(roundTo(clamp(next, min, max), decimals))
+  const commitKey = (next: number): void => commit(roundTo(clamp(next, min, max), decimals))
 
   useWheelSteps(trackRef, wheel && !disabled, (steps, mods) => {
     if (bracket.live) bracket.touch()
     commitKey(current + steps * keyStep(step, mods, decimals))
-  })
+  }, bracket.rest)
 
   return (
     <div

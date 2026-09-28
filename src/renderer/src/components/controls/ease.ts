@@ -15,6 +15,13 @@ export const EASE_PRESETS: { value: 'linear' | 'in' | 'out' | 'inOut' | 'hold'; 
 
 /** Where a handle may be dragged: x is time and cannot run backwards; y may overshoot by one. */
 export const HANDLE_Y = { min: -1, max: 2 } as const
+/**
+ * A transition's handles stay inside 0…1: its progress runs from the outgoing clip to the
+ * incoming, and a curve past either end would only be clamped there (`add_transition` refuses one).
+ */
+export const HANDLE_Y_UNIT = { min: 0, max: 1 } as const
+
+export type HandleRange = { readonly min: number; readonly max: number }
 /** The step Shift snaps a handle to while dragging. */
 export const HANDLE_SNAP = 0.05
 
@@ -32,11 +39,11 @@ export function bezierOf(ease: KeyframeEase | undefined): Bezier | null {
  * CSS's `ease-in` stores `'in'`, and the diagonal stores nothing — linear is absence), else the
  * tuple. Handles are held to their range and rounded to three places first.
  */
-export function easeFromBezier(bezier: Bezier): KeyframeEase {
+export function easeFromBezier(bezier: Bezier, range: HandleRange = HANDLE_Y): KeyframeEase {
   const x1 = roundTo(Math.max(0, Math.min(1, bezier[0])), 3)
   const x2 = roundTo(Math.max(0, Math.min(1, bezier[2])), 3)
-  const y1 = roundTo(Math.max(HANDLE_Y.min, Math.min(HANDLE_Y.max, bezier[1])), 3)
-  const y2 = roundTo(Math.max(HANDLE_Y.min, Math.min(HANDLE_Y.max, bezier[3])), 3)
+  const y1 = roundTo(Math.max(range.min, Math.min(range.max, bezier[1])), 3)
+  const y2 = roundTo(Math.max(range.min, Math.min(range.max, bezier[3])), 3)
   const tuple: Bezier = [x1, y1, x2, y2]
   const same = (other: readonly number[]): boolean => other.every((n, i) => Math.abs(n - tuple[i]!) < 1e-9)
   // The diagonal — both handles on it — is linear, however far along it they sit.

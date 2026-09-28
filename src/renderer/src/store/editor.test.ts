@@ -12,7 +12,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { useEditor, emptyProject, newId } from './editor'
+import { useEditor, emptyProject, newId, asAgent } from './editor'
 import type { Item, Project } from '@shared/project'
 
 /** A project with two items on one video track, so track moves and ripples have something to act on. */
@@ -208,6 +208,64 @@ test('a gesture that changed nothing pushes nothing, and history records again a
   useEditor.getState().patchLayout(itemIds[0]!, { left: 7 })
   useEditor.getState().endGesture()
   assert.equal(past(), before + 2, 'the next drag is still one step')
+})
+
+test('⌘Z inside an open gesture undoes the gesture so far, and history and redo survive it', () => {
+  // A wheel's gesture stays open 400 ms after its last notch, and ⌘Z reaches the store while a
+  // knob or slider (a div, not an input) has focus. Undo used to reach past the gesture's start;
+  // closing the gesture then pushed the pre-gesture state and cleared redo.
+  const { itemIds } = load()
+  const id = itemIds[0]!
+  const left = (): number => useEditor.getState().project.timelines[0]!.tracks.flatMap((t) => t.items).find((i) => i.id === id)!.layout.left
+  useEditor.getState().patchLayout(id, { left: 5 })
+  useEditor.getState().beginGesture()
+  useEditor.getState().patchLayout(id, { left: 10 })
+  useEditor.getState().undo()
+  assert.equal(left(), 5, 'the undo takes back the gesture’s move, not the edit before it')
+  useEditor.getState().endGesture()
+  assert.ok(useEditor.getState().future.length > 0, 'closing the gesture after an undo keeps redo')
+  useEditor.getState().redo()
+  assert.equal(left(), 10)
+  useEditor.getState().undo()
+  useEditor.getState().undo()
+  assert.equal(left(), 0, 'and the edit before the gesture is still one undo further back')
+})
+
+test('an agent edit arriving mid-gesture is its own step, not folded into the user’s drag', async () => {
+  const { itemIds } = load()
+  const id = itemIds[0]!
+  const item = (): Item => useEditor.getState().project.timelines[0]!.tracks.flatMap((t) => t.items).find((i) => i.id === id)!
+  const before = past()
+  useEditor.getState().beginGesture()
+  useEditor.getState().patchLayout(id, { left: 10 })
+  // One agent edit through a bare store call, one through a transaction — both paths tools use.
+  await asAgent(() => useEditor.getState().patchItem(id, { volume: 0.5 }))
+  // Two edits in one agent transaction: one step of its own, not two and not the user's.
+  await asAgent(() =>
+    useEditor.getState().transact(() => {
+      useEditor.getState().patchItem(id, { fadeInFrames: 3 })
+      useEditor.getState().patchItem(id, { fadeOutFrames: 3 })
+    })
+  )
+  useEditor.getState().patchLayout(id, { left: 20 })
+  useEditor.getState().endGesture()
+  assert.equal(past(), before + 4, 'user half, agent edit, agent transaction, user half')
+  useEditor.getState().undo()
+  assert.equal(item().layout.left, 10, 'one undo takes back only the user’s second half')
+  assert.equal(item().volume, 0.5, '…and leaves the agent’s edit')
+  useEditor.getState().undo()
+  useEditor.getState().undo()
+  assert.equal(item().volume, 1)
+  assert.equal(item().layout.left, 10)
+  useEditor.getState().undo()
+  assert.equal(item().layout.left, 0)
+  // Positive control: the user's own edits inside a gesture still join it.
+  const again = past()
+  useEditor.getState().beginGesture()
+  useEditor.getState().patchLayout(id, { left: 1 })
+  useEditor.getState().transact(() => useEditor.getState().patchItem(id, { volume: 0.7 }))
+  useEditor.getState().endGesture()
+  assert.equal(past(), again + 1)
 })
 
 test('after Save As the document belongs to the new file, even across an undo', () => {

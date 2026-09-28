@@ -48,9 +48,9 @@ test('add_transition stores the ease it is given, and reports it back', async ()
 
 test('add_transition takes a cubic-bezier, and linear is stored as nothing', async () => {
   const { a, b } = load()
-  const curve = await executeToolCall({ id: 'c2', tool: 'add_transition', args: { fromItemId: a, toItemId: b, kind: 'wipe', ease: [0.2, 1.3, 0.6, 1] } })
+  const curve = await executeToolCall({ id: 'c2', tool: 'add_transition', args: { fromItemId: a, toItemId: b, kind: 'wipe', ease: [0.2, 0.9, 0.6, 1] } })
   assert.ok(curve.ok, curve.ok ? '' : curve.error)
-  assert.deepEqual(stored()[0]!.ease, [0.2, 1.3, 0.6, 1])
+  assert.deepEqual(stored()[0]!.ease, [0.2, 0.9, 0.6, 1])
   const linear = await executeToolCall({ id: 'c3', tool: 'add_transition', args: { fromItemId: a, toItemId: b, kind: 'wipe', ease: 'linear' } })
   assert.ok(linear.ok, linear.ok ? '' : linear.error)
   assert.equal('ease' in stored()[0]!, false)
@@ -65,6 +65,19 @@ test('add_transition refuses a curve that runs time backwards, and says what to 
   // Positive control: the same call with a legal curve lands.
   const legal = await executeToolCall({ id: 'c5', tool: 'add_transition', args: { fromItemId: a, toItemId: b, kind: 'wipe', ease: [0.5, 0, 0.5, 1] } })
   assert.ok(legal.ok)
+})
+
+test('add_transition refuses a curve whose y leaves 0..1, which a keyframe would accept', async () => {
+  const { a, b } = load()
+  const over = await executeToolCall({ id: 'c6', tool: 'add_transition', args: { fromItemId: a, toItemId: b, kind: 'wipe', ease: [0.2, 1.3, 0.6, 1] } })
+  assert.equal(over.ok, false)
+  assert.match(over.ok ? '' : over.error, /y1 or y2 outside 0\.\.1/)
+  assert.match(over.ok ? '' : over.error, /\[0\.42, 0, 0\.58, 1\]/)
+  const under = await executeToolCall({ id: 'c7', tool: 'add_transition', args: { fromItemId: a, toItemId: b, kind: 'wipe', ease: [0.2, 0, 0.6, -0.1] } })
+  assert.equal(under.ok, false)
+  // Positive control: the edges themselves are legal.
+  const edge = await executeToolCall({ id: 'c8', tool: 'add_transition', args: { fromItemId: a, toItemId: b, kind: 'wipe', ease: [0.2, 0, 0.6, 1] } })
+  assert.ok(edge.ok, edge.ok ? '' : edge.error)
 })
 
 test('the inspector’s patch sets an ease, and putting it back to linear removes the field', () => {

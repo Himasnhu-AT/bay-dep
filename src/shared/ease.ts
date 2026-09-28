@@ -81,7 +81,8 @@ function describeEase(ease: unknown): string {
 export function parseEase(
   raw: unknown,
   where: string,
-  what = 'the segment from this key to the next'
+  what = 'the segment from this key to the next',
+  options: { overshoot?: boolean } = {}
 ): KeyframeEase | undefined | { error: string } {
   if (raw === undefined || raw === null) return undefined
   if (typeof raw === 'string' && (EASE_NAMES as readonly string[]).includes(raw)) {
@@ -92,7 +93,18 @@ export function parseEase(
     raw.length === 4 &&
     raw.every((n) => typeof n === 'number' && Number.isFinite(n))
   ) {
-    const [x1, , x2] = raw as number[]
+    const [x1, y1, x2, y2] = raw as number[]
+    // A transition's progress runs from the outgoing clip (0) to the incoming (1); a curve past
+    // either end would be clamped there by every sampler, so it is refused rather than stored as
+    // something it will not do. A keyframe's value may overshoot, so there it is allowed.
+    if (options.overshoot === false && (y1! < 0 || y1! > 1 || y2! < 0 || y2! > 1)) {
+      return {
+        error:
+          `${where}.ease ${describeEase(raw)} has y1 or y2 outside 0..1, which ${what} cannot follow: it ` +
+          `runs from the outgoing clip (0) to the incoming (1), and a curve past either end is clamped ` +
+          `there. Keep y1 and y2 within 0..1 — for example [0.42, 0, 0.58, 1].`
+      }
+    }
     if (x1! < 0 || x1! > 1 || x2! < 0 || x2! > 1) {
       return {
         error:

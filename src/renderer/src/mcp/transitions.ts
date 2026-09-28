@@ -100,7 +100,7 @@ export function addTransition(args: Record<string, unknown>): Record<string, unk
 
   // The same ease a keyframe takes, checked by the same parser, so a curve the agent writes here
   // is refused (or accepted) exactly as it would be on a key.
-  const ease = parseEase(args.ease, 'add_transition', 'the progress across the cut')
+  const ease = parseEase(args.ease, 'add_transition', 'the progress across the cut', { overshoot: false })
   if (ease && typeof ease === 'object' && 'error' in ease) fail(ease.error)
 
   let added: string | null = null

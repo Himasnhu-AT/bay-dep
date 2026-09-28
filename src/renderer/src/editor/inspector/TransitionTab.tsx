@@ -205,6 +205,7 @@ function CutEditor({ junction, project, fps }: { junction: Junction; project: Pr
                 value={existing.ease}
                 onChange={(ease) => patch({ ease })}
                 gesture={LIVE}
+                overshoot={false}
               />
             </Field>
           )}

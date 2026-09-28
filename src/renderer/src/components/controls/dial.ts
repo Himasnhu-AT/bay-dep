@@ -40,6 +40,18 @@ export function faderDb(position: number, floorDb: number, maxDb: number): numbe
   return floorDb * t * t
 }
 
+/**
+ * A fader's level one step of `deltaDb` from `current`: from −∞ (or the floor) a step up lands on
+ * the floor plus the step, a step down stays at −∞; above the top it holds at the top; at or below
+ * the floor it is −∞. A NaN level stays NaN, for `committable` to refuse.
+ */
+export function faderStep(current: number, deltaDb: number, floorDb: number, maxDb: number): number {
+  if (Number.isNaN(current)) return Number.NaN
+  if (!Number.isFinite(current) || current <= floorDb) return deltaDb > 0 ? floorDb + deltaDb : Number.NEGATIVE_INFINITY
+  const next = Math.round((current + deltaDb) * 100) / 100
+  return next <= floorDb ? Number.NEGATIVE_INFINITY : Math.min(maxDb, next)
+}
+
 /** Reads a typed level: `-6`, `+2.5`, `-6 dB`, `−6`, or `-inf`/`−∞` for silence. Null otherwise. */
 export function parseDb(text: string): number | null {
   const t = text.trim().replace(/−/g, '-').replace(/db$/i, '').trim()

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { formatTimecode } from '@shared/project'
 import { easeProgress, NAMED_EASES } from '@shared/ease'
 import { spokenTimecode, timecodeEntry } from './timecode'
-import { bezierOf, curvePath, describeBezier, easeFromBezier, presetOf, snapHandle, HANDLE_Y } from './ease'
+import { bezierOf, curvePath, describeBezier, easeFromBezier, presetOf, snapHandle, HANDLE_Y, HANDLE_Y_UNIT } from './ease'
 
 // -- timecode ------------------------------------------------------------------------------------
 
@@ -67,6 +67,11 @@ test('bezier round trip: every ease draws with handles that store it again', () 
   assert.equal(presetOf(undefined), 'linear')
   assert.equal(presetOf([0.42, 0, 1, 1]), 'in')
   assert.equal(presetOf([0.2, 1.3, 0.7, 1]), 'custom')
+})
+
+test('a transition’s editor keeps its handles inside 0..1; a keyframe’s may overshoot', () => {
+  assert.deepEqual(easeFromBezier([0.2, 1.4, 0.8, -0.3], HANDLE_Y_UNIT), [0.2, 1, 0.8, 0])
+  assert.deepEqual(easeFromBezier([0.2, 1.4, 0.8, -0.3]), [0.2, 1.4, 0.8, -0.3])
 })
 
 test('Shift snaps a handle to 0.05', () => {

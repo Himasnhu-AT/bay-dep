@@ -13,7 +13,9 @@ import {
   snapHandle,
   EASE_PRESETS,
   HANDLE_Y,
-  type Bezier
+  HANDLE_Y_UNIT,
+  type Bezier,
+  type HandleRange
 } from './ease'
 import { useGestureBracket, type Gesture } from './gesture'
 import { keyStep, modifiersOf, roundTo } from './values'
@@ -27,6 +29,11 @@ export interface EaseEditorProps {
   disabled?: boolean
   /** A multi-selection that disagrees. */
   mixed?: boolean
+  /**
+   * Whether a handle may take the curve past 0…1 (a keyframe's value overshooting). False for a
+   * transition, whose progress cannot leave 0…1.
+   */
+  overshoot?: boolean
 }
 
 /** The curve box: its size, and the progress range it shows (room above and below for overshoot). */
@@ -52,7 +59,7 @@ function MiniCurve({ ease, size = 18 }: { ease: KeyframeEase | undefined; size?:
  * Double-click the box to go back to linear. A handle dragged back onto a preset's curve stores the
  * preset's name.
  */
-export function EaseEditor({ label, value, onChange, gesture, disabled = false, mixed = false }: EaseEditorProps): ReactNode {
+export function EaseEditor({ label, value, onChange, gesture, disabled = false, mixed = false, overshoot = true }: EaseEditorProps): ReactNode {
   const trigger = useFloatingTrigger('dialog')
   const preset = mixed ? 'custom' : presetOf(value)
   const name = mixed ? 'Mixed' : preset === 'custom' ? 'Custom curve' : (EASE_PRESETS.find((p) => p.value === preset)?.label ?? 'Linear')
@@ -74,7 +81,7 @@ export function EaseEditor({ label, value, onChange, gesture, disabled = false, 
         <span className="min-w-0 flex-1 truncate">{name}</span>
       </button>
       <Popover {...trigger.surfaceProps} label={label} width={BOX.width + 8}>
-        <EasePanel label={label} value={mixed ? undefined : value} onChange={onChange} gesture={gesture} />
+        <EasePanel label={label} value={mixed ? undefined : value} onChange={onChange} gesture={gesture} range={overshoot ? HANDLE_Y : HANDLE_Y_UNIT} />
       </Popover>
     </>
   )
@@ -84,23 +91,25 @@ function EasePanel({
   label,
   value,
   onChange,
-  gesture
+  gesture,
+  range
 }: {
   label: string
   value: KeyframeEase | undefined
   onChange(ease: KeyframeEase): void
   gesture?: Gesture
+  range: HandleRange
 }): ReactNode {
   const [draft, setDraft] = useState<Bezier | null>(null)
   const bracket = useGestureBracket(gesture)
   const boxRef = useRef<SVGSVGElement>(null)
-  const current: KeyframeEase | undefined = draft ? easeFromBezier(draft) : value
+  const current: KeyframeEase | undefined = draft ? easeFromBezier(draft, range) : value
   const handles = draft ?? bezierOf(value)
   const preset = presetOf(current)
   const toX = (x: number): number => x * BOX.width
   const toY = (y: number): number => BOX.height - ((y - BOX.yMin) / (BOX.yMax - BOX.yMin)) * BOX.height
 
-  const commit = (next: Bezier): void => onChange(easeFromBezier(next))
+  const commit = (next: Bezier): void => onChange(easeFromBezier(next, range))
 
   return (
     <div className="flex flex-col gap-2">
@@ -163,6 +172,7 @@ function EasePanel({
                 box={boxRef}
                 toX={toX}
                 toY={toY}
+                range={range}
                 onDrag={(next, live) => {
                   setDraft(next)
                   if (live && bracket.live) {
@@ -190,6 +200,7 @@ function Handle({
   box,
   toX,
   toY,
+  range,
   onDrag,
   onDone
 }: {
@@ -198,6 +209,7 @@ function Handle({
   box: React.RefObject<SVGSVGElement | null>
   toX(x: number): number
   toY(y: number): number
+  range: HandleRange
   onDrag(next: Bezier, live: boolean): void
   onDone(next: Bezier): void
 }): ReactNode {
@@ -216,7 +228,7 @@ function Handle({
     }
     const next: Bezier = [...handles]
     next[ix] = roundTo(Math.max(0, Math.min(1, nx)), 3)
-    next[ix + 1] = roundTo(Math.max(HANDLE_Y.min, Math.min(HANDLE_Y.max, ny)), 3)
+    next[ix + 1] = roundTo(Math.max(range.min, Math.min(range.max, ny)), 3)
     return next
   }
 
@@ -248,8 +260,8 @@ function Handle({
         const next: Bezier = [...handles]
         if (event.key === 'ArrowLeft') next[ix] = Math.max(0, x - one)
         else if (event.key === 'ArrowRight') next[ix] = Math.min(1, x + one)
-        else if (event.key === 'ArrowUp') next[ix + 1] = Math.min(HANDLE_Y.max, y + one)
-        else if (event.key === 'ArrowDown') next[ix + 1] = Math.max(HANDLE_Y.min, y - one)
+        else if (event.key === 'ArrowUp') next[ix + 1] = Math.min(range.max, y + one)
+        else if (event.key === 'ArrowDown') next[ix + 1] = Math.max(range.min, y - one)
         else return
         event.preventDefault()
         next[ix] = roundTo(next[ix]!, 3)

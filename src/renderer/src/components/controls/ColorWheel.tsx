@@ -3,7 +3,7 @@ import { RotateCcw } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { useDrag } from '@/lib/useDrag'
 import { useGestureBracket, type Gesture } from './gesture'
-import { dragValue, keyStep, modifiersOf, roundTo, clamp } from './values'
+import { clamp, committable, createDragAccumulator, dragValue, guardCommit, keyStep, modifiersOf, roundTo } from './values'
 import { positionDragScale } from './dial'
 import { balanceOf, describeWheel, puckPixels, WHEEL_AXES_DEG, type WheelRgb } from './wheel'
 
@@ -61,11 +61,20 @@ export function ColorWheel({
   mixed = false,
   size = 64
 }: ColorWheelProps): ReactNode {
+  // Every commit through the kit's one guard: a NaN channel from the store makes a NaN puck or
+  // master, which is dropped rather than written back.
+  const balance = (x: number, y: number): void => {
+    const cx = committable(x)
+    const cy = committable(y)
+    if (cx !== null && cy !== null) onBalance(cx, cy)
+  }
+  const master = guardCommit(onMaster)
   const discRef = useRef<HTMLDivElement>(null)
   const stripRef = useRef<HTMLDivElement>(null)
   const [draft, setDraft] = useState<{ x: number; y: number; master: number } | null>(null)
   const bracket = useGestureBracket(gesture)
-  const start = useRef({ x: 0, y: 0, master: 0 })
+  // One accumulator per axis: each move scaled by the modifier held during it.
+  const drag = useRef({ x: createDragAccumulator(0), y: createDragAccumulator(0), master: createDragAccumulator(0) })
   const stored = balanceOf(value)
   const shown = draft ?? stored
   const hollow = mixed && draft === null
@@ -76,13 +85,16 @@ export function ColorWheel({
 
   const puckAt = (dx: number, dy: number, mods: { shift: boolean; alt: boolean; meta: boolean }): { x: number; y: number } => {
     const scale = (reach / radius) * positionDragScale(mods)
-    return { x: roundTo(start.current.x + dx * scale, 4), y: roundTo(start.current.y - dy * scale, 4) }
+    return {
+      x: roundTo(drag.current.x.move(dx, 0, (ddx) => ddx * scale), 4),
+      y: roundTo(drag.current.y.move(0, dy, (_ddx, ddy) => -ddy * scale), 4)
+    }
   }
 
   const onDiscDown = useDrag({
     onStart: () => {
       if (disabled) return
-      start.current = { ...stored }
+      drag.current = { x: createDragAccumulator(stored.x), y: createDragAccumulator(stored.y), master: createDragAccumulator(stored.master) }
     },
     onMove: (state) => {
       if (disabled) return
@@ -90,14 +102,14 @@ export function ColorWheel({
       setDraft({ ...next, master: stored.master })
       if (bracket.live && state.travel >= 3) {
         bracket.begin()
-        onBalance(next.x, next.y)
+        balance(next.x, next.y)
       }
     },
     onEnd: (state) => {
       if (!disabled) {
         const next = puckAt(state.dx, state.dy, state)
         setDraft(null)
-        onBalance(next.x, next.y)
+        balance(next.x, next.y)
       }
       bracket.end()
     },
@@ -105,12 +117,16 @@ export function ColorWheel({
   })
 
   const masterAt = (dx: number, mods: { shift: boolean; alt: boolean; meta: boolean }): number =>
-    roundTo(clamp(dragValue(start.current.master, dx, MASTER_PER_PX, mods), min, max), 4)
+    roundTo(drag.current.master.move(dx, 0, (ddx) => dragValue(0, ddx, MASTER_PER_PX, mods)), 4)
 
   const onStripDown = useDrag({
     onStart: () => {
       if (disabled) return
-      start.current = { ...stored }
+      drag.current = {
+        x: createDragAccumulator(stored.x),
+        y: createDragAccumulator(stored.y),
+        master: createDragAccumulator(stored.master, (m) => clamp(m, min, max))
+      }
       document.body.style.cursor = 'ew-resize'
     },
     onMove: (state) => {
@@ -119,7 +135,7 @@ export function ColorWheel({
       setDraft({ x: stored.x, y: stored.y, master: next })
       if (bracket.live && state.travel >= 3) {
         bracket.begin()
-        onMaster(next)
+        master(next)
       }
     },
     onEnd: (state) => {
@@ -127,7 +143,7 @@ export function ColorWheel({
       if (!disabled) {
         const next = masterAt(state.dx, state)
         setDraft(null)
-        onMaster(next)
+        master(next)
       }
       bracket.end()
     },
@@ -151,8 +167,8 @@ export function ColorWheel({
           disabled={disabled || (neutral && flat && !mixed)}
           onClick={() => {
             bracket.begin()
-            onBalance(0, 0)
-            onMaster(0)
+            balance(0, 0)
+            master(0)
             bracket.end()
           }}
           className="t-fast rounded-xs p-0.5 text-ink-2 hover:text-ink-0 disabled:invisible"
@@ -174,7 +190,7 @@ export function ColorWheel({
         onDoubleClick={() => {
           if (disabled) return
           setDraft(null)
-          onBalance(0, 0)
+          balance(0, 0)
         }}
         onKeyDown={(event) => {
           if (disabled) return
@@ -187,7 +203,7 @@ export function ColorWheel({
           else if (event.key === 'ArrowDown') dy = -one
           else return
           event.preventDefault()
-          onBalance(roundTo(stored.x + dx, 4), roundTo(stored.y + dy, 4))
+          balance(roundTo(stored.x + dx, 4), roundTo(stored.y + dy, 4))
         }}
         className={cn(
           'relative shrink-0 touch-none rounded-full outline-none focus-visible:ring-2 focus-visible:ring-accent',
@@ -230,7 +246,7 @@ export function ColorWheel({
         onDoubleClick={() => {
           if (disabled) return
           setDraft(null)
-          onMaster(0)
+          master(0)
         }}
         onKeyDown={(event) => {
           if (disabled) return
@@ -240,7 +256,7 @@ export function ColorWheel({
           if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') next = stored.master - one
           if (next === null) return
           event.preventDefault()
-          onMaster(roundTo(clamp(next, min, max), 4))
+          master(roundTo(clamp(next, min, max), 4))
         }}
         className={cn(
           'relative h-2.5 w-full shrink-0 touch-none rounded-full border border-line bg-surface-3 outline-none focus-visible:ring-2 focus-visible:ring-accent',

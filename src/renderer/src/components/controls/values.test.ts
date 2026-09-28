@@ -2,6 +2,9 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   clamp,
+  committable,
+  createDragAccumulator,
+  guardCommit,
   decimalsOf,
   dragValue,
   keyStep,
@@ -108,4 +111,37 @@ test('the wheel changes a value only when hovered, focused, and the page is not 
   assert.equal(wheelAdjusts({ hovered: false, focused: true, msSinceScroll: quiet }), false)
   assert.equal(wheelAdjusts({ hovered: true, focused: false, msSinceScroll: quiet }), false)
   assert.equal(wheelAdjusts({ hovered: true, focused: true, msSinceScroll: quiet - 1 }), false)
+})
+
+test('a NaN from the store is never committed — and −∞ only where it is a level', () => {
+  // The store-sourced case CLAUDE.md records for NumberField: the value arrives NaN and a
+  // control's own arithmetic carries it to the commit. Every control commits through this guard.
+  const store = Number.NaN
+  const committed: number[] = []
+  const commit = guardCommit((v) => committed.push(v))
+  commit(dragValue(store, 12, 1, none))
+  commit(clamp(store + keyStep(0.01, none, 2), 0, 1))
+  commit(createDragAccumulator(store).move(10, 0, (ddx) => ddx))
+  assert.deepEqual(committed, [], 'nothing reached onCommit')
+  // Positive control: the same path from a finite value commits.
+  commit(dragValue(0, 12, 1, none))
+  assert.deepEqual(committed, [12])
+  assert.equal(committable(Number.NEGATIVE_INFINITY), null)
+  assert.equal(committable(Number.NEGATIVE_INFINITY, true), Number.NEGATIVE_INFINITY)
+  assert.equal(committable(Number.NaN, true), null)
+  assert.equal(committable(Number.POSITIVE_INFINITY, true), null)
+})
+
+test('a modifier pressed mid-drag scales the rest of the drag, not the whole of it', () => {
+  const acc = createDragAccumulator(0)
+  assert.equal(acc.move(100, 0, (ddx) => ddx * 1), 100)
+  // Cmd pressed with the pointer still: no jump to a tenth of the 100 px so far…
+  assert.equal(acc.move(100, 0, (ddx) => ddx * 0.1), 100)
+  // …and the next 50 px move it a tenth of 50.
+  assert.equal(acc.move(150, 0, (ddx) => ddx * 0.1), 105)
+  // A clamp holds after each move, so turning back responds at once from the end.
+  const held = createDragAccumulator(0.9, (v) => Math.min(1, v))
+  held.move(0, -100, (_x, ddy) => -ddy * 0.01)
+  assert.equal(held.value, 1)
+  assert.ok(Math.abs(held.move(0, -90, (_x, ddy) => -ddy * 0.01) - 0.9) < 1e-12)
 })

@@ -74,10 +74,29 @@ export function withMaster(w: WheelRgb | undefined, master: number, min: number,
   return clampWheel({ r: current.r + delta, g: current.g + delta, b: current.b + delta }, min, max)
 }
 
-/** The cast changed, the master kept. */
+/**
+ * The cast changed, the master kept — even when a channel hits the range. A strong cast near the
+ * edge pushes one channel past `min`/`max`; clamping it alone would move the mean, so dragging the
+ * puck would quietly change the level too. What the clamped channel could not take is shared out
+ * over the channels still free to move, until the mean is the master again (or the master itself
+ * lies outside the range, when the nearest reachable level is kept).
+ */
 export function withBalance(w: WheelRgb | undefined, x: number, y: number, min: number, max: number): WheelRgb {
   const { master } = balanceOf(w)
-  return clampWheel(wheelFromBalance({ master, x, y }), min, max)
+  const target = Math.min(max, Math.max(min, master))
+  const channels = ['r', 'g', 'b'] as const
+  let out = clampWheel(wheelFromBalance({ master, x, y }), min, max)
+  for (let pass = 0; pass < 3; pass += 1) {
+    const residual = 3 * target - (out.r + out.g + out.b)
+    if (Math.abs(residual) < 1e-12) break
+    const free = channels.filter((c) => (residual > 0 ? out[c] < max : out[c] > min))
+    if (free.length === 0) break
+    const share = residual / free.length
+    const next = { ...out }
+    for (const c of free) next[c] = out[c] + share
+    out = clampWheel(next, min, max)
+  }
+  return out
 }
 
 /** The puck's position on a disc of `radiusPx` whose rim is `reach` channel units, held to the rim. */

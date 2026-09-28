@@ -8,10 +8,13 @@ import {
   knobAngle,
   knobDragValue,
   pointerAngle,
+  faderStep,
   parseDb,
   positionDragScale,
   FADER_UNITY
 } from './dial'
+import { committable } from './values'
+import { balanceOf } from './wheel'
 
 // The mixer's own range: −60 dB floor, +6.02 dB (gain 2) top — `VOLUME_DB_FLOOR`/`MAX_VOLUME_DB`.
 const FLOOR = -60
@@ -55,6 +58,23 @@ test('taper round trip: dB → position → dB is exact across the range', () =>
     const back = faderPosition(faderDb(p, FLOOR, MAX), FLOOR, MAX)
     assert.ok(Math.abs(back - p) < 1e-9, `${p} came back as ${back}`)
   }
+})
+
+test('store-sourced NaN: a fader, knob, dial or wheel step from NaN commits nothing', () => {
+  const nan = Number.NaN
+  // Fader (track.volume = NaN → dB NaN): a step down used to return the NaN itself.
+  assert.equal(committable(faderStep(nan, -0.5, FLOOR, MAX), true), null)
+  assert.equal(committable(faderStep(nan, 0.5, FLOOR, MAX), true), null)
+  // Knob and AngleDial (pan / rotation NaN): their drag arithmetic keeps the NaN.
+  assert.equal(committable(knobDragValue(nan, 10, -10, -1, 1, 160, 1)), null)
+  assert.equal(committable(nan + angleDelta(10, 40)), null)
+  // ColorWheel: a NaN channel makes a NaN master.
+  assert.equal(committable(balanceOf({ r: nan, g: 0, b: 0 }).master), null)
+  // Positive controls: finite values step and commit, and a fader's −∞ is a level it may write.
+  assert.equal(committable(faderStep(-6, -0.5, FLOOR, MAX), true), -6.5)
+  assert.equal(committable(faderStep(Number.NEGATIVE_INFINITY, -0.5, FLOOR, MAX), true), Number.NEGATIVE_INFINITY)
+  assert.equal(faderStep(Number.NEGATIVE_INFINITY, 0.5, FLOOR, MAX), FLOOR + 0.5)
+  assert.equal(faderStep(MAX, 0.5, FLOOR, MAX), MAX)
 })
 
 test('a typed level reads the ways a person writes one', () => {
