@@ -37,7 +37,10 @@ and **Open questions**. Keep entries short, and link to files instead of copying
 - [ ] Informative raw clips → `sources/informative-clips.md` (agent running).
 - [x] News explainer ready on /compare (addc160): 44.9 s, graphics timed to her words, mastered −14.1 LUFS. The before was built from the project file's spans. The push was denied, so the owner pushes `rnd/entertaining-edits` for the Vercel Preview.
 - [x] AI layout's empty chat now shows the footage palette (44ee50c, verified in the app). The Changes card names rewritten motion graphics (a2144da).
-- [ ] Re-exports silently drop loudness mastering (seen live: −33.4 LUFS). export-engineer is remembering the delivery target on the timeline + reporting delivered loudness in track_export.
+- [x] Export loudness memory merged 3cbb65d. Verified live over MCP: mastered → remembered on the next call (−14.3 by independent ffmpeg); "off" → −34.3 LUFS with a warning naming the fix.
+- [x] Composition guides without remote GSAP; write_composition refuses a remote script (9980a4f). GSAP not shipped: licence clause on visual animation tools.
+- [ ] Masking: audit §10 usable with corrections. masking-engineer is building Apple Vision via JXA (~31 ms/frame), a compact matte cache, a shared-element subject mask, put_behind_subject + a "Text behind me" button, and the probe test/app/mask.mjs.
+- Flaky: src/main/generate/speech-adapters.test.ts (Gemini sample rate) failed once under full-suite load, passes alone.
 - [ ] GSAP-from-CDN in the composition guide (audit §9): blocked by the sandbox; fix the guide.
 
 - [~] talk-to-short (clip 1): **paused by owner** 2026-09-27, mid-edit. The project "raylib talk to short" is saved in bay with 12 segments (48.8 s); the speaker layer is not built yet.
