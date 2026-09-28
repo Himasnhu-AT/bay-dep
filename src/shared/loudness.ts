@@ -239,3 +239,97 @@ export function parseEbur128Summary(stderr: string): LoudnessMeasurement | null 
   if (Number.isNaN(integratedLufs) || Number.isNaN(truePeakDb)) return null
   return { integratedLufs, truePeakDb }
 }
+
+// ---------------------------------------------------------------------------
+// The delivery decision, remembered — and the level of a file nobody mastered
+// ---------------------------------------------------------------------------
+
+/**
+ * What the last successful mastered export of a timeline asked for, kept on the timeline
+ * (`Timeline.delivery`). Mastering is a per-export argument, so without this every re-export
+ * dropped the delivery decision silently: a news explainer exported at −14.1 LUFS came back at
+ * −33.4 on the next export to the same path, and nothing said so.
+ */
+export interface DeliverySettings {
+  /** The loudness target the last mastered export of this timeline used. */
+  loudness?: LoudnessTarget
+}
+
+/** How a caller spells "no mastering, and forget the remembered target". `null` means the same. */
+export const LOUDNESS_OFF = 'off'
+
+/**
+ * The loudness an export uses, from the call's `loudness` argument and the timeline's remembered
+ * target:
+ *
+ * - argument given → that target (`source: 'argument'`);
+ * - argument absent, a target remembered → the remembered one (`source: 'remembered'`);
+ * - `"off"` (or `null`) → no mastering, and `forget` is the remembered target to clear;
+ * - absent with nothing remembered → no mastering (`source: 'default'`).
+ */
+export type ExportLoudnessChoice =
+  | { target: LoudnessTarget; source: 'argument' | 'remembered'; forget: null }
+  | { target: null; source: 'off' | 'default'; forget: LoudnessTarget | null }
+
+export function chooseExportLoudness(
+  value: unknown,
+  remembered: LoudnessTarget | undefined
+): ExportLoudnessChoice | { error: string } {
+  if (value === undefined) {
+    return remembered
+      ? { target: { ...remembered }, source: 'remembered', forget: null }
+      : { target: null, source: 'default', forget: null }
+  }
+  const parsed = parseLoudness(value)
+  if ('error' in parsed) return parsed
+  if (!parsed.target) return { target: null, source: 'off', forget: remembered ?? null }
+  return { target: parsed.target, source: 'argument', forget: null }
+}
+
+/** A target as a person reads it: "−14.0 LUFS / −1.0 dBTP". */
+export function describeTarget(target: LoudnessTarget): string {
+  return `${db(target.integratedLufs)} LUFS / ${db(target.truePeakDb)} dBTP`
+}
+
+/**
+ * An unmastered export quieter than this plays far below everything around it: platforms turn
+ * a quiet file up only partly, if at all, so −33 LUFS stays roughly −33.
+ */
+export const UNMASTERED_QUIET_LUFS = -20
+/** An unmastered export louder than this is turned down by every platform and flirts with clipping. */
+export const UNMASTERED_LOUD_LUFS = -9
+
+/**
+ * The sentence for an unmastered export whose delivered level is outside the usable range, or
+ * null when it is inside it. Silence gets none: silence under a timeline with sound is main's
+ * read-back finding, not a level problem, and "master it" would not fix it.
+ */
+export function deliveredLoudnessWarning(measured: LoudnessMeasurement): string | null {
+  const lufs = measured.integratedLufs
+  if (!Number.isFinite(lufs) || !(lufs > SILENCE_LUFS)) return null
+  const reading =
+    `The exported file measures ${db(lufs)} LUFS integrated (true peak ${db(measured.truePeakDb)} dBTP) ` +
+    `and was not mastered`
+  if (lufs < UNMASTERED_QUIET_LUFS) {
+    return (
+      `${reading}: it is quieter than ${db(UNMASTERED_QUIET_LUFS)} LUFS, so it will play far below other videos. ` +
+      `Export again with loudness: "streaming" (−14 LUFS) or "podcast" (−16 LUFS) to master it.`
+    )
+  }
+  if (lufs > UNMASTERED_LOUD_LUFS) {
+    return (
+      `${reading}: it is louder than ${db(UNMASTERED_LOUD_LUFS)} LUFS, so platforms will turn it down and its peaks may clip. ` +
+      `Export again with loudness: "streaming" (−14 LUFS, −1 dBTP ceiling) to master it.`
+    )
+  }
+  return null
+}
+
+/**
+ * The level warning for a finished export: only when nobody mastered it (a mastered file's level
+ * is the target, and its report says so) and its delivered level was measured.
+ */
+export function unmasteredLevelWarning(done: { loudness?: unknown; deliveredLoudness?: LoudnessMeasurement }): string | null {
+  if (done.loudness || !done.deliveredLoudness) return null
+  return deliveredLoudnessWarning(done.deliveredLoudness)
+}

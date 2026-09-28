@@ -93,3 +93,39 @@ test('frames written with something missing are a blocking finding too', () => {
   assert.deepEqual(exportStatus({ ...done, findings: [] }, '/out.mp4', null).findings, [])
   assert.equal(exportStatus({ ...done, stage: 'encoding' }, '/out.mp4', null).findings, undefined)
 })
+
+test('a done export reports the delivered loudness, and warns when an unmastered file is too quiet', () => {
+  // The real case: re-exported without loudness, −33.4 LUFS, and nobody was told.
+  const quiet = exportStatus({ ...done, findings: [], deliveredLoudness: { integratedLufs: -33.43, truePeakDb: -12.3 } }, '/out.mp4', null)
+  assert.deepEqual(quiet.deliveredLoudness, { integratedLufs: -33.4, truePeakDbtp: -12.3, mastered: false })
+  assert.match(String(quiet.warning), /−33\.4 LUFS/)
+  assert.match(String(quiet.warning), /loudness: "streaming"/)
+  assert.equal(quiet.complete, true, 'the file is complete; its level is a warning, not a fault')
+  assert.ok((quiet.findings as { severity: string; message: string }[]).some((f) => f.severity === 'warn' && /−33\.4 LUFS/.test(f.message)))
+
+  // Too loud, the other side.
+  const loud = exportStatus({ ...done, findings: [], deliveredLoudness: { integratedLufs: -7, truePeakDb: 0.2 } }, '/out.mp4', null)
+  assert.match(String(loud.warning), /louder than −9\.0 LUFS/)
+
+  // Controls: in range says the level and warns nothing; mastered never warns about its level.
+  const fine = exportStatus({ ...done, findings: [], deliveredLoudness: { integratedLufs: -15, truePeakDb: -2 } }, '/out.mp4', null)
+  assert.deepEqual(fine.deliveredLoudness, { integratedLufs: -15, truePeakDbtp: -2, mastered: false })
+  assert.equal(fine.warning, undefined)
+})
+
+test('a mastered export reports the same delivered reading as mastered, with no level warning', () => {
+  const measured = { integratedLufs: -14.1, truePeakDb: -1.4 }
+  const report = {
+    status: 'met' as const, target: { integratedLufs: -14, truePeakDb: -1 }, measured, before: { integratedLufs: -33.4, truePeakDb: -12 },
+    gainDb: 19.3, limiterCeilingDb: -1.5, passes: 2, summary: 'Mastered to −14.1 LUFS.'
+  }
+  const status = exportStatus({ ...done, findings: [], loudness: report, deliveredLoudness: measured }, '/out.mp4', null)
+  assert.deepEqual(status.deliveredLoudness, { integratedLufs: -14.1, truePeakDbtp: -1.4, mastered: true })
+  assert.equal(status.warning, undefined)
+})
+
+test('a level warning follows a blocking fault rather than replacing it', () => {
+  const noFrames = exportStatus({ ...done, framesDone: 0, findings: [], deliveredLoudness: { integratedLufs: -40, truePeakDb: -20 } }, '/out.mp4', null)
+  const warning = String(noFrames.warning)
+  assert.ok(warning.indexOf('zero frames') >= 0 && warning.indexOf('zero frames') < warning.indexOf('−40.0 LUFS'), warning)
+})

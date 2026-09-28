@@ -508,6 +508,15 @@ const STORE_CASES: Record<string, StoreCase> = {
       state().setBackground(current === '#102030' ? '#304050' : '#102030')
     }
   },
+  rememberDelivery: {
+    delta: 1,
+    run: () => {
+      // Derived: a target different from whatever the fixture already remembers.
+      const timeline = state().project.timelines[0]!
+      const lufs = timeline.delivery?.loudness?.integratedLufs === -14 ? -16 : -14
+      state().rememberDelivery(state().project.id, timeline.id, { integratedLufs: lufs, truePeakDb: -1 })
+    }
+  },
 
   // Single-target edits: one entry each, which a stray second `edit()` would break.
   renameProject: { delta: 1, run: () => state().renameProject('Renamed') },

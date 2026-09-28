@@ -22,7 +22,7 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { masterAudio, masterFilter, verifyDelivered } from './master'
+import { deliveredLoudness, masterAudio, masterFilter, verifyDelivered } from './master'
 import { audioCodecArgs } from './codec-args'
 import { NO_VENDORED_FFMPEG, vendoredTools } from '../ffmpeg/vendor'
 
@@ -196,4 +196,32 @@ test('silence is reported as silence, not mastered by +56 dB of floor', { skip: 
   assert.ok(existsSync(output), 'the file is still delivered')
   // And re-verifying a silent report leaves it as it is rather than calling it missed.
   assert.equal((await verifyDelivered(FFMPEG, output, report)).status, 'silent')
+})
+
+test('an unmastered export’s delivered loudness is measured on the encoded file', { skip: SKIP, timeout: 60_000 }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bay-delivered-'))
+  // The shape of the real case: a quiet mix, encoded without mastering.
+  const quiet = join(dir, 'quiet.m4a')
+  execFileSync(FFMPEG, ['-v', 'error', '-y', '-i', pinkNoise(dir, 4), '-af', 'volume=-24dB', ...audioCodecArgs('mp4'), quiet])
+  const own = meter(quiet)
+  assert.ok(own.I < -20, `the specimen is below the −20 LUFS warning line (${own.I})`)
+  const level = await deliveredLoudness(FFMPEG, quiet)
+  assert.ok('measured' in level, JSON.stringify(level))
+  assert.ok(Math.abs(level.measured.integratedLufs - own.I) <= 0.1, `${level.measured.integratedLufs} vs ${own.I}`)
+  assert.ok(Math.abs(level.measured.truePeakDb - own.TP) <= 0.1, `${level.measured.truePeakDb} vs ${own.TP}`)
+
+  // Mastered: the loop's reading of the delivered file is the answer, with no second pass (the
+  // path does not exist, so a second pass would fail).
+  const measured = { integratedLufs: -14.1, truePeakDb: -1.4 }
+  const report = {
+    status: 'met' as const, target: { integratedLufs: -14, truePeakDb: -1 }, measured, before: measured,
+    gainDb: 0, limiterCeilingDb: -1.5, passes: 1, summary: ''
+  }
+  assert.deepEqual(await deliveredLoudness(FFMPEG, join(dir, 'absent.m4a'), report), { measured })
+
+  // A file that cannot be measured is a sentence naming it, not a thrown export.
+  const failed = await deliveredLoudness(FFMPEG, join(dir, 'absent.m4a'))
+  assert.ok('error' in failed)
+  assert.match(failed.error, /could not be measured/)
+  assert.match(failed.error, /absent\.m4a/)
 })

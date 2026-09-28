@@ -195,6 +195,18 @@ export function exportAspectMismatch(
   return { frame, bars: frameRatio > canvasRatio ? 'pillarbox' : 'letterbox' }
 }
 
+/**
+ * A target as the form's setting: the preset's name when it is exactly a preset, else the
+ * numbers — so a remembered "streaming" lights Streaming, not Custom. Null is Off.
+ */
+export function loudnessSetting(target: LoudnessTarget | null): LoudnessSetting {
+  if (!target) return 'off'
+  for (const [name, preset] of Object.entries(LOUDNESS_PRESETS) as [LoudnessPreset, LoudnessTarget][]) {
+    if (preset.integratedLufs === target.integratedLufs && preset.truePeakDb === target.truePeakDb) return name
+  }
+  return { integratedLufs: target.integratedLufs, truePeakDb: target.truePeakDb }
+}
+
 /** A loudness setting as the request's target, or an error sentence for custom numbers. */
 export function loudnessTarget(setting: LoudnessSetting): { target: LoudnessTarget | null } | { error: string } {
   if (setting === 'off') return { target: null }

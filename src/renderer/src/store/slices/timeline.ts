@@ -24,6 +24,7 @@ type Actions = Pick<
   | 'placeDub'
   | 'resizeCanvas'
   | 'setBackground'
+  | 'rememberDelivery'
   | 'addCaptions'
   | 'addMarker'
   | 'moveMarker'
@@ -54,6 +55,25 @@ export function timelineSlice({ set, get, edit, editTimeline, currentTimeline }:
       if (!/^#[0-9a-f]{6}$/i.test(color)) return
       editTimeline((timeline) => {
         if (timeline.background.toLowerCase() !== color.toLowerCase()) timeline.background = color
+      })
+    },
+
+    rememberDelivery(projectId, timelineId, loudness) {
+      if (get().project.id !== projectId) return
+      // A real edit, not a silent one: the decision belongs in the saved `.bay`, and a silent
+      // edit does not mark the document dirty. An unchanged target leaves no undo step (`edit`).
+      edit((project) => {
+        const timeline = project.timelines.find((candidate) => candidate.id === timelineId)
+        if (!timeline) return
+        if (loudness) {
+          timeline.delivery = { ...timeline.delivery, loudness: { integratedLufs: loudness.integratedLufs, truePeakDb: loudness.truePeakDb } }
+          return
+        }
+        if (!timeline.delivery?.loudness) return
+        const rest = { ...timeline.delivery }
+        delete rest.loudness
+        if (Object.keys(rest).length > 0) timeline.delivery = rest
+        else delete timeline.delivery
       })
     },
 

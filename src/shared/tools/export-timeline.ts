@@ -33,10 +33,13 @@ export const tool: ToolSpec = {
       loudness: {
         description:
           'Master the audio to a loudness target, verified on the encoded file: a preset ' +
-          '("streaming" −14 LUFS / −1 dBTP, "podcast" −16 / −1, "broadcast" −23 / −1), "off", ' +
-          'or { integratedLufs, truePeakDb }. Off by default, so the file plays at the level ' +
-          'the preview did. Linear gain plus a true-peak limiter, never a compressor; ' +
-          'track_export reports what the delivered file measures.'
+          '("streaming" −14 LUFS / −1 dBTP, "podcast" −16 / −1, "broadcast" −23 / −1), ' +
+          'or { integratedLufs, truePeakDb }. A mastered export is remembered on the timeline: ' +
+          'leave loudness out and the next export uses the same target (the result says ' +
+          '"remembered from the last export"). "off" exports unmastered and forgets it. With ' +
+          'nothing remembered, omitted means unmastered — the level the preview played. Linear ' +
+          'gain plus a true-peak limiter, never a compressor. track_export reports the delivered ' +
+          "file's loudness either way, and warns when an unmastered file is below −20 or above −9 LUFS."
       }
     },
     required: ['outputPath', 'format']

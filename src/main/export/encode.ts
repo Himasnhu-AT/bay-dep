@@ -36,8 +36,8 @@ import type { CompositionSound } from '@shared/composition'
 import { checkExportDestination } from './destination'
 import { frameProblem, writeFrame } from './frame-pipe'
 import { audioCodecArgs, containerArgs, extensionFor, tailOf, videoCodecArgs } from './codec-args'
-import { masterAudio, verifyDelivered } from './master'
-import type { LoudnessReport } from '@shared/loudness'
+import { deliveredLoudness, masterAudio, verifyDelivered } from './master'
+import type { LoudnessMeasurement, LoudnessReport } from '@shared/loudness'
 import { deliveredFindings } from './delivered'
 
 const AUDIO_ONLY: ReadonlySet<ExportFormat> = new Set<ExportFormat>(['wav', 'mp3'])
@@ -496,6 +496,8 @@ async function renderAudioOnly(job: Job): Promise<void> {
       durationUs: expectedDurationUs(job),
       fps: job.fps
     })
+    const level = await deliveredLoudness(ffmpegBin(), job.request.outputPath, loudness)
+    const message = [loudness?.summary, 'error' in level ? level.error : undefined].filter(Boolean).join(' ')
     emit(job, {
       progress: 1,
       framesDone: job.framesTotal,
@@ -503,7 +505,9 @@ async function renderAudioOnly(job: Job): Promise<void> {
       stage: 'done',
       outputPath: job.request.outputPath,
       findings,
-      ...(loudness ? { loudness, message: loudness.summary } : {})
+      ...(message ? { message } : {}),
+      ...(loudness ? { loudness } : {}),
+      ...('measured' in level ? { deliveredLoudness: level.measured } : {})
     })
   } catch (error) {
     emit(job, {
@@ -585,6 +589,9 @@ export async function finish(jobId: string): Promise<void> {
     let audioExpected = false
     let audioNote: string | undefined
     let loudness: LoudnessReport | undefined
+    // What the delivered file's sound measures, mastered or not — or why it could not be measured.
+    let delivered: LoudnessMeasurement | undefined
+    let levelNote: string | undefined
     // True when `audioPath` is already encoded in the export's codec (mastered), so the mux
     // copies it rather than encoding it a second time — a second encode would move the true
     // peak the loop just verified.
@@ -642,11 +649,14 @@ export async function finish(jobId: string): Promise<void> {
       await discard(audioPath)
       await discard(scratch)
       if (loudness) loudness = await verifyDelivered(ffmpegBin(), job.request.outputPath, loudness)
+      const level = await deliveredLoudness(ffmpegBin(), job.request.outputPath, loudness)
+      if ('measured' in level) delivered = level.measured
+      else levelNote = level.error
     } else {
       await moveInto(scratch, job.request.outputPath)
     }
 
-    const message = [audioNote, loudness?.summary].filter(Boolean).join(' ')
+    const message = [audioNote, loudness?.summary, levelNote].filter(Boolean).join(' ')
     const findings = await deliveredFindings(job.request.outputPath, {
       video: true,
       audio: audioExpected,
@@ -661,7 +671,8 @@ export async function finish(jobId: string): Promise<void> {
       outputPath: job.request.outputPath,
       findings,
       ...(message ? { message } : {}),
-      ...(loudness ? { loudness } : {})
+      ...(loudness ? { loudness } : {}),
+      ...(delivered ? { deliveredLoudness: delivered } : {})
     })
   } catch (error) {
     job.failed = true

@@ -25,7 +25,7 @@ import type {
 } from './generation'
 import type { CompositionFault, CompositionInfo } from './composition'
 import type { McpToolCall, McpToolResult } from './mcp'
-import type { LoudnessReport, LoudnessTarget } from './loudness'
+import type { LoudnessMeasurement, LoudnessReport, LoudnessTarget } from './loudness'
 import type { AccessStatus, ReferralResult } from './access'
 import type { UpdateStatus } from './update'
 import type { Finding } from './findings'
@@ -231,6 +231,13 @@ export interface ExportProgress {
   error?: string
   /** On `done`, when the request asked for mastering: what the delivered file measures. */
   loudness?: LoudnessReport
+  /**
+   * On `done`, whenever the delivered file carries sound, mastered or not: its integrated
+   * loudness and true peak, measured on the encoded file (the mastering loop's own reading when
+   * it ran). Absent when the file has no audio, or the measurement itself failed — `message`
+   * then says why. An unmastered export out of range is warned about from this.
+   */
+  deliveredLoudness?: LoudnessMeasurement
   /**
    * On `done`: what reading the delivered file back found wrong with it (`@shared/findings`) —
    * no audio stream under a timeline with sound, a length off the range by more than 2%, an
