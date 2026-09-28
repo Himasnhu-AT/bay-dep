@@ -82,6 +82,8 @@ export function strandedCall(
   isReadOnly: (name: string) => boolean
 ): { action: 'resend' } | { action: 'fail'; error: string } {
   if (isReadOnly(toolName)) return { action: 'resend' }
+  const specific = STRANDED[toolName]
+  if (specific) return { action: 'fail', error: specific }
   return {
     action: 'fail',
     error:
@@ -89,4 +91,29 @@ export function strandedCall(
       `may or may not have been applied — call read_project to see which before trying again, ` +
       `rather than repeating the call.`
   }
+}
+
+/**
+ * The writes whose fate after a reload is known, so "may or may not have been applied" would be
+ * a wrong answer. These are the calls that wait (`waitSeconds`, `wait: true`) and so are the
+ * likeliest to be caught by one.
+ *
+ * - An export is rendered by the editor page itself, frame by frame: the reload took the exporter
+ *   with it, so whatever was started is gone and `track_export` has nothing to follow.
+ * - A generation or a dub is main's job, persisted and polled by main: the page going away does
+ *   not touch it, and calling the status tool again imports and places once, never twice.
+ */
+const STRANDED: Record<string, string> = {
+  export_timeline:
+    `bay's editor reloaded while export_timeline was running. Exports are rendered by the editor ` +
+    `page, so any export it started was lost with the reload and will not finish. Start it again ` +
+    `with export_timeline.`,
+  track_generation:
+    `bay's editor reloaded while track_generation was waiting, so the wait was interrupted. The job ` +
+    `lives in bay's main process and is still running (or done) — call track_generation with the ` +
+    `same jobId and waitSeconds; it imports and places the result once, never twice.`,
+  track_dub:
+    `bay's editor reloaded while track_dub was waiting, so the wait was interrupted. The dub's jobs ` +
+    `live in bay's main process and are still running — call track_dub with the same dubId and ` +
+    `waitSeconds; it places the lines once, never twice.`
 }

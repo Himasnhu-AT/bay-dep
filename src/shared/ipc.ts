@@ -803,6 +803,11 @@ export interface BayApi {
      * first, which is a coin toss dressed as a reply.
      */
     onToolCall(handler: (call: McpToolCall) => Promise<McpToolResult>): () => void
+    /**
+     * Main says a call's caller is gone (its socket closed) or main stopped waiting for it. A
+     * tool waiting on a job stops waiting and answers; nothing else is undone.
+     */
+    onToolCancel(listener: (callId: string) => void): () => void
   }
 
   /**
@@ -885,6 +890,8 @@ export const IPC = {
   mcpToolCall: 'mcp:tool-call',
   /** renderer -> main: the answer, carrying the same id. */
   mcpToolResult: 'mcp:tool-result',
+  /** main -> renderer: the id of a call whose caller is gone; a waiting tool stops waiting. */
+  mcpToolCancel: 'mcp:tool-cancel',
   /**
    * renderer -> main: the executor is (true) or is no longer (false) listening. Main holds a
    * call until this arrives, because a call pushed into a page that has not mounted is lost.

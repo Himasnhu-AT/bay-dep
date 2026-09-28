@@ -118,7 +118,7 @@ const generation = createGenerationJobs({
     const notify = useEditor.getState().notify
     try {
       // The agent's own `track_generation`: import through `media.importPaths`, one undo step.
-      const result = (await generationTools.track_generation!({ jobId: job.id })) as { asset?: { name: string }; error?: string }
+      const result = (await generationTools.track_generation!({ jobId: job.id, waitSeconds: 0 })) as { asset?: { name: string }; error?: string }
       if (result.asset) notify(`${KIND_LABELS[job.kind]} “${result.asset.name}” is in the media pool.`)
       else notify(result.error ?? 'The generated file could not be imported.', 'error')
     } catch (error) {

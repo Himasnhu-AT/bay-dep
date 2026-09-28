@@ -16,9 +16,9 @@ import type { McpToolCall, McpToolResult } from '@shared/mcp'
 import { dryRunRequest, findTool, TOOLS } from '@shared/mcp'
 import { bay } from '@/lib/bay'
 import { checkApproval } from '@shared/agent'
-import { store, ToolError } from './helpers'
+import { store, ToolError, type CallContext } from './helpers'
 import { HANDLERS } from './registry'
-import { asAgent, asClient, setAgentFileWriter } from '@/store/editor'
+import { asAgent, asClient, setAgentFileWriter, stepAside } from '@/store/editor'
 import { validateArgs } from '@shared/validate'
 import { AsyncDryRunError, dryRun } from '@/store/dry-run'
 
@@ -63,7 +63,32 @@ if (catalogMismatch) {
   )
 }
 
+/**
+ * Calls running now, by id, so main can stop one (`cancelToolCall`). Only a waiting tool reads
+ * its signal; for the rest a cancel arrives after the answer or changes nothing.
+ */
+const running = new Map<string, AbortController>()
+
+/**
+ * Main says the caller of `id` is gone — its connection closed (a stopped turn, a client that
+ * quit) or main stopped waiting for the answer. A call waiting on a job stops waiting and
+ * answers at once; the job itself is not touched.
+ */
+export function cancelToolCall(id: string): void {
+  running.get(id)?.abort()
+}
+
 export async function executeToolCall(call: McpToolCall): Promise<McpToolResult> {
+  const controller = new AbortController()
+  running.set(call.id, controller)
+  try {
+    return await execute(call, controller.signal)
+  } finally {
+    running.delete(call.id)
+  }
+}
+
+async function execute(call: McpToolCall, signal: AbortSignal): Promise<McpToolResult> {
   const tool = findTool(call.tool)
   if (!tool) {
     return {
@@ -150,7 +175,8 @@ export async function executeToolCall(call: McpToolCall): Promise<McpToolResult>
     }
     // Edits made inside a tool call are the agent's; anything else during a turn is the user's,
     // which the turn's change card has to own up to (see `asAgent`).
-    const value = await (fromClient ? asClient : asAgent)(() => handler(request.args))
+    const context: CallContext = { signal, idle: (work) => stepAside(fromClient ? 'client' : 'agent', work) }
+    const value = await (fromClient ? asClient : asAgent)(() => handler(request.args, context))
     if (verdict.index !== undefined) store().consumeApproval(verdict.index)
     return { id: call.id, ok: true, value }
   } catch (error) {
@@ -202,7 +228,7 @@ function probeSurfaceEnabled(): boolean {
  */
 export function registerMcpExecutor(): () => void {
   if (probeSurfaceEnabled()) {
-    ;(window as Window & { bayMcp?: unknown }).bayMcp = { execute: executeToolCall, tools: TOOLS }
+    ;(window as Window & { bayMcp?: unknown }).bayMcp = { execute: executeToolCall, cancel: cancelToolCall, tools: TOOLS }
   }
   const api = bay()
   // Reverting an agent turn that rewrote a composition puts the file back through here.
@@ -213,8 +239,10 @@ export function registerMcpExecutor(): () => void {
     return () => setAgentFileWriter(null)
   }
   const off = api.mcp.onToolCall(executeToolCall)
+  const offCancel = api.mcp.onToolCancel(cancelToolCall)
   return () => {
     off()
+    offCancel()
     setAgentFileWriter(null)
   }
 }

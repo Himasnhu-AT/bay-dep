@@ -41,6 +41,7 @@ export {
   asClient,
   revertImpact,
   setAgentFileWriter,
+  stepAside,
   type AgentCheckpoint,
   type AgentRevert
 } from './agent-turns'

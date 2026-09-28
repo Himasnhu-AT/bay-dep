@@ -257,6 +257,14 @@ const api: BayApi = {
         ipcRenderer.removeListener(IPC.mcpToolCall, wrapped)
         ipcRenderer.send(IPC.mcpExecutorReady, false)
       }
+    },
+    onToolCancel: (listener: (callId: string) => void) => {
+      const wrapped = (_event: unknown, callId: string): void => listener(callId)
+      ipcRenderer.removeAllListeners(IPC.mcpToolCancel)
+      ipcRenderer.on(IPC.mcpToolCancel, wrapped)
+      return () => {
+        ipcRenderer.removeListener(IPC.mcpToolCancel, wrapped)
+      }
     }
   },
 
