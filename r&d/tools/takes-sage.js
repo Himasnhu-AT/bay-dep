@@ -96,8 +96,6 @@
     .dev-links{display:none!important}
     #film-cursor{width:104px!important;height:104px!important;transform-origin:13px 6.5px!important}
     #film-cursor svg{width:104px;height:104px}
-    /* a local run has no server: the approval card's "from your server · N min left" does not apply */
-    .approval-card header .dim{display:none!important}
   `
   function lookCommon(layoutW) {
     M.setAppearance({ dark: false })

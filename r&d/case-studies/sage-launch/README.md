@@ -18,6 +18,7 @@ seconds from `clicks/<take>.json` (the frame where the cursor presses and the ri
 | `04-ask-agent.mp4` | 11 s | Halo Ask tab. Types "check my battery and set volume to 30", Enter. Steps stream: Thinking → Running Tool get_battery → Tool Result (82%) → Running Tool set_volume(30) → approval card "Set Volume" → **Allow once** → Tool Result "Output volume is 30%." → Complete. | input 1.39, Allow once 7.73 |
 | `05-settings-model.mp4` | 10 s | Settings window on the desktop. Sidebar → Model: ChatGPT (subscription), Signed in; model GPT-5.1 → GPT-5.1 Codex, Reasoning effort Default → High. → Cloud: the row "Model · Using your ChatGPT subscription (plus)" lifts out while the rest blurs; camera pushes onto it. | not logged: Model ≈1.0, model ≈2.3, effort ≈3.4, Cloud ≈5.0 |
 | `06-settings-permissions.mp4` | 10 s | Settings: Permissions → **Grant everything** (each row turns Allowed, "Everything is allowed") → Connectors → Connect on GitHub (turns Connected / Disconnect). | not logged: Permissions ≈1.0, Grant ≈2.4, Connectors ≈5.4, Connect ≈7.2 |
+| `04b-ask-agent.mp4` | 11 s | 04 re-rendered at 1920×1080 for reference, with the approval card exactly as Sage renders it ("from your server · 10 min left" visible). Same framing and timing. Stills: `04b-still-1-steps.png` (5.4 s), `04b-still-2-approval.png` (6.9 s), `04b-still-3-complete.png` (10.8 s). | input 1.39, Allow once 7.73 |
 | `00-icon-card.png` | still | App icon on white (2880×1620), soft shadow, centred. `icon-tile-transparent.png` is the icon alone with alpha. | |
 
 "Not logged" means the take's script was still running when the render ended, so no click log was
@@ -49,8 +50,9 @@ timings and should be checked on the frame (cursor shrink + ring).
 
 - **The approval card is the cloud-approval UI.** In the product, "Allow once" is the card for
   actions the *server* agent asks about; a local Mac action gets an inline Approve/Cancel. I used it
-  because the brief asked for "Allow once", and I hid its "from your server · N min left" line,
-  because it would contradict a local run. Ask the Sage team if that's acceptable.
+  because the brief asked for "Allow once". 04 hides its "from your server · N min left" line; the
+  Sage team asked for it undoctored, so 04b shows it and the take script no longer hides it. Nothing
+  else is hidden or edited in the card, and 05's footer is untouched (the film crops it).
 - **The card appears above the input and pushes the steps down**, which is the app's real layout.
 - **Ask's placeholder rotates** ("Toggle dark mode…", "Send a message to Mom…") after submit. It's the app's own copy, but "Mom" is a person word.
 - **The Halo's glass is the dev CSS stand-in** (a blur), not native Liquid Glass. On the light
