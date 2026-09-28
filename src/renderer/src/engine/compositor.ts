@@ -266,6 +266,11 @@ export class Compositor {
     frame: number,
     options: DrawOptions = {}
   ): DrawStats {
+    // Where a subject cut-out finds its clip's picture: the timeline as stored, not the playable one.
+    // A switched-off clip still frames its cut-out — measured, looked up in the playable timeline a
+    // cut-out drawn with its clip off (background removal, or test/app/mask.mjs's cut-out-alone
+    // render) fell back to its framing at creation, 1.15× away from a punched-in clip (IoU 78%).
+    this.#timeline = timeline
     // A disabled clip draws nowhere — here, `preview_frame` and export all come through this line.
     timeline = playableTimeline(timeline)
     const mode = options.mode ?? 'scrub'
@@ -278,7 +283,6 @@ export class Compositor {
     // project has and the document does not. A no-op when the font set has not changed.
     importedFonts.sync(project.assets)
     this.#project = project
-    this.#timeline = timeline
 
     const width = Math.max(1, finite(timeline.width, 1))
     const height = Math.max(1, finite(timeline.height, 1))

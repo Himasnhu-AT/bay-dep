@@ -508,6 +508,8 @@ async function placedCase(opts: {
   isPerson: (u: number, v: number) => boolean
   /** An edit made to the clip after the cut-out was made from it (a punch-in, a crop, keys). */
   afterwards?: (clip: Item) => void
+  /** Draw the cut-out alone: the clip and the title switched off, the background black. */
+  cutoutAlone?: boolean
 }): Promise<{ wrong: string[]; overPerson: number; beside: number }> {
   const source = SoftCanvas.solid(opts.sw, opts.sh, (x, y) => (opts.isPerson((x + 0.5) / opts.sw, (y + 0.5) / opts.sh) ? [...PERSON] : [...BACKDROP]))
   const mattePixels = SoftCanvas.solid(opts.mw, opts.mh, (x, y) => [255, 255, 255, opts.isPerson((x + 0.5) / opts.mw, (y + 0.5) / opts.mh) ? 255 : 0])
@@ -520,6 +522,10 @@ async function placedCase(opts: {
   const copy: Item = { ...structuredClone(clip), id: 'cutout', trackId: 'v3', audioDetached: true, masks: [{ kind: 'subject' }], linkId: 'lnk_pair' }
   clip.linkId = 'lnk_pair'
   opts.afterwards?.(clip)
+  if (opts.cutoutAlone) {
+    clip.disabled = true
+    title.disabled = true
+  }
   const timeline: Timeline = { id: 'tl', name: 'tl', fps: FPS, width: opts.cw, height: opts.ch, background: '#000000', tracks: [track('v1', [clip]), track('v2', [title]), track('v3', [copy])], transitions: [] }
   const project: Project = { id: 'p', name: 'p', version: 1, assets: [asset, titleAsset], timelines: [timeline], activeTimelineId: 'tl', createdAt: 0, updatedAt: 0 }
   const pool = new CountingPool()
@@ -565,7 +571,8 @@ async function placedCase(opts: {
       const person = inKept && u >= 0 && u < 1 && v >= 0 && v < 1 && opts.isPerson(u, v)
       if (person) overPerson += 1
       else beside += 1
-      if (!near(out.at(x, y), person ? PERSON : TITLE, 3)) wrong.push(`(${x},${y}) ${person ? 'person' : 'title'} got ${out.at(x, y).join(',')}`)
+      const expected = person ? PERSON : opts.cutoutAlone ? ([0, 0, 0, 255] as const) : TITLE
+      if (!near(out.at(x, y), expected, 3)) wrong.push(`(${x},${y}) ${person ? 'person' : 'not person'} got ${out.at(x, y).join(',')}`)
     }
   }
   return { wrong, overPerson, beside }
@@ -643,4 +650,31 @@ test('an unlinked copy draws its own picture: the follow is by link, not by look
   assert.equal(cutoutPartner(timeline, unlinked), null)
   assert.equal(cutoutPartner(timeline, { ...cut, sourceStartUs: 1 }), null, 'another moment of the file is not its clip')
   assert.equal(cutoutPartner(timeline, clip), null, 'the clip itself is not a cut-out')
+})
+
+
+test('a 16:9 clip punched in 1.15×, its cut-out drawn with the clip switched off, still follows the zoom', async () => {
+  // What test/app/mask.mjs does to see the matte as drawn: the cut-out alone, clip and title off. A
+  // switched-off clip is still the cut-out's picture — a user switching the clip off to keep only the
+  // person (background removal) must not see the cut-out jump back to its framing at creation.
+  // Edges on both grids (the 8×6 matte's and the 32×18 source's), as a real matte's edge is its own.
+  const person = (u: number, v: number): boolean => u > 0.25 && u < 0.75 && v > 1 / 3
+  const result = await placedCase({
+    cw: 64, ch: 36, sw: 32, sh: 18, mw: 8, mh: 6, box: { left: 0, top: 0, width: 64, height: 36 },
+    isPerson: person, cutoutAlone: true,
+    afterwards: (clip) => { clip.layout = { ...clip.layout, scale: 1.15 } }
+  })
+  assert.ok(result.overPerson > 300 && result.beside > 300, JSON.stringify(result).slice(0, 200))
+  assert.deepEqual(result.wrong.slice(0, 5), [], `${result.wrong.length} pixels wrong`)
+})
+
+test('the same 1.15× punch-in on a 16:9 clip, composed normally: the title stays behind the person', async () => {
+  // Edges on both grids (the 8×6 matte's and the 32×18 source's), as a real matte's edge is its own.
+  const person = (u: number, v: number): boolean => u > 0.25 && u < 0.75 && v > 1 / 3
+  const result = await placedCase({
+    cw: 64, ch: 36, sw: 32, sh: 18, mw: 8, mh: 6, box: { left: 0, top: 0, width: 64, height: 36 },
+    isPerson: person, afterwards: (clip) => { clip.layout = { ...clip.layout, scale: 1.15 } }
+  })
+  assert.ok(result.overPerson > 300 && result.beside > 100, JSON.stringify(result).slice(0, 200))
+  assert.deepEqual(result.wrong.slice(0, 5), [], `${result.wrong.length} pixels wrong`)
 })
