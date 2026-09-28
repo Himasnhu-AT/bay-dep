@@ -266,6 +266,7 @@ export interface EditorActions {
    * Remember (a target) or forget (null) the loudness the last mastered export of a timeline used
    * (`Timeline.delivery`). Keyed by project and timeline id because an export finishes minutes
    * after it started, when another project or timeline may be open; a mismatch does nothing.
+   * Not an undo step (past and future are left alone), but it marks the document dirty.
    */
   rememberDelivery(projectId: string, timelineId: string, loudness: LoudnessTarget | null): void
   // agent ---------------------------------------------------------------------

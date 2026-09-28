@@ -14,7 +14,7 @@
 
 import type { ExportFormat, ExportProgress, IncompleteFrames } from '@shared/ipc'
 import { timelineDuration } from '@shared/project'
-import { chooseExportLoudness, describeTarget, unmasteredLevelWarning, type LoudnessTarget } from '@shared/loudness'
+import { chooseExportLoudness, describeTarget, rememberedTarget, unmasteredLevelWarning, type LoudnessTarget } from '@shared/loudness'
 import { checkExportRange } from '@shared/export-presets'
 import { hasBlocking, type Finding } from '@shared/findings'
 import { FrameExporter } from '@/engine'
@@ -26,6 +26,8 @@ interface Job {
   /** Where the delivery decision is remembered when a mastered export finishes. */
   projectId: string
   timelineId: string
+  /** Asked for "off" over a remembered target: forgotten when — only when — the export is done. */
+  forget: boolean
   outputPath: string
   format: ExportFormat
   fromFrame: number
@@ -54,6 +56,9 @@ function subscribe(): void {
     if (update.stage === 'done' && update.loudness) {
       store().rememberDelivery(job.projectId, job.timelineId, update.loudness.target)
     }
+    // "off" is a decision too, but only a delivered file makes it one: a failed or cancelled
+    // export must leave the remembered target where it was.
+    if (update.stage === 'done' && job.forget) store().rememberDelivery(job.projectId, job.timelineId, null)
   })
 }
 
@@ -78,8 +83,11 @@ export async function exportTimeline(
   // Refused before anything starts: an export that ran for minutes and then ignored a
   // misspelled preset would deliver a file at the wrong level with no word about it. No
   // argument means the timeline's remembered target, when it has one.
-  const loudness = chooseExportLoudness(args.loudness, tl.delivery?.loudness)
+  // The remembered target is checked like an argument: a shared `.bay` can hold anything.
+  const remembered = rememberedTarget(tl.delivery?.loudness)
+  const loudness = chooseExportLoudness(args.loudness, remembered.target ?? undefined)
   if ('error' in loudness) fail(loudness.error)
+  const projectId = project().id
   const duration = timelineDuration(tl)
   if (duration === 0) {
     fail(
@@ -116,14 +124,13 @@ export async function exportTimeline(
   } catch (error) {
     fail(`Export could not start: ${error instanceof Error ? error.message : String(error)}`)
   }
-  const projectId = project().id
-  // "off" is a decision too: this export is unmastered, and so are the next ones until asked.
-  if (loudness.forget) store().rememberDelivery(projectId, tl.id, null)
 
   const record: Job = {
     jobId: job.jobId,
     projectId,
     timelineId: tl.id,
+    // An invalid remembered value is forgotten by "off" too.
+    forget: loudness.source === 'off' && (loudness.forget !== null || remembered.warning !== null),
     outputPath,
     format,
     fromFrame,
@@ -186,6 +193,7 @@ export async function exportTimeline(
     quality,
     ...(loudness.target ? { loudnessTarget: loudness.target } : {}),
     ...loudnessResult(loudness.target, loudness.source, loudness.forget),
+    ...(remembered.warning && args.loudness === undefined ? { warning: remembered.warning } : {}),
     note: 'Poll track_export with this jobId. Do not assume success — check the final stage.'
   }
 }
@@ -214,7 +222,7 @@ function loudnessResult(
       loudness: {
         target: null,
         source: 'off',
-        note: `Unmastered, and the remembered target (${describeTarget(forgot)}) is forgotten: later exports stay unmastered until one passes loudness.`
+        note: `Unmastered. The remembered target (${describeTarget(forgot)}) is forgotten once this export is done — kept if it fails or is cancelled — and later exports stay unmastered until one passes loudness.`
       }
     }
   }

@@ -508,13 +508,15 @@ const STORE_CASES: Record<string, StoreCase> = {
       state().setBackground(current === '#102030' ? '#304050' : '#102030')
     }
   },
+  // Not an edit: it lands when an export finishes, and an undo step there would clear the redo.
   rememberDelivery: {
-    delta: 1,
+    delta: 0,
     run: () => {
       // Derived: a target different from whatever the fixture already remembers.
       const timeline = state().project.timelines[0]!
       const lufs = timeline.delivery?.loudness?.integratedLufs === -14 ? -16 : -14
       state().rememberDelivery(state().project.id, timeline.id, { integratedLufs: lufs, truePeakDb: -1 })
+      assert.equal(state().project.timelines[0]!.delivery?.loudness?.integratedLufs, lufs, 'it did write')
     }
   },
 

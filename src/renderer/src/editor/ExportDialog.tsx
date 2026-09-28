@@ -3,7 +3,7 @@ import { useShallow } from 'zustand/react/shallow'
 import { AlertTriangle, Check, FolderOpen, Loader2, Upload } from 'lucide-react'
 import type { ExportFormat } from '@shared/ipc'
 import { formatFps, formatTimecode, timelineDuration } from '@shared/project'
-import { describeTarget, type LoudnessPreset } from '@shared/loudness'
+import { describeTarget, rememberedTarget, type LoudnessPreset } from '@shared/loudness'
 import { parseTime } from '@shared/pins'
 import {
   EXPORT_PRESETS,
@@ -259,7 +259,9 @@ export function LoudnessFields(): ReactNode {
   const [clampNote, setClampNote] = useState<string | null>(null)
   // The default `export_timeline` uses: what the last mastered export of this timeline asked for.
   const timelineId = form?.timeline.id
-  const remembered = form?.timeline.delivery?.loudness
+  // Checked like an argument: a shared `.bay` can hold anything there, and an invalid one is ignored.
+  const checked = rememberedTarget(form?.timeline.delivery?.loudness)
+  const remembered = checked.target ?? undefined
   const rememberedLufs = remembered?.integratedLufs
   const rememberedPeak = remembered?.truePeakDb
   useEffect(() => {
@@ -288,7 +290,8 @@ export function LoudnessFields(): ReactNode {
               const seed = 'target' in current && current.target ? current.target : { integratedLufs: -14, truePeakDb: -1 }
               update({ loudness: { ...seed } })
             } else {
-              update({ loudness: choice })
+              // The menu's own choice: Off here is the user's decision, which forgets the remembered target.
+              useExportSession.getState().chooseLoudness(choice)
             }
           }}
           // A PNG sequence has no audio to master.
@@ -337,6 +340,9 @@ export function LoudnessFields(): ReactNode {
         <p className={cn('mt-1 text-[11px] text-pretty', clampNote ? 'text-warning' : 'text-ink-2')} role={clampNote ? 'status' : undefined}>
           {clampNote ? `${clampNote} ` : ''}Target −40 to −5 LUFS · peak −12 to 0 dBTP.
         </p>
+      )}
+      {checked.warning && settings.format !== 'png-sequence' && (
+        <p className="mt-1 text-[11px] text-pretty text-warning" role="status">{checked.warning}</p>
       )}
       {showsRemembered && remembered && (
         <p className="mt-1 text-[11px] text-pretty text-ink-2">

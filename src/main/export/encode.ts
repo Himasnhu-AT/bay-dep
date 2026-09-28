@@ -451,6 +451,11 @@ async function masterTrack(job: Job, wavPath: string, target: string): Promise<L
   })
 }
 
+/** The progress line while the delivered file's loudness is measured — a pass over the whole file. */
+function measuringLoudness(job: Job, framesDone: number): void {
+  emit(job, { progress: null, framesDone, framesTotal: job.framesTotal, stage: 'encoding', message: 'Measuring loudness' })
+}
+
 async function renderAudioOnly(job: Job): Promise<void> {
   try {
     emit(job, {
@@ -496,7 +501,7 @@ async function renderAudioOnly(job: Job): Promise<void> {
       durationUs: expectedDurationUs(job),
       fps: job.fps
     })
-    const level = await deliveredLoudness(ffmpegBin(), job.request.outputPath, loudness)
+    const level = await deliveredLoudness(ffmpegBin(), job.request.outputPath, loudness, () => measuringLoudness(job, job.framesTotal))
     const message = [loudness?.summary, 'error' in level ? level.error : undefined].filter(Boolean).join(' ')
     emit(job, {
       progress: 1,
@@ -649,7 +654,7 @@ export async function finish(jobId: string): Promise<void> {
       await discard(audioPath)
       await discard(scratch)
       if (loudness) loudness = await verifyDelivered(ffmpegBin(), job.request.outputPath, loudness)
-      const level = await deliveredLoudness(ffmpegBin(), job.request.outputPath, loudness)
+      const level = await deliveredLoudness(ffmpegBin(), job.request.outputPath, loudness, () => measuringLoudness(job, job.framesDone))
       if ('measured' in level) delivered = level.measured
       else levelNote = level.error
     } else {

@@ -41,6 +41,15 @@ test('the form adopts the remembered target, keeps a later choice, and follows a
   assert.equal(session().settings.loudness, 'off')
 })
 
+test('an invalid remembered value is never adopted into the form', () => {
+  useExportSession.setState({ settings: { ...DEFAULT_EXPORT_SETTINGS, loudness: 'broadcast' }, progress: null, starting: false })
+  assert.equal(session().adoptRememberedLoudness('tl_bad', { integratedLufs: 400, truePeakDb: -1 }), false)
+  assert.equal(session().settings.loudness, 'broadcast')
+  // Positive control: the same timeline with a valid target adopts it.
+  assert.equal(session().adoptRememberedLoudness('tl_bad', PODCAST), true)
+  assert.equal(session().settings.loudness, 'podcast')
+})
+
 test('a timeline that never remembered anything leaves the form’s own choice alone', () => {
   useExportSession.setState({ settings: { ...DEFAULT_EXPORT_SETTINGS, loudness: 'broadcast' }, progress: null, starting: false })
   assert.equal(session().adoptRememberedLoudness('tl_never', undefined), false)

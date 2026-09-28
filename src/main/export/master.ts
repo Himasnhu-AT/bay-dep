@@ -201,9 +201,12 @@ export async function verifyDelivered(
 export async function deliveredLoudness(
   ffmpeg: string,
   path: string,
-  report?: LoudnessReport
+  report?: LoudnessReport,
+  /** Called just before a measuring pass actually runs, so the export can say what it is doing. */
+  onMeasuring?: () => void
 ): Promise<{ measured: LoudnessMeasurement } | { error: string }> {
   if (report?.measured) return { measured: report.measured }
+  onMeasuring?.()
   try {
     return { measured: await measureLoudness(ffmpeg, path) }
   } catch (error) {

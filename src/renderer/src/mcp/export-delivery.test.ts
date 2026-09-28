@@ -122,8 +122,10 @@ test('"off" exports unmastered and forgets the remembered target', async () => {
 
   const off = await exportTimeline({ ...ARGS, loudness: 'off' })
   assert.equal(requests[1]!.loudness, undefined, 'unmastered')
-  assert.equal('delivery' in timelineOf(first), false, 'forgotten, and no empty object left in the .bay')
   assert.match(String((off.loudness as { note: string }).note), /−16\.0 LUFS/, 'the result says what was forgotten')
+  assert.ok(timelineOf(first).delivery?.loudness, 'not forgotten while the export is still running')
+  emit!({ jobId: String(off.jobId), progress: 1, framesDone: 90, framesTotal: 90, stage: 'done', findings: [] })
+  assert.equal('delivery' in timelineOf(first), false, 'forgotten once done, and no empty object left in the .bay')
 
   const after = await exportTimeline(ARGS)
   assert.equal(requests[2]!.loudness, undefined, 'and later exports stay unmastered')
@@ -138,4 +140,71 @@ test('a misspelled loudness is refused before anything starts, naming "off"', as
     (error: unknown) => error instanceof ToolError && /"streaming"/.test(error.message) && /"off"/.test(error.message)
   )
   assert.equal(requests.length, 0)
+})
+
+test('"off" on an export that fails or is cancelled keeps the remembered target', async () => {
+  const { first } = load()
+  const started = await exportTimeline({ ...ARGS, loudness: 'streaming' })
+  finishMastered(String(started.jobId), { integratedLufs: -14, truePeakDb: -1 })
+  for (const stage of ['failed', 'cancelled'] as const) {
+    const off = await exportTimeline({ ...ARGS, loudness: 'off' })
+    emit!({ jobId: String(off.jobId), progress: null, framesDone: 3, framesTotal: 90, stage, error: 'disk full' })
+    assert.deepEqual(timelineOf(first).delivery?.loudness, { integratedLufs: -14, truePeakDb: -1 }, `kept after ${stage}`)
+  }
+})
+
+test('remembering a target leaves undo and redo alone and is not the user’s edit, but marks the document dirty', async () => {
+  const { first } = load()
+  // A redo to lose: an edit, undone.
+  useEditor.getState().setBackground(timelineOf(first).background.toLowerCase() === '#102030' ? '#304050' : '#102030')
+  useEditor.getState().undo()
+  useEditor.setState({ dirty: false, agentRunning: true, agentTurnEdited: false, agentTurnUserEdited: false })
+  const past = useEditor.getState().past.length
+  const future = useEditor.getState().future.length
+  assert.equal(future, 1, 'the specimen: there is a redo')
+
+  const started = await exportTimeline({ ...ARGS, loudness: 'streaming' })
+  finishMastered(String(started.jobId), { integratedLufs: -14, truePeakDb: -1 })
+  const after = useEditor.getState()
+  assert.ok(timelineOf(first).delivery?.loudness, 'the specimen: it did write')
+  assert.equal(after.past.length, past, 'no undo step')
+  assert.equal(after.future.length, future, 'the redo survives')
+  assert.equal(after.dirty, true, 'saved with the project')
+  assert.equal(after.agentTurnUserEdited, false, 'not marked as the user’s edit on the Changes card')
+  useEditor.setState({ agentRunning: false })
+})
+
+test('an export that finishes after another project was opened writes to neither', async () => {
+  const { project: exported, first } = load()
+  const started = await exportTimeline({ ...ARGS, loudness: 'streaming' })
+  // Another project whose timeline even has the same id: only the project id tells them apart.
+  const { project: opened } = load()
+  const renamed = structuredClone(useEditor.getState().project)
+  renamed.timelines[0]!.id = first
+  renamed.activeTimelineId = first
+  useEditor.getState().setProject(renamed)
+  assert.notEqual(opened.id, exported.id, 'the specimen: two projects')
+  const other = first
+  const before = JSON.stringify(useEditor.getState().project)
+  finishMastered(String(started.jobId), { integratedLufs: -14, truePeakDb: -1 })
+  assert.equal(timelineOf(other).delivery, undefined)
+  assert.equal(JSON.stringify(useEditor.getState().project), before)
+})
+
+test('an invalid remembered target (a shared .bay can hold anything) is ignored, with a warning that says so', async () => {
+  const { first } = load()
+  requests.length = 0
+  useEditor.setState((state) => ({
+    project: { ...state.project, timelines: state.project.timelines.map((t) => (t.id === first ? { ...t, delivery: { loudness: { integratedLufs: 'loud' } as never } } : t)) }
+  }))
+  const result = await exportTimeline(ARGS)
+  assert.equal(requests[0]!.loudness, undefined, 'never mastered to an invalid target')
+  assert.match(String(result.warning), /not a valid target/)
+  assert.match(String(result.warning), /integratedLufs/)
+  assert.match(String(result.warning), /"streaming"/)
+  // Positive control: a valid remembered target is used, with no warning.
+  useEditor.getState().rememberDelivery(useEditor.getState().project.id, first, { integratedLufs: -16, truePeakDb: -1 })
+  const valid = await exportTimeline(ARGS)
+  assert.deepEqual(requests[1]!.loudness, { integratedLufs: -16, truePeakDb: -1 })
+  assert.equal(valid.warning, undefined)
 })

@@ -205,8 +205,10 @@ test('an unmastered export’s delivered loudness is measured on the encoded fil
   execFileSync(FFMPEG, ['-v', 'error', '-y', '-i', pinkNoise(dir, 4), '-af', 'volume=-24dB', ...audioCodecArgs('mp4'), quiet])
   const own = meter(quiet)
   assert.ok(own.I < -20, `the specimen is below the −20 LUFS warning line (${own.I})`)
-  const level = await deliveredLoudness(FFMPEG, quiet)
+  let measuring = 0
+  const level = await deliveredLoudness(FFMPEG, quiet, undefined, () => void (measuring += 1))
   assert.ok('measured' in level, JSON.stringify(level))
+  assert.equal(measuring, 1, 'the export is told a measuring pass is running, so it can say so')
   assert.ok(Math.abs(level.measured.integratedLufs - own.I) <= 0.1, `${level.measured.integratedLufs} vs ${own.I}`)
   assert.ok(Math.abs(level.measured.truePeakDb - own.TP) <= 0.1, `${level.measured.truePeakDb} vs ${own.TP}`)
 
@@ -217,7 +219,8 @@ test('an unmastered export’s delivered loudness is measured on the encoded fil
     status: 'met' as const, target: { integratedLufs: -14, truePeakDb: -1 }, measured, before: measured,
     gainDb: 0, limiterCeilingDb: -1.5, passes: 1, summary: ''
   }
-  assert.deepEqual(await deliveredLoudness(FFMPEG, join(dir, 'absent.m4a'), report), { measured })
+  assert.deepEqual(await deliveredLoudness(FFMPEG, join(dir, 'absent.m4a'), report, () => void (measuring += 1)), { measured })
+  assert.equal(measuring, 1, 'and not told when no pass runs')
 
   // A file that cannot be measured is a sentence naming it, not a thrown export.
   const failed = await deliveredLoudness(FFMPEG, join(dir, 'absent.m4a'))

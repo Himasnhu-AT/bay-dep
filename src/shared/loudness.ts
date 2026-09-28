@@ -286,6 +286,24 @@ export function chooseExportLoudness(
   return { target: parsed.target, source: 'argument', forget: null }
 }
 
+/**
+ * A timeline's remembered target, checked the way an argument is: a `.bay` may be someone else's,
+ * or hand-edited, so `delivery.loudness` can hold anything. An invalid one is ignored — never
+ * mastered to — and `warning` says so and how to replace it.
+ */
+export function rememberedTarget(value: unknown): { target: LoudnessTarget | null; warning: string | null } {
+  if (value === undefined) return { target: null, warning: null }
+  const parsed = typeof value === 'object' && value !== null && !Array.isArray(value) ? parseLoudness(value) : null
+  if (parsed && 'target' in parsed && parsed.target) return { target: parsed.target, warning: null }
+  const why = parsed && 'error' in parsed ? ` ${parsed.error}` : ' It must be { integratedLufs, truePeakDb }.'
+  return {
+    target: null,
+    warning:
+      `This timeline's remembered loudness (${JSON.stringify(value)}) is not a valid target, so it was ignored and ` +
+      `the export is unmastered.${why} Choose a loudness (e.g. "streaming") to master and remember a valid one.`
+  }
+}
+
 /** A target as a person reads it: "−14.0 LUFS / −1.0 dBTP". */
 export function describeTarget(target: LoudnessTarget): string {
   return `${db(target.integratedLufs)} LUFS / ${db(target.truePeakDb)} dBTP`
