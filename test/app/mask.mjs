@@ -233,6 +233,13 @@ async function scene(label, clipPath, expectPillarbox) {
       else if (a < 25) beside.push(i)
     }
     const share = (list, test) => list.length ? list.filter(test).length / list.length : 0
+    // The unmasked-copy control can only hide what the clip covers: in a pillarboxed or
+    // letterboxed scene, "beside the person" includes the bars, where no copy of the clip draws.
+    const inClip = (i) => {
+      const p = i / 4, x = p % M.w, y = Math.floor(p / M.w)
+      return x >= rect.left * k && x < (rect.left + rect.width) * k && y >= rect.top * k && y < (rect.top + rect.height) * k
+    }
+    const besideInClip = beside.filter(inClip)
     return {
       size: [M.w, M.h], complete: [M, T, P, G, U, C0, C1].map((r) => r.pending === 0 && r.placeholders === 0), unresolved: M.unresolved,
       iou: either ? both / either : 0,
@@ -240,7 +247,8 @@ async function scene(label, clipPath, expectPillarbox) {
       besideVisible: share(beside, (i) => dist(M.d, i, tc) < 90),
       overHidden: share(over, (i) => same(M.d, P.d, i) < 45),
       controlOverVisibleWithoutMask: share(over, (i) => dist(T.d, i, tc) < 90),
-      controlBesideHiddenByUnmaskedCopy: share(beside, (i) => same(U.d, P.d, i) < 45),
+      besideInClipCount: besideInClip.length,
+      controlBesideHiddenByUnmaskedCopy: share(besideInClip, (i) => same(U.d, P.d, i) < 45),
       over, beside
     }
   })()`, 180_000)
@@ -253,7 +261,7 @@ async function scene(label, clipPath, expectPillarbox) {
   check(`${label}: beside the person the title is visible (${pc(verdict.besideVisible)})`, verdict.besideVisible, (v) => v >= 0.85)
   check(`${label}: over the person the title is hidden (${pc(verdict.overHidden)})`, verdict.overHidden, (v) => v >= 0.85)
   check(`${label}: control — without the mask the title is visible over the person (${pc(verdict.controlOverVisibleWithoutMask)})`, verdict.controlOverVisibleWithoutMask, (v) => v >= 0.85)
-  check(`${label}: control — an unmasked cut-out hides the title beside the person too (${pc(verdict.controlBesideHiddenByUnmaskedCopy)})`, verdict.controlBesideHiddenByUnmaskedCopy, (v) => v >= 0.85)
+  check(`${label}: control — an unmasked cut-out hides the title beside the person too, inside the clip (${pc(verdict.controlBesideHiddenByUnmaskedCopy)} of ${verdict.besideInClipCount} px)`, verdict.controlBesideHiddenByUnmaskedCopy, (v) => v >= 0.85)
 
   // -- 4. export vs preview_frame ------------------------------------------------------------------
   const [W, H] = verdict.size

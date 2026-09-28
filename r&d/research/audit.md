@@ -25,6 +25,7 @@ Either way it cannot go into a skill as a cited fact now.
 | `hypit.md` | **Trustworthy, one stale claim** | The licence is quoted accurately, and every file path and line I checked (12) is right. Stats are within a day's drift. There are two errors: "skills stay user-invoked" is stale, and bay has 14 skills, not 15. One omission matters: licence clause 1a (no multi-tenant or SaaS use). Its licence conclusion is correct and conservative. |
 | `podclip.md` | **Usable with corrections** (§8) | All algorithm numbers and file:line refs check out, and both claimed defects reproduce. The doc missed that its leading-cut defect defeats podclip's one-state refusal, so its Safety and one-mic claims are wrong. The smart-mode table compares SigLIP scores across searches, which `search_footage` says is invalid. |
 | `threejs.md` | **Trustworthy, small corrections** (§9) | Route A reproduced with real three r186 under bay's own sandbox filter. The worker-GPU claim is confirmed and broader than stated: WebGL2 shaders, `readPixels` and the unmasked GPU name all work after lockdown. **Priority fix now, not with 3D.** The r160 → r161 date is wrong and the bundle estimate is low. |
+| `masking.md` | **Usable with corrections** (§10) | Every licence, hash, revision and exclusion checks out, and MODNet can be bundled (licence copy + attribution; no NOTICE). The compositor design and the two-element drift warning are real. The two sizing estimates are wrong, both measured: MODNet ~83 ms/frame (not 15–40; CoreML is slower) and ~90 KB per 1080p matte (~1.6 GB per 10 min). Apple Vision is reachable through JXA with no native addon. |
 | `style-clips.md` | **Trustworthy** (§7) | 11 licences checked on the live source: 8 Commons files (API `extmetadata` + wikitext) and 3 Mixkit pages. All match, including which reviews are pending and which passed. Three speech clips range-fetched and re-measured: streams, levels, pause counts and whisper openings all reproduce. One soft spot: the Mixkit **music** licence could not be confirmed, because the cited page redirects. Its self-reported gaps are accurate. |
 
 Counts across both documents: **WRONG 10**: 3 web claims (arXiv count, Netflix cps, the "deceptively simple" attribution), 6 bay
@@ -604,3 +605,150 @@ example gets a still frame. The examples should use a vendored `./gsap.min.js`.
 - Route B's design (a data-only `<scene3d>` in the worker, one long-lived renderer context in the
   engine, caps checked before geometry, `pending` and context-loss handling), as a design to be
   proven by its own parity probe. Its performance figures are estimates and are labelled as such.
+
+---
+
+## 10. masking.md
+
+Checked 28 Sep 2026. Scratch work is in the session scratchpad (`matte-audit/`). I downloaded the
+pinned MODNet file and a 1080p Mixkit clip with two people (43150, Mixkit Free), ran MODNet through
+the repo's own `onnxruntime-node` 1.30.0, encoded mattes with bay's vendored ffmpeg, and called
+Apple Vision through `osascript -l JavaScript`. Nothing touched the running bay app or the repo.
+
+**Verdict: usable with corrections.** The licence work is excellent: every hash, size, revision and
+exclusion checks out. The compositor design is sound, and its central warning about two elements is
+real. But the **two numbers that size the feature are wrong in the optimistic direction**, both
+measured: MODNet is **~83 ms/frame** on CPU (not 15–40), and a 1080p matte PNG is **~90 KB** (not
+15–40 KB). The claimed CoreML speed-up is a slow-down. Apple Vision **is reachable from Electron with
+no native addon and no new binary**, which changes the spike's cost and possibly the default.
+
+Counts for this doc: **WRONG 4** (three estimates contradicted by measurement, one file path) ·
+**UNSOURCED 0** · PARTIAL 4 · CONFIRMED ~30.
+
+### 10.1 Licences, pins and bundling
+
+| Claim | Status | Evidence |
+|---|---|---|
+| `Xenova/modnet` @ `fa2fa546…`, licence apache-2.0 | **CONFIRMED** | HF API: `sha fa2fa546052fba4c08921230a26cc69a333fca12`, `cardData.license apache-2.0`, not gated. |
+| `onnx/model.onnx` 25,888,640 B, SHA-256 `07c308cf…584df9` | **CONFIRMED by download** | `shasum -a 256` of the downloaded file matches, and so does the size. fp16 12,984,781 / `25f165da…` and uint8 6,627,048 / `7bad6522…` match the tree API too. |
+| MODNet upstream: "code, models, and demos … Apache License 2.0" | **CONFIRMED** | `ZHKKKe/MODNet` README §License, verbatim (it excludes `doc/gif`). GitHub `license: Apache-2.0`. |
+| The Xenova ONNX conversion is covered | **CONFIRMED, with a duty** | The conversion is a derivative of Apache-2.0 weights, and the HF card declares apache-2.0. The Xenova repo has **no LICENSE file** (tree: `onnx/`, README, configs only), so bay must supply the licence text itself. |
+| MODNet can ship in the bundle; NOTICE duties | **CONFIRMED, duties named** | Upstream has **no NOTICE file** (repo root: `LICENSE`, `README.md`, `demo`, `doc`, `onnx`, `pretrained`, `src`, `torchscript`), so §4(d) imposes nothing. What remains: §4(a), ship a copy of the licence; §4(c), keep attribution. **There is no top-level `LICENSES/`** as the doc says; bay ships third-party licences through `electron-builder.yml` `extraResources` (`vendor/ffmpeg/LICENSES` → `ffmpeg/LICENSES`, lines 45-50). Add `models/modnet/{model.onnx,LICENSE,README}` the same way. An `.onnx` is data, not a Mach-O, so `release-signed` is unaffected. The bundle grows 25.9 MB. |
+| `onnx-community/BiRefNet_lite-ONNX` @ `de15b22b…`, MIT, 224,005,088 B / `56000243…`, fp16 114,538,221 B / `d39b897c…` | **CONFIRMED** (tree API) | Upstream `ZhengPeng7/BiRefNet` MIT, and `ZhengPeng7/BiRefNet_lite` card MIT. Not downloaded. |
+| RVM GPL-3.0 | **CONFIRMED** | README: "[Sep 16 2021] Code is re-released under GPL-3.0 license". GitHub `GPL-3.0`. |
+| MatAnyone 1 and 2: S-Lab, non-commercial | **CONFIRMED** (both) | `LICENSE` / `LICENSE.txt`: "S-Lab License 1.0 … Redistribution and use for non-commercial purpose". The doc said MatAnyone 2 was "not verified"; it is now. |
+| RMBG-1.4 non-commercial; RMBG-2.0 CC BY-NC 4.0 | **CONFIRMED** | 1.4: `license_name bria-rmbg-1.4`, "available as a source-available model for non-commercial use". 2.0: `license_link …/by-nc/4.0`, gated. |
+| VideoMaMa: CC BY-NC 4.0 code + Stability Community weights | **CONFIRMED** | `cvlab-kaist/VideoMaMa` README §License, verbatim on both. |
+| `onnx-community/ISNet-ONNX` tagged AGPL-3.0 | **CONFIRMED** | HF `license:agpl-3.0`. |
+| The `licence` allow-list test for pinned models (§5.1.8) | Good idea | Correct shape: a test over a literal list, not a comment. |
+
+### 10.2 Claims about bay's code
+
+| Claim | Status | Evidence |
+|---|---|---|
+| `#drawSource` at `compositor.ts:370` is the draw site for video, image, composition and `.brf`, and grades before `drawImage` | **CONFIRMED** | `:370` signature. Callers at `:647` (brf surface), `:676` (composition bitmap), `:698` (element). The grade at `:416-440` draws `graded.canvas` into `dest`. |
+| Masking after the grade gives one path for preview, `preview_frame` and export | **CONFIRMED, one caveat** | Same function for all three consumers. Caveat: the *ungraded* branch draws straight from the element to `dest`, with no intermediate canvas. The mask needs the scratch `pic` canvas the doc describes on both branches, so an ungraded masked clip pays a copy a graded one already pays. Worth saying in the design. |
+| `elementSlots` (`compositor.ts:1091`) gives each drawing of an asset its own element | **CONFIRMED** | `:1091-1099`: slot = running count per `assetId`, independent of source time. The rationale is at `:176-190`. |
+| "Two decoders, each allowed to drift up to 80 ms in playback" | **CONFIRMED, understated** | `DRIFT_TOLERANCE_SECONDS = 0.08` (`engine/sync.ts:18`), applied per element in playback (`compositor.ts:898, 924-925`). Each element is corrected only past 80 ms *from the target*, so base and cut-out can be **up to ~160 ms apart** (one early, one late), about 4–5 frames at 30 fps. The fix (share a slot when asset *and* source frame match) is right. It must also go through the preroll path, which asks `elementSlots` for its slot (`compositor.ts:1082`). |
+| `requestVideoFrameCallback` unused | **CONFIRMED** | No occurrences in `src/renderer`. |
+| Matte frames over `bay://` with Range | **CONFIRMED** | `src/main/serve.ts` `parseRange` (`:85`), with a test suite (`serve.test.ts`). The cache dir must be admitted to `bay://` like fonts and generated files. |
+| Utility-process pattern reusable: `utilityProcess.fork`, nice 10, 2 min idle, `frames` messages, abort | **CONFIRMED** | `vision/host.ts:21` (`IDLE_MS = 120_000`), `:54` (`setPriority(pid, WORKER_NICE)`), `protocol.ts:13` (`{type:'frames'}`). |
+| `onnxruntime-node` 1.30.0, `executionProviders: ['cpu']`, fp16 outputs refused | **CONFIRMED** | `package.json` 1.30.0. `encoder.ts:58`, `:71`. |
+| The shipped dylib contains the CoreML EP | **CONFIRMED** | `strings libonnxruntime.1.30.0.dylib \| grep -c CoreMLExecutionProvider` → 19. |
+| `contentKey`: size + three 1 MiB windows | **CONFIRMED** | `vision/cache.ts:8, 23` |
+| `cacheDir()/<family>-${CACHE_SCHEME}` swept by `sweepStaleCaches` | **CONFIRMED** | `media/cache-dirs.ts:11-26` |
+| `png` is a required encoder and decoder; no FFV1 | **CONFIRMED** | `capabilities.test.ts:179` (`png` is added at 179, not 176), `:200` (`read` list). `ffv1` appears 0 times in `build-ffmpeg.sh`. `ya8` is not yet pinned, as the doc says. |
+| `KEYFRAME_PROPERTIES` in `@shared/keyframes.ts` | **WRONG path** | It is exported from `src/shared/project.ts:273`. `keyframes.ts` imports it. |
+| grade.ts "one WebGL context, shared by every compositor"; ~16-context cap | **CONFIRMED** | `grade.ts:22, 24` |
+| `#glassBackdrop`, `@shared/links` `normaliseLinks`, `freeze-frame.ts` exist | **CONFIRMED** | — |
+
+### 10.3 Feasibility, measured
+
+**MODNet per-frame cost:** the doc says "~15–40 ms/frame on an M-series CPU [E]". **WRONG.** On
+this Mac, repo `onnxruntime-node` 1.30.0, 48 real frames of the 1080p clip at the model's own
+preprocessing (`shortest_edge: 512`, `size_divisibility: 32` → 896×512, mean/std 0.5), excluding
+decode and pre/post-processing:
+
+| Execution provider | median | p90 |
+|---|---|---|
+| `cpu` | **82.8 ms** | 87.3 ms |
+| `coreml` | **139.5 ms** (slower) | 174.7 ms |
+
+At 512×288 (short edge 288, which is wrong for this model) CPU was 28.4 ms, which is probably where
+the estimate came from. So §2.5's throughput table is **~2–4× optimistic**. A 60 s clip at 30 fps is
+~150 s of inference alone on CPU (the doc says 40–80 s). The "CoreML EP, if it helps" column should
+be deleted for MODNet: it does not help. The output is a sane matte: frame 10 had 141k pixels ≥250,
+301k ≤5 and 17k soft, matching Vision's count (below) to within 3%.
+
+**Matte pack size:** the doc says "15–40 KB per 1080p ya8 PNG [E]; 60 s ≈ 30–70 MB". **WRONG.**
+Real MODNet mattes, bilinear-upscaled to 1920×1080 and encoded `-c:v png -pix_fmt ya8` by bay's
+ffmpeg: **~90 KB/frame** (84–103 KB over 48 frames). A single-channel `gray` PNG was 72 KB. A
+synthetic, perfectly clean silhouette was 20 KB, which is presumably the estimate's picture; real
+soft edges and low-level noise are what cost. The guided filter's output was not measured and could
+move this either way.
+
+| Clip, 1080p | Frames | ya8 at ~90 KB |
+|---|---|---|
+| 60 s @ 30 fps | 1,800 | **~160 MB** |
+| **10 min @ 30 fps** | 18,000 | **~1.6 GB** |
+| 10 min @ 24 fps | 14,400 | ~1.3 GB |
+
+That changes the "never evict a matte the open project references" rule from a detail into a disk
+policy. Consider storing mattes at the model's resolution (896×512 compresses far better; the
+guided filter can run at draw time or on decode). Otherwise a long podcast costs gigabytes per clip.
+
+**Apple Vision without a native addon: YES, measured.** JavaScript for Automation reaches
+`Vision.framework` through the ObjC bridge. `osascript -l JavaScript vision.js frame.png out.png`
+ran `VNGeneratePersonSegmentationRequest` on a 1080p frame and wrote the mask, on macOS 26.6.2, with
+nothing compiled, no helper Mach-O and nothing new for `release-signed` to sign. Main can spawn
+`/usr/bin/osascript` like any tool. Warm timings, 8 runs in one process, per image including file
+decode:
+
+| Quality | Mask size | median |
+|---|---|---|
+| `.accurate` | **2016×1512** | 80 ms (first call 1.6 s, model load) |
+| `.balanced` | 512×384 | 31 ms |
+| `.fast` | 256×192 | 25 ms |
+
+- The doc's "accurate has 64× the pixels of fast" holds: 62×.
+- **New trap:** the mask is **4:3 for a 16:9 frame**. It must be stretched back to the image's
+  aspect, or the matte is misplaced horizontally.
+- Coverage agreed with MODNet: 145,783 vs 141,383 pixels ≥250 at 896×512.
+- Caveats: the JXA bridge is slow for moving pixels and per-frame files are clumsy, so treat this as
+  the **spike vehicle** (hours, not a day). A production path might still want a Swift helper for
+  streaming. Neither timing includes bay's pipeline overhead.
+- The doc's claim that the spike needs "a small Swift helper binary" is **PARTIAL**: it does not,
+  for the spike.
+
+**Other estimates:** the guided filter (2–5 ms), 4K mask blits (1–3 ms), PNG decode (5–15 ms) and
+BiRefNet_lite timings are correctly labelled [E] and were not measured.
+
+### 10.4 Required corrections to masking.md
+
+1. **Replace the throughput table** with the measured MODNet 83 ms/frame (CPU, 896×512) and remove
+   the CoreML column for MODNet, which measured 1.7× *slower*.
+2. **Replace the pack-size estimate** with ~90 KB/frame at 1080p ya8 (~1.6 GB per 10 min @ 30).
+   Decide the storage resolution and eviction policy with that number, not 15–40 KB.
+3. **Apple Vision spike:** do it first and cheaply through `osascript -l JavaScript`, with no
+   helper binary. `.balanced` at ~31 ms/frame (512×384) is faster than MODNet on CPU and needs no
+   25.9 MB in the bundle. Record the 4:3-mask trap. If it wins, MODNet stays as the fallback.
+4. **Slot drift** is up to ~160 ms between two elements, not 80. The fix stays the same. Include
+   the preroll path (`compositor.ts:1082`).
+5. **Licensing mechanics:** there is no `LICENSES/`. Ship MODNet's LICENSE beside the model through
+   `electron-builder.yml` `extraResources`, as ffmpeg's are. Upstream has no NOTICE, so §4(a)
+   (licence copy) and attribution are the duties.
+6. `KEYFRAME_PROPERTIES` lives in `@shared/project.ts:273`. The `png` pin is at
+   `capabilities.test.ts:179`.
+
+### 10.5 Safe to implement from masking.md
+
+- The **`masks: Mask[]` model** (array from day one, additive optional field), the `#drawSource`
+  placement after the grade, the missing-matte policy (draw nothing, name it in `IncompleteFrames`)
+  and `put_behind_subject`'s shape.
+- **Slot sharing by (asset, source frame)** in `elementSlots`, with preroll. It is independently
+  useful for any duplicate-and-stack effect.
+- The **pinned-model spec with a licence allow-list test**, and MODNet as a licence-clean bundled
+  fallback (all pins verified).
+- The Apple Vision spike via JXA, before any bundle or pipeline decision.
+- Not yet: the throughput and size figures in UI copy, and the "one-click in ~40 s" promise. At the
+  measured rate, 60 s of 1080p is ~2.5 min of MODNet inference plus decode.
