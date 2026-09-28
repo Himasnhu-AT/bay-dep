@@ -237,10 +237,12 @@ only other place the plate's colours appear (the frame's ground before a poster 
   and `touch-action: pan-y` so a vertical swipe still scrolls the page. The same control is
   a range input for the keyboard and screen readers (arrows, Home, End), which takes no
   pointer events and draws an accent focus ring inside the frame.
-- **The two videos keep one clock.** The after video leads; on each frame it presents
-  (`requestVideoFrameCallback`), and on each `timeupdate` for when the lead is the hidden side
-  of a phone's toggle, the before video is re-seeked only if it has drifted more than two
-  frames.
+- **The two videos keep one clock.** The after video leads. On every animation frame while
+  it plays (drawn or not, so the hidden side of a phone's toggle counts too), the before's
+  offset from it, taken across the loop point, is corrected: past a quarter second by a
+  seek, past half a frame by running the before up to 10% fast or slow, since a seek stalls
+  it. A pause or seek of the after is copied to the before at once, and when either side
+  runs out of data (`waiting`) the other is paused until both can play.
 - **Labels are not laid over the picture.** In the wipe, which side is which is said in the
   caption under it; in the split, each frame has its label on the line above it (see below).
   "Hear the edit" unmutes the after video; nothing plays sound unasked.

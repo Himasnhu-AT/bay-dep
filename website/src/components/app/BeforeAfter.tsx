@@ -28,8 +28,8 @@ import { ChevronsLeftRight } from "lucide-react";
  * amount, so moving the line changes one custom property and composites.
  *
  * The two videos are one length and cut on the same frames. The after video
- * leads; the before follows it on every frame it presents, and is re-seeked
- * only when it has drifted by more than two frames.
+ * leads and the before follows it: nudged in rate within a quarter second,
+ * re-seeked past it, and held whenever either side is buffering.
  */
 
 export type Aspect = "16:9" | "9:16";
@@ -177,34 +177,102 @@ export function BeforeAfter({
     return () => visible.disconnect();
   }, [near, still]);
 
-  // Keep the before video on the after video's clock.
+  // Keep the before video on the after video's clock. Every animation frame
+  // while playing, the before's offset from the after (taken across the loop
+  // point, so a wrap is not a jump) is corrected: past a quarter second by a
+  // seek, past half a frame by running the before up to 10% fast or slow, which
+  // closes the gap without the stall a seek costs. A seek or pause of either
+  // is copied to the other at once. And when either runs out of data
+  // (`waiting`), the other is paused until it can play again, so a buffering
+  // side is never left behind.
   useEffect(() => {
     const lead = after.current;
     const follow = before.current;
     if (!near || !lead || !follow) return;
-    let handle = 0;
+    const FRAME = 1 / 30;
+    const stalled = new Set<HTMLVideoElement>();
+    let holding = false;
+    let raf = 0;
+    const offset = () => {
+      let d = follow.currentTime - lead.currentTime;
+      const len = lead.duration;
+      if (Number.isFinite(len) && len > 0) {
+        if (d > len / 2) d -= len;
+        if (d < -len / 2) d += len;
+      }
+      return d;
+    };
     const align = () => {
-      if (Math.abs(follow.currentTime - lead.currentTime) > 2 / 30) follow.currentTime = lead.currentTime;
-      if (lead.paused !== follow.paused) void (lead.paused ? follow.pause() : follow.play().catch(() => {}));
+      const d = offset();
+      if (Math.abs(d) > 0.25 || lead.paused) {
+        if (Math.abs(d) > FRAME / 2) follow.currentTime = lead.currentTime;
+        follow.playbackRate = 1;
+      } else if (Math.abs(d) > FRAME / 2) {
+        follow.playbackRate = Math.min(1.1, Math.max(0.9, 1 - d * 2));
+      } else {
+        follow.playbackRate = 1;
+      }
     };
     const tick = () => {
       align();
-      handle = lead.requestVideoFrameCallback?.(tick) ?? 0;
+      raf = requestAnimationFrame(tick);
     };
-    if (lead.requestVideoFrameCallback) handle = lead.requestVideoFrameCallback(tick);
-    const onPlay = () => setPlaying(true);
-    const onPause = () => setPlaying(false);
+    const run = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(tick);
+    };
+    const stop = () => cancelAnimationFrame(raf);
+    const onPlay = () => {
+      if (holding) return;
+      setPlaying(true);
+      void follow.play().catch(() => {});
+      run();
+    };
+    const onPause = () => {
+      if (holding) return;
+      setPlaying(false);
+      stop();
+      follow.pause();
+      align();
+    };
+    const onSeeked = () => {
+      if (Math.abs(offset()) > FRAME / 2) follow.currentTime = lead.currentTime;
+    };
+    // Either side out of data: hold both until it recovers.
+    const onWaiting = (e: Event) => {
+      stalled.add(e.currentTarget as HTMLVideoElement);
+      if (lead.paused && !holding) return;
+      holding = true;
+      stop();
+      for (const v of [lead, follow]) if (!stalled.has(v)) v.pause();
+    };
+    const onReady = (e: Event) => {
+      stalled.delete(e.currentTarget as HTMLVideoElement);
+      if (!holding || stalled.size) return;
+      holding = false;
+      if (Math.abs(offset()) > FRAME / 2) follow.currentTime = lead.currentTime;
+      for (const v of [lead, follow]) void v.play().catch(() => {});
+      run();
+    };
     lead.addEventListener("play", onPlay);
     lead.addEventListener("pause", onPause);
-    // A frame callback needs the lead to be drawn. On a phone the split shows
-    // one side at a time, so when the lead is the hidden one, `timeupdate`
-    // (a few times a second, drawn or not) keeps the clock instead.
-    lead.addEventListener("timeupdate", align);
+    lead.addEventListener("seeked", onSeeked);
+    for (const v of [lead, follow]) {
+      v.addEventListener("waiting", onWaiting);
+      v.addEventListener("canplay", onReady);
+      v.addEventListener("playing", onReady);
+    }
+    if (!lead.paused) run();
     return () => {
-      if (handle) lead.cancelVideoFrameCallback?.(handle);
+      stop();
       lead.removeEventListener("play", onPlay);
       lead.removeEventListener("pause", onPause);
-      lead.removeEventListener("timeupdate", align);
+      lead.removeEventListener("seeked", onSeeked);
+      for (const v of [lead, follow]) {
+        v.removeEventListener("waiting", onWaiting);
+        v.removeEventListener("canplay", onReady);
+        v.removeEventListener("playing", onReady);
+      }
     };
   }, [near]);
 
