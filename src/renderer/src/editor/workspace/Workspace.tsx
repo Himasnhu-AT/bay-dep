@@ -41,6 +41,7 @@ import { pageContent } from './pageContent'
 import { PageLayout, regionsOf } from './PageLayout'
 import { useCollapsiblePanel } from './useCollapsiblePanel'
 import { ViewerRegion } from './ViewerRegion'
+import { PlayingMark } from './PlayingMark'
 
 export interface WorkspaceProps {
   onHome(): void
@@ -69,6 +70,7 @@ export function Workspace({ onHome, onExport, saving }: WorkspaceProps): ReactNo
 
   return (
     <HostProvider host={host}>
+      <PlayingMark />
       <TopBar onExport={onExport} saving={saving} regions={regionsOf(content)} panelToggles={regions.panelToggles} />
 
       {regions.agent === 'primary' ? (

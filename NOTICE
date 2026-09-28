@@ -58,6 +58,19 @@ react-colorful 5.8.1, bundled into the renderer:
 Copyright (c) 2020-present Vlad Shilov, licensed under the MIT License (the same terms as the
 quick-liquid notice above).
 
+## cmdk
+
+The font picker (`src/renderer/src/components/controls/FontPicker.tsx`) is built on cmdk 1.1.1,
+the command menu shadcn/ui's Command wraps, bundled into the renderer with the Radix Primitives it
+depends on:
+
+  https://github.com/pacocoursey/cmdk
+  https://github.com/radix-ui/primitives
+
+cmdk is Copyright (c) 2022 Paco Coursey and Radix Primitives Copyright (c) 2022 WorkOS, both
+licensed under the MIT License (the same terms as the quick-liquid notice above). No shadcn/ui
+file is copied; the picker is written against cmdk directly.
+
 ## FFmpeg (and the libraries built into it)
 
 bay includes `ffmpeg` and `ffprobe` executables (in `bay.app/Contents/Resources/ffmpeg/`) built

@@ -104,6 +104,7 @@ export function AiLayout({ drawers, onExport, onHome }: AiLayoutProps): ReactNod
                 title="Inspector"
                 onClose={() => setAiPanel('inspector', false)}
                 className="w-[min(360px,60%)] border-l"
+                glass
               >
                 <ErrorBoundary region="the inspector">
                   <Inspector />
@@ -117,6 +118,7 @@ export function AiLayout({ drawers, onExport, onHome }: AiLayoutProps): ReactNod
                 title="Pages"
                 onClose={() => setAiPanel('pages', false)}
                 className="w-[min(720px,80%)] border-l"
+                glass
               >
                 <PagesBody />
               </Drawer>
@@ -191,6 +193,7 @@ function Drawer({
   onClose,
   escapeCloses,
   className,
+  glass = false,
   children
 }: {
   id: string
@@ -198,6 +201,12 @@ function Drawer({
   onClose(): void
   escapeCloses?: () => boolean
   className?: string
+  /**
+   * Chrome glass (`.bay-glass` in styles.css): the side drawers, which open over the viewer and
+   * the agent and are better for keeping that context in view. Not the timeline drawer, whose
+   * rows are read continuously. Solid while the timeline plays (`PlayingMark`).
+   */
+  glass?: boolean
   children: ReactNode
 }): ReactNode {
   const ref = useRef<HTMLElement>(null)
@@ -229,7 +238,7 @@ function Drawer({
       aria-label={title}
       tabIndex={-1}
       onKeyDown={onKeyDown}
-      className={`pointer-events-auto flex min-h-0 flex-col border-line bg-surface-1 shadow-pop outline-none ${className ?? ''}`}
+      className={`pointer-events-auto flex min-h-0 flex-col border-line shadow-pop outline-none ${glass ? 'bay-glass bay-glass-panels' : 'bg-surface-1'} ${className ?? ''}`}
     >
       <header className="flex h-8 shrink-0 items-center justify-between border-b border-line bg-chrome pr-1 pl-3">
         <h2 className="text-[11px] font-semibold text-ink-0 select-none">{title}</h2>

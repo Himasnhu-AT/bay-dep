@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import {
   AlignCenter,
   AlignLeft,
@@ -20,14 +20,16 @@ import {
   NumberField,
   Section,
   SectionReset,
+  FontPicker,
   SegmentedControl,
-  Select
+  Select,
+  type FontOption
 } from '@/components'
 import { useTextFit } from '@/lib/useTextFit'
 import { useEditor } from '@/store/editor'
 import { LIVE } from './liveGesture'
 import { importedFamilies } from '@shared/fonts'
-import { FontFamilyField } from './FontFamilyField'
+import { typedFont } from './typedFont'
 
 /**
  * Families **measured** as present on this machine, not assumed.
@@ -63,9 +65,6 @@ const FAMILIES: { value: string; label: string }[] = [
   { value: 'Menlo, Monaco, monospace', label: 'Menlo' },
   { value: '"Courier New", Courier, monospace', label: 'Courier' }
 ]
-
-/** The list's "type any family" entry. Not a stack a text item can hold (stacks are quoted). */
-const OTHER = '__other__'
 
 const WEIGHTS = [
   { value: '300', label: 'Light' },
@@ -106,8 +105,6 @@ export function TextStyleSection({ items, asset }: TextStyleSectionProps): React
   // Narrow: the asset list changes on import, not per frame.
   const imported = importedFamilies(useEditor((state) => state.project.assets))
   const first = items[0]
-  // "Other…" chosen while the current family is still a listed one: show the typed field anyway.
-  const [typing, setTyping] = useState(false)
   const fit = useTextFit(first, asset, {
     left: first?.layout.left ?? 0,
     top: first?.layout.top ?? 0,
@@ -120,12 +117,10 @@ export function TextStyleSection({ items, asset }: TextStyleSectionProps): React
   const style = resolvedTextStyle(first)
   // The project's own fonts first: they are the ones that travel with it. A family's value is
   // the quoted name with a generic fallback behind it, the shape every other entry has.
-  const families = [
-    ...imported.map((family) => ({ value: `"${family.replace(/"/g, '')}", sans-serif`, label: `${family} · imported` })),
-    ...FAMILIES
+  const families: FontOption[] = [
+    ...imported.map((family) => ({ value: `"${family.replace(/"/g, '')}", sans-serif`, label: family, group: 'project' as const })),
+    ...FAMILIES.map((family) => ({ ...family, group: 'system' as const }))
   ]
-
-  const listed = families.some((f) => f.value === style.fontFamily)
 
   /** Applies a partial style to every selected text item, as one undo step. */
   const set = (patch: Partial<TextStyle>): void => {
@@ -170,21 +165,14 @@ export function TextStyleSection({ items, asset }: TextStyleSectionProps): React
         }
       >
         <Field label="Font">
-          <Select
+          <FontPicker
             label="Font family"
-            value={listed && !typing ? style.fontFamily : OTHER}
-            options={[...families, { value: OTHER, label: 'Other…' }]}
-            onChange={(value) => {
-              setTyping(value === OTHER)
-              if (value !== OTHER) set({ fontFamily: value })
-            }}
+            value={style.fontFamily}
+            options={families}
+            onChange={(fontFamily) => set({ fontFamily })}
+            typed={typedFont}
           />
         </Field>
-        {(!listed || typing) && (
-          <div className="mt-1.5 pl-[72px]">
-            <FontFamilyField value={style.fontFamily} onCommit={(fontFamily) => set({ fontFamily })} />
-          </div>
-        )}
         <div className="mt-1.5">
           <Field label="Weight">
             <Select
