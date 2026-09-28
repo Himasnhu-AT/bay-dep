@@ -9,7 +9,6 @@ export {
   type Tone
 } from './Status'
 export { Button, type ButtonProps, type ButtonSize, type ButtonVariant } from './Button'
-export { ColorField, type ColorFieldProps } from './ColorField'
 export { EmptyState, type EmptyStateProps } from './EmptyState'
 export { ErrorBoundary, type ErrorBoundaryProps } from './ErrorBoundary'
 export {

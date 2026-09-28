@@ -233,7 +233,7 @@ export function TextStyleSection({ items, asset }: TextStyleSectionProps): React
             suffix="px"
           />
           <Field label="Colour">
-            <ColorField label="Text colour" value={style.color} onCommit={(value) => set({ color: value })} />
+            <ColorField label="Text colour" gesture={LIVE} value={style.color} onCommit={(value) => set({ color: value })} />
           </Field>
         </div>
         <div className="mt-2 grid grid-cols-2 gap-1.5">
@@ -299,7 +299,7 @@ export function TextStyleSection({ items, asset }: TextStyleSectionProps): React
         {style.stroke ? (
           <div className="grid grid-cols-2 gap-1.5">
             <ColorField
-              label="Outline colour"
+              label="Outline colour" gesture={LIVE}
               value={style.stroke.color}
               onCommit={(color) => set({ stroke: { ...style.stroke!, color } })}
             />
@@ -338,7 +338,7 @@ export function TextStyleSection({ items, asset }: TextStyleSectionProps): React
           <>
             <div className="grid grid-cols-2 gap-1.5">
               <ColorField
-                label="Shadow colour"
+                label="Shadow colour" gesture={LIVE}
                 value={style.shadow.color}
                 onCommit={(color) => set({ shadow: { ...style.shadow!, color } })}
               />
@@ -395,7 +395,7 @@ export function TextStyleSection({ items, asset }: TextStyleSectionProps): React
         {style.background ? (
           <>
             <ColorField
-              label="Plate colour"
+              label="Plate colour" gesture={LIVE}
               value={style.background.color}
               onCommit={(color) => set({ background: { ...style.background!, color } })}
             />

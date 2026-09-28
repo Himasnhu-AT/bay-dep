@@ -48,6 +48,16 @@ Copyright (c) 2026 Amarnath, licensed under the MIT License:
 bay draws the glass itself on its own canvas and does not depend on the quick-liquid package at
 build or run time: its engine is a DOM one (`backdrop-filter` and SVG filters on a live element).
 
+## react-colorful
+
+The editor's colour picker (`src/renderer/src/components/controls/ColorField.tsx`) is built on
+react-colorful 5.8.1, bundled into the renderer:
+
+  https://github.com/omgovich/react-colorful
+
+Copyright (c) 2020-present Vlad Shilov, licensed under the MIT License (the same terms as the
+quick-liquid notice above).
+
 ## FFmpeg (and the libraries built into it)
 
 bay includes `ffmpeg` and `ffprobe` executables (in `bay.app/Contents/Resources/ffmpeg/`) built
