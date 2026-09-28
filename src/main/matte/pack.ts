@@ -14,7 +14,8 @@
  * No Electron import; the tests run it on temp directories.
  */
 
-import { open, readFile, rename, rm, stat, type FileHandle } from 'node:fs/promises'
+import { open, readdir, readFile, rename, rm, stat, type FileHandle } from 'node:fs/promises'
+import { join } from 'node:path'
 import { deflateRawSync, inflateRawSync } from 'node:zlib'
 import type { SubjectMatteReport } from '@shared/matte'
 
@@ -157,4 +158,27 @@ export async function readPackFrame(path: string, index: PackIndex, i: number): 
   if (!entry) throw new Error(`frame ${i} is not in this pack (${index.frames.length} frames)`)
   const data = await readFile(path)
   return new Uint8Array(inflateRawSync(data.subarray(entry[1], entry[1] + entry[2])))
+}
+
+/** A pack's in-progress name: bay's own 32-hex key, and nothing else in that folder is touched. */
+const PART_NAME = /^[0-9a-f]{32}\.bmat\.part$/
+
+/**
+ * Removes the `.part` files a crashed or killed job left in `dir` — run at startup, before any job
+ * can be writing one. Only names bay writes (`<32 hex>.bmat.part`); a finished pack or anything
+ * else in the folder is left alone. Returns the names removed.
+ */
+export async function sweepMattePartFiles(dir: string): Promise<string[]> {
+  let names: string[]
+  try {
+    names = await readdir(dir)
+  } catch {
+    return []
+  }
+  const removed: string[] = []
+  for (const name of names) {
+    if (!PART_NAME.test(name)) continue
+    await rm(join(dir, name), { force: true }).then(() => removed.push(name), () => {})
+  }
+  return removed
 }

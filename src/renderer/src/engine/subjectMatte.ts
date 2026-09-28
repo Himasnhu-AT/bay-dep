@@ -184,7 +184,13 @@ export class MatteStore {
           }
         },
         (error: unknown) => {
-          this.#failed.set(key, { error: `the subject matte could not be read (${error instanceof Error ? error.message : String(error)})`, at: Date.now() })
+          const why = `the subject matte could not be read (${error instanceof Error ? error.message : String(error)})`
+          this.#failed.set(key, { error: why, at: Date.now() })
+          // The index may describe a pack that has since been replaced (evicted and recomputed): its
+          // offsets then point into different bytes. So the pack counts as failed — reported for
+          // `RETRY_AFTER_MS`, like any failure — and the retry after that re-reads its index.
+          const held = this.#indexes.get(index.key)
+          if (held?.state === 'ready' && held.index === index) this.#indexes.set(index.key, { state: 'error', error: why, at: Date.now() })
         }
       )
       .finally(() => {

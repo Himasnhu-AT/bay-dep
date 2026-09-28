@@ -16,8 +16,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { NO_VENDORED_FFMPEG, vendoredTools } from '../ffmpeg/vendor'
 import { MatteSmoother, oneFrameDelay, quantiseMatte, subjectArea } from './smooth'
-import { MattePackWriter, PACK_MAGIC, readPackFrame, readPackIndex } from './pack'
-import { computeSubjectMatte, matteDecodeArgs, megabytesPerMinute, showinfoFrame, type MaskFrame, type MatteEngine, type RgbaFrame } from './compute'
+import { MattePackWriter, PACK_MAGIC, readPackFrame, readPackIndex, sweepMattePartFiles } from './pack'
+import { computeSubjectMatte, matteDecodeArgs, MatteStalledError, megabytesPerMinute, showinfoFrame, type MaskFrame, type MatteEngine, type RgbaFrame } from './compute'
+import { IdleGate } from './idle'
+import { budgetedCacheDirs, enforceCacheBudget, matteCacheDir } from '../media/cache-budget'
 import { MatteService } from './service'
 import { VisionSegmenter } from './vision-jxa'
 
@@ -263,4 +265,154 @@ test('Apple Vision finds the person in a clip of people', { skip: SKIP_PERSON, t
   } finally {
     service.dispose()
   }
+})
+
+// -- review fixes ----------------------------------------------------------------------------------
+
+test('the idle stop waits for the last running job: A ending does not stop B', async () => {
+  let stops = 0
+  const gate = new IdleGate(60, () => { stops += 1 })
+  gate.begin() // A
+  gate.begin() // B
+  gate.end() // A finishes; B is still running
+  await new Promise((r) => setTimeout(r, 150))
+  assert.equal(stops, 0, 'B\'s process was stopped while B was running')
+  gate.end() // B finishes
+  await new Promise((r) => setTimeout(r, 150))
+  assert.equal(stops, 1, 'positive control: idle after the last job, the process stops')
+  gate.begin()
+  gate.end()
+  gate.cancel()
+  await new Promise((r) => setTimeout(r, 150))
+  assert.equal(stops, 1, 'quit cancels a pending idle stop')
+})
+
+/** An engine that answers the first `answered` frames and then never again (a hung osascript). */
+class HungEngine extends FakeEngine {
+  answered = 3
+  override async segment(frame: RgbaFrame): Promise<MaskFrame> {
+    if (this.sent.length >= this.answered) {
+      this.sent.push({ width: frame.width, height: frame.height })
+      return new Promise<MaskFrame>(() => {})
+    }
+    return super.segment(frame)
+  }
+}
+
+test('a hung engine is stopped by the watchdog with a clear message, and the queue goes on', { skip: SKIP_FFMPEG, timeout: 30_000 }, async () => {
+  const engine = new HungEngine()
+  const dir = scratch()
+  const started = Date.now()
+  // A backstop that is not the watchdog: without it this call would hang the test process for good
+  // (ffmpeg waiting on a pipe nobody reads). Cancelled this way, the error is not a stall and fails.
+  const backstop = new AbortController()
+  const timer = setTimeout(() => backstop.abort(), 5_000)
+  await assert.rejects(
+    computeSubjectMatte({ ffmpeg: TOOLS!.ffmpeg, path: testClip(), fromUs: 0, toUs: 2_000_000, engine, outPath: join(dir, 'k.bmat'), stallMs: 300, signal: backstop.signal }),
+    (error: Error) => error instanceof MatteStalledError && /nothing came back from ffmpeg or Apple Vision for 0 s.*Ask again/.test(error.message)
+  )
+  clearTimeout(timer)
+  assert.ok(Date.now() - started < 5_000, 'stopped by the watchdog, not by the backstop')
+  assert.ok(engine.stopped >= 1, 'the engine was stopped')
+  assert.deepEqual(readdirSync(dir), [], 'no pack, no .part')
+
+  // Through the service: the hung job fails in words, and the next job still runs.
+  const hung = new HungEngine()
+  const service = new MatteService({ dir: scratch(), ffmpeg: () => TOOLS!.ffmpeg, engine: hung, isAllowed: () => true, stallMs: 300 })
+  const failed = await service.ensure({ path: testClip(), fromUs: 0, toUs: 1_000_000 })
+  assert.equal(failed.ok, false)
+  if (!failed.ok) assert.match(failed.error, /nothing came back/)
+  hung.answered = Number.POSITIVE_INFINITY
+  const next = await service.ensure({ path: testClip(), fromUs: 0, toUs: 400_000 })
+  assert.ok(next.ok, `the queue continued: ${JSON.stringify(next)}`)
+})
+
+test('answers the engine owes when it dies are never unhandled rejections', { skip: SKIP_FFMPEG, timeout: 30_000 }, async () => {
+  const unhandled: unknown[] = []
+  const listener = (reason: unknown): void => { unhandled.push(reason) }
+  process.on('unhandledRejection', listener)
+  try {
+    // The first answer is slow; the next three reject at once, before anything awaits them.
+    class DyingEngine extends FakeEngine {
+      override async segment(frame: RgbaFrame): Promise<MaskFrame> {
+        const n = this.sent.length
+        this.sent.push({ width: frame.width, height: frame.height })
+        if (n === 0) {
+          await new Promise((r) => setTimeout(r, 100))
+          throw new Error('The Apple Vision process stopped (SIGKILL).')
+        }
+        throw new Error('The Apple Vision process stopped (SIGKILL).')
+      }
+    }
+    await assert.rejects(
+      computeSubjectMatte({ ffmpeg: TOOLS!.ffmpeg, path: testClip(), fromUs: 0, toUs: 2_000_000, engine: new DyingEngine(), outPath: join(scratch(), 'k.bmat') }),
+      /stopped/
+    )
+    await new Promise((r) => setTimeout(r, 50))
+    assert.deepEqual(unhandled.map(String), [])
+  } finally {
+    process.off('unhandledRejection', listener)
+  }
+})
+
+test('startup sweeps interrupted .part files — bay\'s own only', async () => {
+  const dir = scratch()
+  const key = 'a'.repeat(32)
+  writeFileSync(join(dir, `${key}.bmat.part`), 'x')
+  writeFileSync(join(dir, `${'b'.repeat(32)}.bmat`), 'finished')
+  writeFileSync(join(dir, 'notes.part'), 'not ours')
+  writeFileSync(join(dir, `${'c'.repeat(31)}.bmat.part`), 'not a key')
+  assert.deepEqual(await sweepMattePartFiles(dir), [`${key}.bmat.part`])
+  assert.deepEqual(readdirSync(dir).sort(), [`${'b'.repeat(32)}.bmat`, `${'c'.repeat(31)}.bmat.part`, 'notes.part'])
+  assert.deepEqual(await sweepMattePartFiles(join(dir, 'absent')), [])
+})
+
+test('matte packs count toward the cache budget, and one in use is never evicted', async () => {
+  const root = scratch()
+  const dirs = budgetedCacheDirs(root)
+  assert.ok(dirs.includes(matteCacheDir(root)), `the budget measures ${dirs.join(', ')}`)
+  assert.match(matteCacheDir(root), /mattes-v\d+$/)
+  const { mkdirSync, utimesSync } = await import('node:fs')
+  mkdirSync(matteCacheDir(root), { recursive: true })
+  const old = join(matteCacheDir(root), `${'1'.repeat(32)}.bmat`)
+  const used = join(matteCacheDir(root), `${'2'.repeat(32)}.bmat`)
+  writeFileSync(old, Buffer.alloc(4000))
+  writeFileSync(used, Buffer.alloc(4000))
+  utimesSync(old, new Date(1000), new Date(1000))
+  utimesSync(used, new Date(2000), new Date(2000))
+  const result = await enforceCacheBudget(dirs, 5000, new Set(['2'.repeat(24)]))
+  assert.equal(result.entriesEvicted, 1)
+  assert.equal(existsSync(old), false, 'the unused pack is evicted over budget')
+  assert.equal(existsSync(used), true, 'the pack in use is kept')
+})
+
+test('the service marks packs in use and keys them by the OS build', { skip: SKIP_FFMPEG, timeout: 60_000 }, async () => {
+  const used: string[] = []
+  const dir = scratch()
+  const make = (build: string): MatteService =>
+    new MatteService({ dir, ffmpeg: () => TOOLS!.ffmpeg, engine: new FakeEngine(), isAllowed: () => true, osBuild: () => build, onUse: (key) => used.push(key) })
+  const request = { path: testClip(), fromUs: 0, toUs: 400_000 }
+  const a = await make('25.6.0').ensure(request)
+  assert.ok(a.ok)
+  assert.ok(used.includes(a.matte.key), 'a computed pack is marked in use')
+  used.length = 0
+  const again = await make('25.6.0').ensure(request)
+  assert.ok(again.ok && again.report.cached && used.includes(again.matte.key), 'a cached one too')
+  const updated = await make('25.7.0').ensure(request)
+  assert.ok(updated.ok)
+  assert.notEqual(updated.matte.key, a.matte.key, 'after a macOS update the same range is a new pack')
+  assert.equal(updated.report.cached, false)
+})
+
+test('cancelling a job whose engine has hung ends it at once', { skip: SKIP_FFMPEG, timeout: 30_000 }, async () => {
+  const engine = new HungEngine()
+  const controller = new AbortController()
+  setTimeout(() => controller.abort(), 300)
+  const started = Date.now()
+  // A backstop past the cancel: without the fix the call waits for the watchdog, which fails the time check.
+  await assert.rejects(
+    computeSubjectMatte({ ffmpeg: TOOLS!.ffmpeg, path: testClip(), fromUs: 0, toUs: 2_000_000, engine, outPath: join(scratch(), 'k.bmat'), signal: controller.signal, stallMs: 4_000 }),
+    /cancelled|stopped/
+  )
+  assert.ok(Date.now() - started < 3_000, `cancelled in ${Date.now() - started} ms, not by the watchdog`)
 })

@@ -113,6 +113,14 @@ export function planBehindSubject(timeline: Timeline, spec: BehindSubjectSpec, o
     .find(({ item, index }) => item.id !== video.item.id && index > video.index && subjectMaskOf(item) && !subjectMaskOf(item)?.assetId &&
       item.assetId === video.item.assetId && item.from === video.item.from && item.sourceStartUs === video.item.sourceStartUs && item.speed === video.item.speed)
   if (existing && existing.index > overlay.index) {
+    if (existing.track.locked) {
+      return {
+        ok: false,
+        error:
+          `The cut-out ${existing.item.id} for this clip is already there, on ${existing.track.name}, which is locked, so its edge cannot be changed. ` +
+          `Unlock ${existing.track.name} and ask again, or leave it as it is.`
+      }
+    }
     existing.item.masks = [mask]
     return {
       ok: true,

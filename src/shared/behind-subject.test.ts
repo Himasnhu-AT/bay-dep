@@ -108,3 +108,18 @@ test('refusals say what to do next; the nearest legal call succeeds', () => {
   assert.equal(unknown.ok, false)
   if (!unknown.ok) assert.match(unknown.error, /No clip nope.*read_project/)
 })
+
+test('an existing cut-out on a locked track is refused with how to recover, not edited (positive control: unlocked)', () => {
+  const tl = timeline([track('v1', [item('clip', 'vid', 'v1', 0, 300)]), track('v2', [item('title', 'txt', 'v2', 30, 90)])])
+  const first = planBehindSubject(tl, { videoItemId: 'clip', overlayItemId: 'title' }, options)
+  assert.ok(first.ok)
+  const cutTrack = tl.tracks[2]!
+  cutTrack.locked = true
+  const refused = planBehindSubject(tl, { videoItemId: 'clip', overlayItemId: 'title', feather: 5 }, options)
+  assert.equal(refused.ok, false)
+  if (!refused.ok) assert.match(refused.error, new RegExp(`cut-out ${first.cutoutItemId} .* on ${cutTrack.name}, which is locked.*Unlock ${cutTrack.name}`))
+  assert.deepEqual(subjectMaskOf(cutTrack.items[0]!), { kind: 'subject' }, 'the locked cut-out was not changed')
+  cutTrack.locked = false
+  const ok = planBehindSubject(tl, { videoItemId: 'clip', overlayItemId: 'title', feather: 5 }, options)
+  assert.ok(ok.ok && ok.reused)
+})

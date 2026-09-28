@@ -67,6 +67,9 @@ class SoftCanvas {
   }
 }
 
+/** Every filter any software context was given, in order — how a test sees the feather's blur. */
+const filtersSet: string[] = []
+
 interface State {
   alpha: number
   op: Op
@@ -104,7 +107,7 @@ class SoftContext {
   get fillStyle(): string { return this.#s.fill }
   set fillStyle(v: string) { this.#s.fill = v }
   get filter(): string { return this.#s.filter }
-  set filter(v: string) { this.#s.filter = v }
+  set filter(v: string) { this.#s.filter = v; filtersSet.push(v) }
   save(): void { this.#stack.push({ ...this.#s, t: [...this.#s.t] }) }
   restore(): void { const s = this.#stack.pop(); if (s) this.#s = s }
   getTransform(): { a: number; b: number; c: number; d: number; e: number; f: number } {
@@ -437,4 +440,48 @@ test('no matte for this moment is a named placeholder, never an unmasked copy (w
   const short = { ...videoAsset(), subjectMattes: [{ ...MATTE, toUs: 5_000_000 }] }
   const beyond = await draw(scene({ masked: true, asset: short, base: { sourceStartUs: 8_000_000 } }))
   assert.equal(beyond.stats.placeholders, 1, beyond.stats.placeholderNames.join(' '))
+})
+
+test('a crafted feather is capped when read: a .bay cannot ask for a billion-pixel blur (with its control)', async () => {
+  subjectMattes.useLoader(matteLoader())
+  filtersSet.length = 0
+  await draw(scene({ masked: true, copy: { masks: [{ kind: 'subject', feather: 1e9 }] } }))
+  const blurs = filtersSet.filter((f) => f.startsWith('blur('))
+  assert.deepEqual([...new Set(blurs)], ['blur(200px)'], `blur asked for: ${blurs.join(', ')}`)
+  filtersSet.length = 0
+  await draw(scene({ masked: true, copy: { masks: [{ kind: 'subject', feather: 3 }] } }))
+  assert.deepEqual([...new Set(filtersSet.filter((f) => f.startsWith('blur(')))], ['blur(3px)'], 'positive control: an ordinary feather is drawn as asked')
+})
+
+test('a matte frame that cannot be read drops the pack index, so the next lookup reads it afresh', async () => {
+  let indexReads = 0
+  let broken = true
+  const loader = matteLoader()
+  subjectMattes.useLoader({
+    async index(key) { indexReads += 1; return loader.index(key) },
+    async frame(index, i) { if (broken) throw new Error('frame 45 inflated to 7 bytes, not 12'); return loader.frame(index, i) }
+  })
+  const record = MATTE
+  let found = subjectMattes.lookup(record, 1_500_000)
+  await subjectMattes.settle(1000)
+  found = subjectMattes.lookup(record, 1_500_000)
+  await subjectMattes.settle(1000)
+  found = subjectMattes.lookup(record, 1_500_000)
+  assert.ok('error' in found, `the unreadable frame is reported: ${JSON.stringify(found)}`)
+  assert.equal(indexReads, 1)
+  // The pack was replaced (evicted and recomputed): the retry must re-read its index.
+  broken = false
+  const realNow = Date.now
+  Date.now = () => realNow() + 5_000
+  try {
+    found = subjectMattes.lookup(record, 1_500_000)
+    for (let i = 0; i < 4 && 'pending' in found; i += 1) {
+      await subjectMattes.settle(1000)
+      found = subjectMattes.lookup(record, 1_500_000)
+    }
+  } finally {
+    Date.now = realNow
+  }
+  assert.equal(indexReads, 2, 'the index was read again after the frame failed')
+  assert.ok('image' in found, `and the frame then drew: ${JSON.stringify(Object.keys(found))}`)
 })

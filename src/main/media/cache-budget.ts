@@ -28,6 +28,7 @@
 
 import { readdir, stat, unlink, utimes } from 'node:fs/promises'
 import { basename, join } from 'node:path'
+import { CACHE_SCHEME } from './cache-key'
 
 /**
  * 512 MB.
@@ -38,6 +39,21 @@ import { basename, join } from 'node:path'
  * bound the one axis that has no natural limit.
  */
 export const CACHE_BUDGET_BYTES = 512 * 1024 * 1024
+
+/** Subject matte packs (`matte/`): `<cache>/mattes-<scheme>/<32 hex>.bmat`. */
+export const MATTE_CACHE_FAMILY = 'mattes'
+export const matteCacheDir = (cacheRoot: string): string => join(cacheRoot, `${MATTE_CACHE_FAMILY}-${CACHE_SCHEME}`)
+
+/**
+ * The cache directories the budget measures and evicts from. One list, here, so the upkeep pass
+ * and the test read the same one: posters and filmstrips, peaks, and subject matte packs (~12–15 MB
+ * per minute of footage each — the family most able to fill the budget alone). A matte pack's
+ * 32-hex name groups by its first 24 characters like any other entry; one this session computed or
+ * read is in use and never evicted, and one evicted since is recomputed by `put_behind_subject`.
+ */
+export function budgetedCacheDirs(cacheRoot: string): string[] {
+  return [join(cacheRoot, `thumbs-${CACHE_SCHEME}`), join(cacheRoot, `peaks-${CACHE_SCHEME}`), matteCacheDir(cacheRoot)]
+}
 
 /** Cache keys are 24 hex characters — see `cacheKey`. Anything else is not ours to delete. */
 const KEY_PATTERN = /^[0-9a-f]{24}$/

@@ -29,7 +29,7 @@ import {
   playableTimeline
 } from '@shared/project'
 import { animatedItemAt } from '@shared/keyframes'
-import { matteRecordAt, subjectMaskOf } from '@shared/matte'
+import { matteRecordAt, MAX_MASK_FEATHER, subjectMaskOf } from '@shared/matte'
 import { subjectMattes, type MatteImage } from './subjectMatte'
 import { MaskScratch, maskedPicture, matteRect } from './subjectMask'
 import { MediaPool, isDrawable, type MediaEntry } from './mediaPool'
@@ -803,7 +803,9 @@ export class Compositor {
       this.#placeholder(ctx, item, stats, 'Subject matte missing', `${asset.name} (${why} — run put_behind_subject again to compute it)`)
       return 'skip'
     }
-    const feather = mask.feather !== undefined && Number.isFinite(mask.feather) ? Math.max(0, mask.feather) : 0
+    // Capped here as well as in the tool: a `.bay` is data anyone can write, and a crafted feather of
+    // 1e9 is a blur filter no canvas should be asked for.
+    const feather = mask.feather !== undefined && Number.isFinite(mask.feather) ? Math.min(MAX_MASK_FEATHER, Math.max(0, mask.feather)) : 0
     return { matte: found.image, invert: mask.invert === true, feather }
   }
 

@@ -100,7 +100,21 @@ export interface ComputeOptions {
   outPath: string
   signal?: AbortSignal
   edge?: number
+  /**
+   * How long the job may go with nothing moving — no decoded bytes, no frame time, no mask back —
+   * before it is stopped as hung. Default {@link STALL_MS}.
+   */
+  stallMs?: number
 }
+
+/**
+ * A frame takes ~11 ms end to end; ten seconds with nothing moving is a hung `osascript` or a
+ * decoder stuck on a drive that stopped answering. Without it one hang held the job queue — every
+ * later matte — until quit, and the tool's own timeout abandons the call without stopping the job.
+ */
+export const STALL_MS = 10_000
+
+export class MatteStalledError extends Error {}
 
 export interface ComputeResult {
   index: PackIndex
@@ -129,13 +143,39 @@ export async function computeSubjectMatte(options: ComputeOptions): Promise<Comp
 
   const writer = await MattePackWriter.create(options.outPath)
   const child = spawn(options.ffmpeg, matteDecodeArgs(options.path, options.fromUs, options.toUs, options.edge), { stdio: ['ignore', 'pipe', 'pipe'] })
+  // One promise every wait is raced against, rejected by whichever stops the job first — a cancel or
+  // the watchdog — so an engine that neither answers nor fails when stopped cannot hold the job.
+  let halt: (error: Error) => void = () => {}
+  const halted = new Promise<never>((_, reject) => {
+    halt = reject
+  })
+  halted.catch(() => {})
+
   let aborted = false
   const abort = (): void => {
     aborted = true
     child.kill('SIGKILL')
     engine.stop()
+    halt(new MatteCancelledError('The subject matte was cancelled.'))
+    wake()
   }
   signal?.addEventListener('abort', abort, { once: true })
+
+  // The watchdog: anything moving (a decoded chunk, a frame time, a mask back) is progress.
+  const stallMs = options.stallMs ?? STALL_MS
+  let lastProgress = Date.now()
+  let stalled = false
+  const watchdog = setInterval(() => {
+    if (stalled || aborted || Date.now() - lastProgress <= stallMs) return
+    stalled = true
+    child.kill('SIGKILL')
+    engine.stop()
+    halt(new MatteStalledError(
+      `The subject matte stopped: nothing came back from ffmpeg or Apple Vision for ${Math.round(stallMs / 1000)} s, so both were stopped. ` +
+        'Ask again; if it stops again, the file may be damaged or on a drive that is not answering.'
+    ))
+    wake()
+  }, Math.max(10, Math.min(1000, stallMs / 4)))
 
   // stderr and stdout are separate pipes: a frame's bytes can arrive before its showinfo line.
   const infos: { us: number; width: number; height: number }[] = []
@@ -148,6 +188,7 @@ export async function computeSubjectMatte(options: ComputeOptions): Promise<Comp
   }
   child.stderr.setEncoding('utf8')
   child.stderr.on('data', (chunk: string) => {
+    lastProgress = Date.now()
     const lines = (partial + chunk).split('\n')
     partial = lines.pop() ?? ''
     for (const line of lines) {
@@ -185,7 +226,9 @@ export async function computeSubjectMatte(options: ComputeOptions): Promise<Comp
   const settleOne = async (): Promise<void> => {
     const next = inFlight.shift()
     if (!next) return
-    const mask = await next.answer
+    // Raced against the watchdog: an engine that neither answers nor fails must not hold the job.
+    const mask = await Promise.race([next.answer, halted])
+    lastProgress = Date.now()
     if (masks === 0) {
       maskWidth = mask.width
       maskHeight = mask.height
@@ -204,13 +247,15 @@ export async function computeSubjectMatte(options: ComputeOptions): Promise<Comp
     let pending: Buffer = Buffer.alloc(0)
     let index = 0
     for await (const chunk of child.stdout as AsyncIterable<Buffer>) {
+      lastProgress = Date.now()
       pending = pending.length === 0 ? chunk : Buffer.concat([pending, chunk])
       for (;;) {
         if (pending.length === 0) break
         // Each frame's size is on its showinfo line, which may still be on its way.
-        while (infos.length <= index && !stderrEnded && !aborted) {
+        while (infos.length <= index && !stderrEnded && !aborted && !stalled) {
           await new Promise<void>((resolve) => infoArrived.push(resolve))
         }
+        if (stalled) await halted
         if (aborted) throw new MatteCancelledError('The subject matte was cancelled.')
         const info = infos[index]
         if (!info) throw new Error(`ffmpeg did not report the time of frame ${index} of ${options.path}.`)
@@ -219,7 +264,11 @@ export async function computeSubjectMatte(options: ComputeOptions): Promise<Comp
         const rgba = Buffer.from(pending.subarray(0, bytes))
         pending = pending.subarray(bytes)
         index += 1
-        inFlight.push({ ptsUs: options.fromUs + info.us, answer: engine.segment({ width: info.width, height: info.height, rgba }) })
+        const answer = engine.segment({ width: info.width, height: info.height, rgba })
+        // Observed from the moment it exists: when the engine dies, every answer still owed rejects
+        // at once, and one not yet awaited would surface as an unhandled rejection in main.
+        answer.catch(() => {})
+        inFlight.push({ ptsUs: options.fromUs + info.us, answer })
         // Keep the pipe full without buffering a clip's worth of frames: backpressure is ffmpeg
         // waiting on stdout while the engine catches up.
         while (inFlight.length >= IN_FLIGHT) await settleOne()
@@ -228,6 +277,7 @@ export async function computeSubjectMatte(options: ComputeOptions): Promise<Comp
     while (inFlight.length > 0) await settleOne()
     await writeSmoothed(smoother.flush())
     const code = await exited
+    if (stalled) await halted
     if (aborted) throw new MatteCancelledError('The subject matte was cancelled.')
     if (code !== 0) {
       throw new Error(`ffmpeg could not read ${options.path}: ${stderrTail.trim().split('\n').slice(-2).join(' ') || `exit ${code}`}`)
@@ -257,12 +307,13 @@ export async function computeSubjectMatte(options: ComputeOptions): Promise<Comp
     return { index: packIndex, bytes, report: { ...report, cached: false, bytes, megabytesPerMinute: megabytesPerMinute(bytes, packIndex) } }
   } catch (error) {
     await writer.abort()
+    // Whatever broke first, a stall is the reason: the engine's "stopped" is its consequence.
+    if (stalled && !(error instanceof MatteStalledError)) await halted
     throw error
   } finally {
+    clearInterval(watchdog)
     signal?.removeEventListener('abort', abort)
     if (child.exitCode === null) child.kill('SIGKILL')
-    // Answers still owed by the engine are dropped; the promises must not surface as unhandled.
-    for (const flight of inFlight) flight.answer.catch(() => {})
   }
 }
 

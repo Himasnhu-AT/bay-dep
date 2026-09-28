@@ -29,7 +29,7 @@ import type { RecentProject } from '@shared/ipc'
 import { cacheDir, downloadsDir } from './paths'
 import { sweepStaleCaches } from './media/cache-key'
 import { VISION_CACHE_FAMILY } from './vision/cache'
-import { MATTE_CACHE_FAMILY, stopSubjectMattes } from './matte/host'
+import { MATTE_CACHE_FAMILY, stopSubjectMattes, sweepInterruptedMattes } from './matte/host'
 import { cancelCacheUpkeep, runCacheUpkeep } from './media/cache-upkeep'
 import { startMcpServer, stopMcpServer } from './mcp/server'
 import { isOpenableExternally } from './external'
@@ -258,6 +258,9 @@ void app.whenReady().then(() => {
   installMenu()
   onRecentsChanged(rebuildMenu)
   rebuildMenu()
+
+  // A subject matte a crash or a kill interrupted leaves its `.part`; nothing is computing yet.
+  void sweepInterruptedMattes()
 
   // What the user attached to a conversation that ended without `dispose` — a crash, a force
   // quit. No conversation exists yet, so nothing is reading them.

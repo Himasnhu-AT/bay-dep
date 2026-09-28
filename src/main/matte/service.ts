@@ -15,6 +15,7 @@
 
 import { createHash } from 'node:crypto'
 import { mkdir } from 'node:fs/promises'
+import { release } from 'node:os'
 import { join } from 'node:path'
 import {
   MATTE_KEY_PATTERN,
@@ -27,7 +28,7 @@ import {
 } from '@shared/matte'
 import { contentKey as fileContentKey } from '../vision/cache'
 import { mediaUrl } from '../serve'
-import { computeSubjectMatte, MatteCancelledError, megabytesPerMinute, NoPictureError, type MatteEngine } from './compute'
+import { computeSubjectMatte, MatteCancelledError, MatteStalledError, megabytesPerMinute, NoPictureError, type MatteEngine } from './compute'
 import { readPackIndex, type PackIndex } from './pack'
 import { VisionUnavailableError } from './vision-jxa'
 
@@ -39,6 +40,18 @@ export interface MatteServiceOptions {
   /** Whether `bay://` would serve this path — the renderer's paths are read only where it would. */
   isAllowed: (path: string) => boolean
   contentKey?: (path: string) => Promise<string>
+  /**
+   * The OS build the engine runs on, part of the key: Apple Vision is the OS's model, so a macOS
+   * update can change the matte for the same frame, and a pack computed before it must not be read
+   * as one computed after (a recomputed pack under the same key would also move every frame's
+   * offset under an index the renderer already holds). `os.release()` — the Darwin version, which
+   * every macOS update changes — by default.
+   */
+  osBuild?: () => string
+  /** A pack this session computed or read — for the cache budget, which never evicts one in use. */
+  onUse?: (key: string, path: string) => void
+  /** The watchdog's patience (`compute.ts`); the default in the app. */
+  stallMs?: number
 }
 
 export class MatteService {
@@ -54,7 +67,8 @@ export class MatteService {
   /** The pack's file name for a request, and its key. */
   async keyFor(request: SubjectMatteRequest): Promise<string> {
     const content = await (this.#options.contentKey ?? fileContentKey)(request.path)
-    return createHash('sha256').update(matteKeyInput(content, request.fromUs, request.toUs, this.#options.engine.id)).digest('hex').slice(0, 32)
+    const engine = `${this.#options.engine.id}@${(this.#options.osBuild ?? release)()}`
+    return createHash('sha256').update(matteKeyInput(content, request.fromUs, request.toUs, engine)).digest('hex').slice(0, 32)
   }
 
   packPath(key: string): string {
@@ -86,6 +100,8 @@ export class MatteService {
 
   async #run(key: string, request: SubjectMatteRequest): Promise<SubjectMatteResult> {
     const path = this.packPath(key)
+    // Marked before anything is read or written, so a budget pass during the job leaves it alone.
+    this.#options.onUse?.(key, path)
     const found = await readPackIndex(path)
     if (found) return { ok: true, matte: recordOf(key, found.index), report: cachedReport(found.index, found.bytes) }
     // Serialised behind whatever job is running: one engine process, answered in order.
@@ -108,12 +124,14 @@ export class MatteService {
         toUs: request.toUs,
         engine: this.#options.engine,
         outPath: path,
-        signal: controller.signal
+        signal: controller.signal,
+        ...(this.#options.stallMs !== undefined ? { stallMs: this.#options.stallMs } : {})
       })
       return { ok: true, matte: recordOf(key, result.index), report: result.report }
     } catch (error) {
       if (error instanceof VisionUnavailableError) return { ok: false, code: 'unavailable', error: error.message }
       if (error instanceof NoPictureError) return { ok: false, code: 'no-picture', error: error.message }
+      if (error instanceof MatteStalledError) return { ok: false, code: 'failed', error: error.message }
       if (error instanceof MatteCancelledError || controller.signal.aborted) {
         return { ok: false, code: 'failed', error: 'The subject matte was cancelled before it finished; ask again to compute it.' }
       }
@@ -128,6 +146,7 @@ export class MatteService {
     if (typeof key !== 'string' || !MATTE_KEY_PATTERN.test(key)) return { ok: false, error: 'A matte key is 32 hex characters.' }
     const path = this.packPath(key)
     const found = await readPackIndex(path)
+    if (found) this.#options.onUse?.(key, path)
     if (!found) {
       return { ok: false, error: 'No subject matte with that key is on this Mac (it was never computed here, or the cache was cleared). Run put_behind_subject again to compute it.' }
     }

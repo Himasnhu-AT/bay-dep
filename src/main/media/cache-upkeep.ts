@@ -7,8 +7,8 @@
  * directories are.
  */
 
-import { peaksDir, thumbsDir } from './cache-dirs'
-import { CACHE_BUDGET_BYTES, enforceCacheBudget, touchEntry } from './cache-budget'
+import { cacheDir } from '../paths'
+import { budgetedCacheDirs, CACHE_BUDGET_BYTES, enforceCacheBudget, touchEntry } from './cache-budget'
 
 /**
  * Keys this session has read or written.
@@ -55,7 +55,7 @@ export async function runCacheUpkeep(): Promise<void> {
   if (running) return
   running = true
   try {
-    const result = await enforceCacheBudget([thumbsDir(), peaksDir()], CACHE_BUDGET_BYTES, inUse)
+    const result = await enforceCacheBudget(budgetedCacheDirs(cacheDir()), CACHE_BUDGET_BYTES, inUse)
     if (result.entriesEvicted > 0) {
       const mb = (bytes: number): string => (bytes / (1024 * 1024)).toFixed(0)
       console.log(
