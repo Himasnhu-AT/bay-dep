@@ -6,10 +6,10 @@ export const order = 320
 export const tool: ToolSpec = {
   name: 'export_timeline',
   description:
-    'Render the timeline to a file. Returns a job id immediately; with wait: true it instead ' +
-    'waits up to 120 s and answers with the finished export (what track_export returns), or, ' +
-    'when it is still rendering, with the jobId — then call track_export with waitSeconds, ' +
-    'never back to back. Check the result before ' +
+    'Render the timeline to a file, and wait for it: the call returns when the export is done, ' +
+    'failed or cancelled (up to 30 minutes), with the final result — stage, outputPath, ' +
+    '`complete`, `incompleteFrames`, `findings`, `deliveredLoudness`. There is nothing to check ' +
+    'on afterwards. wait: false returns the jobId at once instead. Check the result before ' +
     'telling the user it is done: an export can finish with no frames if the timeline is ' +
     'empty over the range you asked for.',
   category: 'submit',
@@ -26,8 +26,8 @@ export const tool: ToolSpec = {
       wait: {
         type: 'boolean',
         description:
-          'Wait up to 120 s for the export to finish and return its final status (done, failed or ' +
-          'cancelled). A short export is then one call. Default false: return the jobId at once.'
+          'Default true: wait until the export finishes and return its final result. false returns ' +
+          'the jobId at once, for a caller that has other work to do meanwhile.'
       },
       fromFrame: frames('First frame. Defaults to 0.'),
       toFrame: frames('Last frame, inclusive. Defaults to the end of the timeline.'),

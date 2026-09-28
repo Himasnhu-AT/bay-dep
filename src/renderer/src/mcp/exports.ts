@@ -9,14 +9,13 @@
  *
  * The frame pump runs in the renderer on purpose. `export.start` only opens a job on the
  * encoder; if nothing feeds it, ffmpeg waits on a stream that never arrives and the agent
- * polls a job that will never finish. That exact gap shipped once already.
+ * waits on a job that will never finish. That exact gap shipped once already.
  */
 
 import type { ExportFormat, ExportProgress, IncompleteFrames } from '@shared/ipc'
 import { timelineDuration } from '@shared/project'
 import { chooseExportLoudness, describeTarget, rememberedTarget, unmasteredLevelWarning, type LoudnessTarget } from '@shared/loudness'
 import { checkExportRange } from '@shared/export-presets'
-import { WAIT_MAX_SECONDS } from '@shared/tools/fields'
 import { hasBlocking, type Finding } from '@shared/findings'
 import { FrameExporter } from '@/engine'
 import { bay } from '@/lib/bay'
@@ -223,13 +222,14 @@ export async function exportTimeline(
     ...(loudness.target ? { loudnessTarget: loudness.target } : {}),
     ...loudnessResult(loudness.target, loudness.source, loudness.forget),
     ...(remembered.warning && args.loudness === undefined ? { warning: remembered.warning } : {}),
-    note: `Call track_export { jobId: "${job.jobId}", waitSeconds: ${WAIT_MAX_SECONDS} } to wait for it. Do not assume success — check the final stage.`
+    note: `Rendering in the background. track_export { jobId: "${job.jobId}" } waits until it finishes and returns the result; check its stage and \`complete\` before calling it done.`
   }
-  if (args.wait !== true) return started
+  if (args.wait === false) return started
 
-  // Asked to wait: the same wait `track_export` does, and its answer when the job finished. The
-  // start's own facts (quality, the loudness decision) stay beside it; the stage is the status's.
-  const status = await trackExport({ jobId: job.jobId, waitSeconds: WAIT_MAX_SECONDS }, context)
+  // By default the call waits until the export is done, failed or cancelled, and answers with
+  // what `track_export` would then say — so there is nothing left to ask about. The start's own
+  // facts (quality, the loudness decision) stay beside it; the stage is the status's.
+  const status = await trackExport({ jobId: job.jobId }, context)
   const { note: _note, ...rest } = started
   return { ...rest, ...status }
 }
@@ -268,7 +268,7 @@ function loudnessResult(
 const FINISHED: readonly string[] = ['done', 'failed', 'cancelled']
 
 /** How often a waiting `track_export` looks at the job: a map read, so often. */
-const EXPORT_POLL_MS = 250
+const EXPORT_CHECK_MS = 250
 
 export async function trackExport(args: Record<string, unknown>, context?: CallContext): Promise<Record<string, unknown>> {
   const jobId = String(args.jobId)
@@ -291,13 +291,16 @@ export async function trackExport(args: Record<string, unknown>, context?: CallC
 
   const seconds = waitSecondsOf(args)
   // The record is replaced in place by progress events, so each look reads the latest.
-  const outcome = await waitUntil(() => FINISHED.includes(job.progress.stage), { seconds, pollMs: EXPORT_POLL_MS, context })
+  const outcome = await waitUntil(() => FINISHED.includes(job.progress.stage), { seconds, everyMs: EXPORT_CHECK_MS, context })
 
   // Read live from the exporter, not from main's progress: main encodes what it is handed and
   // cannot know a frame was missing something. Final before `done` can arrive (see the getter).
   const status = exportStatus(job.progress, job.outputPath, job.exporter?.incomplete ?? null)
   status.waited = outcome.waited
-  if (!status.finished) status.note = stillWorking('track_export', `jobId "${jobId}"`, outcome)
+  if (!status.finished) {
+    const state = status.percent === null ? `rendering (${job.progress.stage})` : `rendering at ${String(status.percent)}%`
+    status.note = stillWorking(`track_export { jobId: "${jobId}" }`, state, outcome)
+  }
   return status
 }
 

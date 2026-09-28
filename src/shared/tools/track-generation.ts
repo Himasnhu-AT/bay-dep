@@ -6,10 +6,9 @@ export const order = 360
 export const tool: ToolSpec = {
   name: 'track_generation',
   description:
-    'Status of a generate_image, generate_video or generate_speech job. It waits for the job to ' +
-    'land before answering — up to waitSeconds (default 30, at most 120) — and returns the moment ' +
-    'it is done or failed, with `waited`. Pass waitSeconds: 120 rather than calling it repeatedly; ' +
-    'a result still running means call again the same way, never in a tight loop. When it lands: the file is ' +
+    'Status of a generate_image, generate_video or generate_speech job. It waits until the job ' +
+    'is done or failed (up to 30 minutes) and then answers once; waitSeconds sets a shorter upper ' +
+    'bound, and 0 reads the status at once. When it lands: the file is ' +
     'imported as an asset and returned (id, kind, duration), and with place: true it is also put ' +
     'on the timeline like place_asset — a voiceover on an audio track at atFrame, with its measured ' +
     'seconds beside the estimate. Always read `findings`: a blocking finding means the result was unusable and ' +

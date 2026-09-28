@@ -33,7 +33,7 @@ export const style: EditingStyle = {
     '9. Audio: one sparse music track at about −18 dB (edit_item volume ≈ 0.13, estimate), or natural sound alone. No sound-effect hits.',
     '10. Start and end on black: fadeInFrames on the first shot and fadeOutFrames on the last, about 1 s each.',
     '11. Check with frame_grid over the whole film: average shot at least 4 s, and no transition besides the cut and the dissolve. Fix, then look again.',
-    '12. If asked to export: export_timeline mp4, quality "best", loudness "streaming" (or "off" to keep the music\'s own level), then track_export until complete.'
+    '12. If asked to export: export_timeline mp4, quality "best", loudness "streaming" (or "off" to keep the music\'s own level) — it returns when the export is finished; check `complete`.'
   ].join('\n'),
   params: {
     canvas: 'landscape-1080',

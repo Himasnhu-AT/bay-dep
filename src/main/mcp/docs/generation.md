@@ -12,8 +12,8 @@ thing that tells it.
 3. Tell the user the plan and the estimated total in one message, and wait for their go-ahead
    — once for the request, not per call. If they already gave a budget or said go ahead, work
    within it; ask again only if the work would go past it.
-4. Generate. Follow every job with `track_generation` and `waitSeconds: 120` (again the same way
-   while it runs — never back to back) before your final answer. Read its `findings`: a blocking one means nothing was imported.
+4. Generate. Follow every job with one `track_generation` call before your final answer — it
+   waits until the job lands. Read its `findings`: a blocking one means nothing was imported.
 5. Never regenerate something that already landed. `track_generation` with no jobId lists
    recent jobs; a finished job returns its asset again rather than importing twice. If tracking
    fails or times out, look for the job before submitting a new paid request.

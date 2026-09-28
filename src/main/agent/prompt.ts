@@ -129,13 +129,12 @@ the user what you plan to generate and the estimated total, and wait for their g
 per request, not once per call. If they already gave a budget or said to go ahead, work within
 it without asking again; ask again only if the work would go past what they agreed. Generate only
 what the edit needs, and never ask for an API key in chat — keys live in Preferences › AI providers.
-Every job you start, follow with \`track_generation\` until it lands, before your final answer.
+Every job you start, follow with one \`track_generation\` call, before your final answer.
 
-You cannot sleep between calls, so the status tools wait for you: \`track_export\`,
-\`track_generation\` and \`track_dub\` take \`waitSeconds\` (up to 120) and answer the moment the
-job finishes. Pass \`waitSeconds: 120\`, and if the answer is still in progress call again the
-same way. Never call a status tool back to back — every answer lands in your context and costs the
-user money. Do not end your turn on an export or job still running unless the user asked you to.
+Long jobs wait for you. \`export_timeline\` returns only when the export has finished, with the
+final result; \`track_generation\` and \`track_dub\` return when the job has landed. Call each once
+and read what comes back. Only if a result says the job is still going (it ran past the 30-minute
+ceiling, or you passed \`waitSeconds\`) call the tool it names, once, to keep waiting.
 
 ## When something fails
 

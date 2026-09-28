@@ -144,8 +144,25 @@ export function childEnv(base: NodeJS.ProcessEnv = process.env): Record<string, 
     if (value !== undefined && key !== 'ELECTRON_RUN_AS_NODE') env[key] = value
   }
   env['CLAUDE_CODE_DISABLE_CLAUDE_MDS'] = '1'
+  // Claude Code's own ceiling on one MCP tool call — "a hard wall-clock limit per call; progress
+  // notifications do not extend it" (the CLI's own help text for the per-server `timeout`, which
+  // overrides this variable). Set, not left to the CLI's default, because `export_timeline` and the
+  // track tools wait up to 30 minutes by design, and a client that gave up first would report a
+  // failure for an export that was still rendering.
+  env['MCP_TOOL_TIMEOUT'] = String(MCP_TOOL_TIMEOUT_MS)
+  // And its *idle* ceiling: a stdio call with "no response or progress" for this long is aborted.
+  // Read out of the bundled CLI (claude-agent-sdk 0.3.280): the stdio default is 1,800,000 ms —
+  // exactly the 30-minute wait, so a wait that ran to its ceiling would lose the race to it.
+  env['CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT'] = String(MCP_TOOL_TIMEOUT_MS)
   return env
 }
+
+/**
+ * The agent's timeout for one bay tool call: the slowest tool's own budget (`timeoutMs`, which is
+ * what main waits in `server.ts`) plus a minute, so main's answer — its own timeout message
+ * included — always arrives before the client stops listening.
+ */
+export const MCP_TOOL_TIMEOUT_MS = Math.max(60_000, ...TOOLS.map((tool) => tool.timeoutMs ?? 0)) + 60_000
 
 /**
  * How long a turn may run before it is abandoned. A stuck turn must not be a stuck panel.

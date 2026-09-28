@@ -24,6 +24,8 @@ import { emptyProject, useEditor } from '@/store/editor'
 import { agentActingDepth } from '@/store/agent-turns'
 import { cancelToolCall, executeToolCall } from './index'
 import { forgetJobsForTest, recordJobForTest } from './exports'
+import { setCeilingForTest, waitSecondsOf } from './wait'
+import { WAIT_CEILING_SECONDS } from '@shared/tools/fields'
 
 // A reload keeps sessionStorage and loses module state; this stands in for the storage.
 const session = new Map<string, string>()
@@ -34,6 +36,7 @@ const session = new Map<string, string>()
 
 let emit: ((update: ExportProgress) => void) | null = null
 let nextExport = 0
+const cancels: string[] = []
 let genJobs: GenerationJob[] = []
 ;(globalThis as { window?: unknown }).window = {
   bay: {
@@ -45,6 +48,9 @@ let genJobs: GenerationJob[] = []
       onProgress: (listener: (update: ExportProgress) => void) => {
         emit = listener
         return () => undefined
+      },
+      cancel: async (jobId: string) => {
+        cancels.push(jobId)
       }
     },
     generation: {
@@ -108,28 +114,32 @@ test('an already-finished export costs no wait at all', { timeout: 10_000 }, asy
   assert.equal(value.waited, 0)
 })
 
-test('a job still running at the cap comes back in progress, saying to call again with waitSeconds', { timeout: 10_000 }, async () => {
+test('a job still running when the bound runs out comes back in progress, naming the call that keeps waiting', { timeout: 10_000 }, async () => {
   recordJobForTest('job-slow', RUNNING)
   const { value, ms } = await call('track_export', { jobId: 'job-slow', waitSeconds: 0.6 })
   assert.equal(value.finished, false)
   assert.equal(value.stage, 'rendering')
   assert.equal(value.percent, 40)
   assert.ok(ms >= 550 && ms < 2000, `answered after ${ms} ms of a 0.6 s wait`)
-  assert.match(String(value.note), /Still working after waiting 0\.\ds\. Call track_export again with jobId "job-slow" and waitSeconds \(up to 120\)/)
-  assert.match(String(value.note), /Do not call it in a tight loop/)
+  assert.match(String(value.note), /^Still rendering at 40% after 0\.\ds\. Call track_export \{ jobId: "job-slow" \} to keep waiting/)
+  assert.doesNotMatch(String(value.note), /poll/i)
   // The control: waitSeconds 0 is one look.
   const once = await call('track_export', { jobId: 'job-slow', waitSeconds: 0 })
   assert.equal(once.value.finished, false)
   assert.ok(once.ms < 200, `waitSeconds 0 answered after ${once.ms} ms`)
 })
 
-test('a wait past the cap is refused with the range, and the cap itself is accepted', { timeout: 10_000 }, async () => {
+test('with no waitSeconds the wait runs to the 30-minute ceiling; past the ceiling is refused, the ceiling itself accepted', { timeout: 10_000 }, async () => {
+  // Waiting until the job finishes is the default, not an option the agent must know to pass.
+  assert.equal(WAIT_CEILING_SECONDS, 1800)
+  assert.equal(waitSecondsOf({}), WAIT_CEILING_SECONDS)
+  assert.equal(waitSecondsOf({ waitSeconds: 0 }), 0)
   recordJobForTest('job-capped', DONE)
-  const refused = await executeToolCall({ id: 'cap', tool: 'track_export', args: { jobId: 'job-capped', waitSeconds: 600 } })
+  const refused = await executeToolCall({ id: 'cap', tool: 'track_export', args: { jobId: 'job-capped', waitSeconds: 5000 } })
   assert.equal(refused.ok, false)
   assert.match(refused.ok ? '' : refused.error, /waitSeconds/)
-  assert.match(refused.ok ? '' : refused.error, /120/)
-  const ok = await call('track_export', { jobId: 'job-capped', waitSeconds: 120 })
+  assert.match(refused.ok ? '' : refused.error, /1800/)
+  const ok = await call('track_export', { jobId: 'job-capped', waitSeconds: 1800 })
   assert.equal(ok.value.stage, 'done')
 })
 
@@ -139,7 +149,7 @@ test('a cancelled call stops waiting at once and says the job is still running',
   const { value, ms } = await call('track_export', { jobId: 'job-abandoned', waitSeconds: 60 }, 'the-call')
   assert.ok(ms < 1500, `a cancelled wait answered after ${ms} ms`)
   assert.equal(value.finished, false)
-  assert.match(String(value.note), /cancelled; the job itself is still running/)
+  assert.match(String(value.note), /cancelled; the job itself is rendering at 40% and was not touched/)
   // The control: cancelling some other call's id does not stop this one early.
   recordJobForTest('job-other', RUNNING)
   setTimeout(() => cancelToolCall('not-this-call'), 50)
@@ -178,8 +188,8 @@ test('time spent waiting is not the agent acting, so the user’s edits meanwhil
   assert.equal(agentActingDepth(), 0, 'the depth is back where it was after the call')
 })
 
-test('export_timeline with wait: true returns the finished export; without it, the jobId at once', { timeout: 10_000 }, async () => {
-  const quick = call('export_timeline', { outputPath: '/tmp/w.wav', format: 'wav', wait: true })
+test('export_timeline waits by default and returns the final result; wait: false returns the jobId at once', { timeout: 10_000 }, async () => {
+  const quick = call('export_timeline', { outputPath: '/tmp/w.wav', format: 'wav' })
   // The job id is exp_N for the start just made; finish it a little later.
   setTimeout(() => {
     assert.ok(emit, 'export_timeline subscribes to progress')
@@ -189,12 +199,51 @@ test('export_timeline with wait: true returns the finished export; without it, t
   assert.equal(value.stage, 'done')
   assert.equal(value.outputPath, '/tmp/w.wav')
   assert.equal(value.quality, 'good', 'the start’s own facts stay beside the status')
-  assert.ok(ms < 1500, `answered after ${ms} ms; the export finished at 150 ms`)
+  assert.ok(ms >= 100 && ms < 1500, `answered after ${ms} ms; the export finished at 150 ms`)
+  // The same shape track_export gives at done, so there is nothing left to ask about.
+  assert.equal(value.finished, true)
+  assert.equal(value.complete, true)
+  assert.deepEqual(value.findings, [])
+  assert.equal(value.note, undefined)
 
-  const started = await call('export_timeline', { outputPath: '/tmp/x.wav', format: 'wav' })
-  assert.equal(started.value.stage, undefined, 'without wait, nothing is waited for')
-  assert.match(String(started.value.note), /track_export \{ jobId: "exp_\d+", waitSeconds: 120 \}/)
+  const started = await call('export_timeline', { outputPath: '/tmp/x.wav', format: 'wav', wait: false })
+  assert.equal(started.value.stage, undefined, 'with wait: false, nothing is waited for')
+  assert.match(String(started.value.note), /track_export \{ jobId: "exp_\d+" \} waits until it finishes/)
   assert.ok(started.ms < 200)
+})
+
+test('export_timeline at the ceiling returns still rendering with the call that keeps waiting, never a failure', { timeout: 10_000 }, async () => {
+  const restore = setCeilingForTest(0.5)
+  try {
+    const pending = call('export_timeline', { outputPath: '/tmp/long.wav', format: 'wav' })
+    setTimeout(() => emit?.({ ...RUNNING, jobId: `exp_${nextExport}` }), 100)
+    const { value, ms } = await pending
+    assert.ok(ms >= 450 && ms < 2000, `answered after ${ms} ms of a 0.5 s ceiling`)
+    assert.equal(value.finished, false)
+    assert.equal(value.jobId, `exp_${nextExport}`)
+    assert.match(String(value.note), /^Still rendering at 40% after 0\.\ds\. Call track_export \{ jobId: "exp_\d+" \} to keep waiting/)
+  } finally {
+    restore()
+  }
+})
+
+test('cancelling export_timeline stops only the wait: the export is not cancelled and track_export still follows it', { timeout: 10_000 }, async () => {
+  cancels.length = 0
+  const pending = call('export_timeline', { outputPath: '/tmp/abandoned.wav', format: 'wav' }, 'export-call')
+  setTimeout(() => {
+    emit?.({ ...RUNNING, jobId: `exp_${nextExport}` })
+    cancelToolCall('export-call')
+  }, 150)
+  const { value, ms } = await pending
+  assert.ok(ms < 1500, `a cancelled export_timeline answered after ${ms} ms`)
+  assert.equal(value.finished, false)
+  assert.match(String(value.note), /cancelled; the job itself is rendering at 40% and was not touched/)
+  assert.deepEqual(cancels, [], 'the export itself must not be cancelled')
+  // The job lives on: a later track_export sees it finish.
+  const jobId = String(value.jobId)
+  setTimeout(() => emit?.({ ...DONE, jobId }), 100)
+  const later = await call('track_export', { jobId })
+  assert.equal(later.value.stage, 'done')
 })
 
 test('track_generation waits for main’s job to land, then imports it', { timeout: 10_000 }, async () => {
@@ -217,7 +266,7 @@ test('track_generation waits for main’s job to land, then imports it', { timeo
   genJobs = [{ ...job, id: 'gen-2' }]
   const running = await call('track_generation', { jobId: 'gen-2', waitSeconds: 0.3 })
   assert.equal(running.value.status, 'running')
-  assert.match(String(running.value.next), /Call track_generation again with jobId "gen-2" and waitSeconds/)
+  assert.match(String(running.value.next), /^Still running after 0\.\ds\. Call track_generation \{ jobId: "gen-2" \} to keep waiting/)
 })
 
 test('track_export after a reload says the export was lost to it; an id never started here is still unknown', { timeout: 10_000 }, async () => {

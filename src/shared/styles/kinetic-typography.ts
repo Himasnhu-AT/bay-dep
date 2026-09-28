@@ -33,7 +33,7 @@ export const style: EditingStyle = {
     '9. Background: a solid colour, or album art placed with place_asset and blurred and darkened (edit_item adjustments blur and brightness, or a keyed blur inside the .brf). Change it only at section boundaries.',
     '10. On big downbeats, bump the whole text group 1.00 → 1.04 → 1.00 over 6 frames (house).',
     '11. preview_frame a sample of lines: text at least 5% of the frame height (rule of thumb), nothing clipped. Then frame_grid over the whole piece.',
-    '12. If asked to export: export_timeline with loudness "off" so the song keeps its own master, then track_export until complete.'
+    '12. If asked to export: export_timeline with loudness "off" so the song keeps its own master — it returns when the export is finished; check `complete`.'
   ].join('\n'),
   params: {
     canvas: 'landscape-1080',

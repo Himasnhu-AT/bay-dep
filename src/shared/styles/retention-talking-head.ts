@@ -34,7 +34,7 @@ export const style: EditingStyle = {
     '9. For each number, tool or quote that is named, add one write_brf card (a stat or a tweet-style card) for 1.5–2.5 s, at most one per 10 s (house), timed to the word from the transcript.',
     '10. Sound: bay has no sound-effect library. If the user supplied pops or whooshes, place them on punchlines only and keep them subtle rather than on every move [joyspace]. For a music bed, set edit_item on the MUSIC clip: volume about 0.06 (≈ −24 dB, rule of thumb) and duck { keyTrackId: the voice track\'s id }.',
     '11. Check with frame_grid over the whole short: no stretch runs past about 4 s without a cut, zoom or card (a visual change every 2–4 s is the short-form convention — rule of thumb), captions never cover the mouth, cards never collide with captions. List any gaps and fix them.',
-    '12. If asked to export: export_timeline mp4 with loudness "streaming" (−14 LUFS), then track_export until complete.'
+    '12. If asked to export: export_timeline mp4 with loudness "streaming" (−14 LUFS) — it returns when the export is finished; check `complete`.'
   ].join('\n'),
   params: {
     canvas: 'vertical-1080',

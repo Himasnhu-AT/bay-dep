@@ -33,7 +33,7 @@ export const style: EditingStyle = {
     '9. Grade neutral: correct white balance only, with edit_item grade temperature/tint. No stylised LUT.',
     '10. Captions for accessibility: build cues from the transcript with at most 42 characters per line and at most 20 characters per second for adult English (17 for children\'s programmes) [netflix], then add_captions with those cues. These are rules for the cues you write, not parameters of the tool.',
     '11. Review with frame_grid over the whole package: every speaker named once, no graphic over a face, lower thirds never on top of captions.',
-    '12. If asked to export: export_timeline with loudness "broadcast" (−23 LUFS) for TV or "streaming" (−14 LUFS) for the web, then track_export until complete.'
+    '12. If asked to export: export_timeline with loudness "broadcast" (−23 LUFS) for TV or "streaming" (−14 LUFS) for the web — it returns when the export is finished; check `complete`.'
   ].join('\n'),
   params: {
     canvas: 'landscape-1080',
