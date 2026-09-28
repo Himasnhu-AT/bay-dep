@@ -9,7 +9,7 @@
 
 import { BrowserWindow, ipcMain, shell, app } from 'electron'
 import type { IpcMainInvokeEvent } from 'electron'
-import type { BayApi } from '@shared/ipc'
+import type { AudioResult, AudioSpan, BayApi } from '@shared/ipc'
 import type { McpToolResult } from '@shared/mcp'
 import { IPC } from '@shared/ipc'
 import {
@@ -37,6 +37,7 @@ import {
 import { homedir } from 'node:os'
 import { waveform } from './media/waveform'
 import { detectBeats } from './media/beats'
+import { audioLevels, detectSilences, measureLoudness } from './media/audio-analysis'
 import { detectSceneCuts } from './media/scene-cuts'
 import { sizesOf } from './media/caption-file'
 import { locate, openCaptions, readCaptions, saveCaptions } from './media/files'
@@ -108,6 +109,9 @@ interface ChannelApi {
   mediaWaveform: BayApi['media']['waveform']
   mediaBeats: BayApi['media']['beats']
   mediaCuts: BayApi['media']['cuts']
+  mediaLevels: BayApi['media']['levels']
+  mediaSilences: BayApi['media']['silences']
+  mediaLoudness: BayApi['media']['loudness']
   mediaReveal: BayApi['media']['revealInFolder']
   mediaStat: BayApi['media']['stat']
   mediaLocate: BayApi['media']['locate']
@@ -204,6 +208,25 @@ type Handler<F> = F extends (...args: infer A) => infer R
 
 function windowOf(event: IpcMainInvokeEvent): BrowserWindow | null {
   return BrowserWindow.fromWebContents(event.sender)
+}
+
+/** A span from the renderer, with anything non-numeric read as "from the start, to the end". */
+function checkSpan(span: unknown): AudioSpan {
+  const given = (span ?? {}) as Partial<Record<keyof AudioSpan, unknown>>
+  return { startUs: finiteOr(given.startUs, 0), durationUs: finiteOr(given.durationUs, 0) }
+}
+
+function finiteOr(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback
+}
+
+/** An audio measurement's value, or its failure in ffmpeg's words — never a rejection across IPC. */
+async function audioResult<T>(work: () => Promise<T>): Promise<AudioResult<T>> {
+  try {
+    return { ok: true as const, value: await work() }
+  } catch (error) {
+    return { ok: false as const, error: error instanceof Error ? error.message : String(error) }
+  }
 }
 
 const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
@@ -358,6 +381,11 @@ const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
       return { ok: false as const, error: error instanceof Error ? error.message : String(error) }
     }
   },
+  mediaLevels: (_event, path, span, windowUs) =>
+    audioResult(() => audioLevels(String(path), checkSpan(span), Number(windowUs))),
+  mediaSilences: (_event, path, span, thresholdDb, minSilenceSec) =>
+    audioResult(() => detectSilences(String(path), checkSpan(span), finiteOr(thresholdDb, -30), finiteOr(minSilenceSec, 0.5))),
+  mediaLoudness: (_event, path, span) => audioResult(() => measureLoudness(String(path), checkSpan(span))),
   mediaReveal: async (_event, path) => {
     shell.showItemInFolder(path)
   },

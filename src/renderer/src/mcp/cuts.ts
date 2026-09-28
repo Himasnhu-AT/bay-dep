@@ -13,12 +13,23 @@ import { fail, project, resolveAsset, resolveItem, timeline, ToolError, type Han
 
 const seconds = (us: number): number => Math.round(us / 1000) / 1000
 
+/**
+ * Cuts found this session at the default threshold, by file — read by `detect_footage_mode` for a
+ * cut rate without running scdet itself. Never analyses.
+ */
+const settledCuts = new Map<string, SceneCut[]>()
+
+export function cachedCuts(path: string): SceneCut[] | undefined {
+  return settledCuts.get(path)
+}
+
 async function cutsOf(asset: Asset, threshold: number | undefined): Promise<SceneCut[]> {
   const api = bay()
   if (!api) fail('This window has no bridge to the app, so it cannot analyse video.')
   if (!asset.path) fail(`"${asset.name}" has no media file to analyse.`)
   const result = await api.media.cuts(asset.path, threshold === undefined ? {} : { threshold })
   if (!result.ok) throw new ToolError(`Cut detection failed on "${asset.name}": ${result.error}`)
+  if (threshold === undefined || threshold === DEFAULT_CUT_THRESHOLD) settledCuts.set(asset.path, result.cuts)
   return result.cuts
 }
 

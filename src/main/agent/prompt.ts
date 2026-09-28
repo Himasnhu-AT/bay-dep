@@ -101,7 +101,9 @@ tell you whether a clip is framed well or whether an overlay covers a face.
 ## How to work
 
 1. **Plan briefly.** Read the project, then say in a sentence or two what you will do. For a
-   long job, list the steps once.
+   long job, list the steps once. When the request is open-ended ("edit this") and you do not
+   yet know what the footage is, \`detect_footage_mode\` says what kind it looks like (podcast,
+   talking head, screen recording…), why, and which skills and tools fit.
 2. **Act.** Make the edits. Read before you write (\`read_project\`, \`inspect_item\`) so the
    arguments are right. Between long steps — a transcription, a generation, an export — tell the
    user in one plain sentence what is happening and what comes next.

@@ -24,6 +24,7 @@ import type { AgentEntry, AgentEvent, AgentGate, Proposal } from '@shared/agent'
 import type { Pin } from '@shared/pins'
 import type { AgentAttachmentView } from '@shared/agent-attachments'
 import type { RippleDeleteResult } from '@shared/ripple'
+import type { SwitchSegment } from '@shared/speaker-switch'
 import type { OpenSpanResult } from '@shared/insert-edit'
 import type { TrackMove } from '@shared/track-move'
 import type { TrimPlan, TrimRefusal, TrimSpec } from '@shared/trim'
@@ -354,6 +355,12 @@ export interface EditorActions {
    * the hole between them) is not an operation anybody wants.
    */
   rippleDelete(fromFrame?: Frames, toFrame?: Frames): RippleDeleteResult | null
+  /**
+   * Several ripple deletes as one edit and one undo step, applied last-first so each range's
+   * frames still mean what they meant before any was removed. Ranges are half-open
+   * `[fromFrame, toFrame)` and must not overlap. The results are summed; `removedFrames` is the total.
+   */
+  rippleDeleteRanges(ranges: readonly { fromFrame: Frames; toFrame: Frames }[]): RippleDeleteResult | null
   duplicateSelected(): void
   /**
    * Sets fields on one item. The sync fields — `from`, `durationInFrames`, `sourceStartUs`,
@@ -404,6 +411,17 @@ export interface EditorActions {
   pasteAttributes(attributes: readonly PasteAttribute[]): number
   /** Switch clips off (or back on): all off if any is on. Defaults to the selection. */
   toggleDisabled(itemIds?: string[]): void
+  /**
+   * Switch exactly these clips on or off — not their linked partners, which a caller expands to
+   * if it means to. Locked tracks are skipped. Returns the ids whose state changed. One undo step.
+   */
+  setItemsEnabled(itemIds: readonly string[], enabled: boolean): string[]
+  /**
+   * Apply a speaker switch: razor each angle (`itemIds[i]` is angle i; the wide, if any, is last)
+   * where it goes on or off screen and disable the off pieces (`applyAngleSwitch`,
+   * `@shared/speaker-switch`). One undo step.
+   */
+  applyAngleSwitch(itemIds: readonly string[], segments: readonly SwitchSegment[]): { createdItemIds: string[]; disabledItemIds: string[] }
   /** Move the selection by `delta` frames, refusing (with a toast naming the blocker) if blocked. */
   nudgeSelection(delta: Frames): boolean
   /**

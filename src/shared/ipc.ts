@@ -45,6 +45,23 @@ export interface SceneCut {
   score: number
 }
 
+/** A stretch of a media file's source time: where to seek, and how much to read. */
+export interface AudioSpan {
+  /** Source microseconds from the file's start. */
+  startUs: number
+  /** How much source to read, in microseconds. Non-positive or infinite reads to the end. */
+  durationUs: number
+}
+
+/** One silence `silencedetect` found, in seconds from the start of the span that was read. */
+export interface SilenceInterval {
+  startSec: number
+  endSec: number
+}
+
+/** A main-side audio measurement: its value, or ffmpeg's own words for why there is none. */
+export type AudioResult<T> = { ok: true; value: T } | { ok: false; error: string }
+
 /** scdet's default threshold: a score (0–100) above it is a cut. */
 export const DEFAULT_CUT_THRESHOLD = 10
 
@@ -450,6 +467,16 @@ export interface BayApi {
      * `threshold` is scdet's own (default 10): lower finds softer cuts and more false ones.
      */
     cuts(path: string, options?: { threshold?: number }): Promise<{ ok: true; cuts: SceneCut[] } | { ok: false; error: string }>
+    /**
+     * RMS level in dBFS per `windowUs` of source over `span`, on this machine (`media/audio-analysis.ts`).
+     * Index k starts k·windowUs into the span; digital silence reads -120. For `switch_speakers`
+     * (50 ms windows) and `sync_angles` (10 ms).
+     */
+    levels(path: string, span: AudioSpan, windowUs: number): Promise<AudioResult<number[]>>
+    /** ffmpeg `silencedetect` over `span`: silences below `thresholdDb` lasting `minSilenceSec` or more. */
+    silences(path: string, span: AudioSpan, thresholdDb: number, minSilenceSec: number): Promise<AudioResult<SilenceInterval[]>>
+    /** EBU R128 integrated loudness (LUFS) and true peak (dBFS) of `span`. */
+    loudness(path: string, span: AudioSpan): Promise<AudioResult<{ integratedLufs: number; truePeakDb: number }>>
     /** Reveals a file in Finder/Explorer. */
     revealInFolder(path: string): Promise<void>
     /**
@@ -874,6 +901,9 @@ export const IPC = {
   mediaWaveform: 'media:waveform',
   mediaBeats: 'media:beats',
   mediaCuts: 'media:cuts',
+  mediaLevels: 'media:levels',
+  mediaSilences: 'media:silences',
+  mediaLoudness: 'media:loudness',
   mediaReveal: 'media:reveal',
   mediaStat: 'media:stat',
   mediaLocate: 'media:locate',

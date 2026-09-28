@@ -38,6 +38,7 @@ import { buildAudioGraph } from '../export/audio-graph'
 import { masterFilter } from '../export/master'
 import { colourFilter } from '../media/frame-grab'
 import { sceneCutFilter } from '../media/scene-cuts'
+import { LOUDNESS_FILTER, silenceFilter } from '../media/audio-analysis'
 import { contactSheetArgs, contactSheetPlan, imageScaleFilter } from '../agent/attachments'
 import { sampleFilter } from '@shared/visual-search'
 import { NO_VENDORED_FFMPEG, vendoredTools } from './vendor'
@@ -139,6 +140,8 @@ function filtersTheCodeWrites(): Set<string> {
   graphs.push(masterFilter({ gainDb: -3, limiterCeilingDb: -1 }))
   // detect_cuts (media/scene-cuts.ts): scale, scdet, metadata.
   graphs.push(sceneCutFilter(10))
+  // remove_silences / detect_footage_mode (silencedetect, ametadata) and level_voices (ebur128).
+  graphs.push(silenceFilter(-30, 0.5), LOUDNESS_FILTER)
   // Agent attachments (agent/attachments.ts): a video's contact sheet and an image's downscale.
   const sheet = contactSheetArgs('/in.mov', contactSheetPlan(10, 1920, 1080), '/out.jpg')
   graphs.push(valueOf(sheet, '-filter_complex') ?? '', imageScaleFilter(2000, 1000))
