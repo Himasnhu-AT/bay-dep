@@ -7,6 +7,7 @@ import { timelineDuration } from '@shared/project'
 import { remember } from '../prefs'
 import type { EditorActions } from '../types'
 import type { StoreKit } from '../kit'
+import { LAYOUT_MODE_KEY, NO_AI_PANELS, withAiPanel } from '../layoutMode'
 
 let toastCounter = 0
 
@@ -23,6 +24,11 @@ type Actions = Pick<
   | 'zoomBy'
   | 'setPanel'
   | 'setPage'
+  | 'setLayoutMode'
+  | 'toggleLayoutMode'
+  | 'setAiPanel'
+  | 'toggleAiPanel'
+  | 'closeAiPanels'
   | 'setInspectorTab'
   | 'setLibraryTab'
   | 'setAgentDocked'
@@ -112,7 +118,34 @@ export function viewSlice({ set, get, currentTimeline }: StoreKit): Actions {
         if (state.page !== 'edit' && !(state.page === 'media' && tab === 'media')) state.setPage('edit')
         set({ libraryTab: tab })
       }
+      // The AI layout shows the agent and the media pool already; anything else it was asked
+      // for is on a page, and pages open there in the Pages drawer.
+      if (get().layoutMode === 'ai' && panel !== 'agent' && panel !== 'media') get().setAiPanel('pages', true)
       set({ panel })
+    },
+
+    setLayoutMode(layoutMode) {
+      if (get().layoutMode === layoutMode) return
+      remember(LAYOUT_MODE_KEY, layoutMode)
+      set({ layoutMode, aiPanels: { ...NO_AI_PANELS } })
+    },
+
+    toggleLayoutMode() {
+      get().setLayoutMode(get().layoutMode === 'ai' ? 'resolve' : 'ai')
+    },
+
+    setAiPanel(panel, open) {
+      const current = get().aiPanels
+      if (current[panel] === open) return
+      set({ aiPanels: withAiPanel(current, panel, open) })
+    },
+
+    toggleAiPanel(panel) {
+      get().setAiPanel(panel, !get().aiPanels[panel])
+    },
+
+    closeAiPanels() {
+      set({ aiPanels: { ...NO_AI_PANELS } })
     },
 
     setPage(page) {

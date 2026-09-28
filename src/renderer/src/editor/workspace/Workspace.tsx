@@ -13,6 +13,13 @@
  *   and composer draft stay put;
  * - the bars.
  * The page's own panels (library, inspector, …) remount; they hold nothing that matters.
+ *
+ * Two layout modes (`layoutMode`, ⌘⇧A, the TopBar's Resolve | AI switch): Resolve is the page
+ * layout, the agent a dock and the page bar along the bottom; AI swaps all of that for
+ * `AiLayout` — the agent large, the viewer and the media pool beside it, the rest in drawers.
+ * `layoutRegions.ts` says which regions each mode shows. Both place the same hosted viewer and
+ * timeline, so a mode switch moves them like a page switch does. The agent's conversation lives
+ * in the store and survives a switch; an unsent draft in its composer does not.
  */
 
 import { useCallback, type ReactNode } from 'react'
@@ -24,9 +31,11 @@ import { StatusBar } from '@/editor/StatusBar'
 import { Timeline } from '@/editor/Timeline'
 import { TopBar } from '@/editor/TopBar'
 import { useEditor } from '@/store/editor'
+import { AiLayout } from './AiLayout'
 import { Hosted, HostProvider, useHost } from './hosted'
 import { layoutStorage } from './layoutStorage'
 import { PageBar } from './PageBar'
+import { layoutRegions } from './layoutRegions'
 import { pageContent } from './pageContent'
 import { PageLayout, regionsOf } from './PageLayout'
 import { useCollapsiblePanel } from './useCollapsiblePanel'
@@ -44,6 +53,9 @@ export function Workspace({ onHome, onExport, saving }: WorkspaceProps): ReactNo
   const host = useHost()
   const page = useEditor((state) => state.page)
   const content = pageContent(page)
+  const layoutMode = useEditor((state) => state.layoutMode)
+  const aiPanels = useEditor((state) => state.aiPanels)
+  const regions = layoutRegions(layoutMode, aiPanels)
 
   const dockLayout = useDefaultLayout({ id: 'bay.layout.dock', storage: layoutStorage })
   const agentDocked = useEditor((state) => state.agentDocked)
@@ -53,10 +65,13 @@ export function Workspace({ onHome, onExport, saving }: WorkspaceProps): ReactNo
 
   return (
     <HostProvider host={host}>
-      <TopBar onExport={onExport} saving={saving} regions={regionsOf(content)} />
+      <TopBar onExport={onExport} saving={saving} regions={regionsOf(content)} panelToggles={regions.panelToggles} />
 
-      {/* Every boundary between regions is a separator that can be dragged or moved with the
-          arrow keys, and every layout is remembered. */}
+      {regions.agent === 'primary' ? (
+        <AiLayout drawers={regions.drawers} onExport={onExport} onHome={onHome} />
+      ) : (
+      /* Every boundary between regions is a separator that can be dragged or moved with the
+          arrow keys, and every layout is remembered. */
       <div className="flex min-h-0 flex-1">
         <ResizablePanelGroup
           id="bay.layout.dock"
@@ -91,9 +106,10 @@ export function Workspace({ onHome, onExport, saving }: WorkspaceProps): ReactNo
           </ResizablePanel>
         </ResizablePanelGroup>
       </div>
+      )}
 
       <StatusBar saving={saving} />
-      <PageBar onHome={onHome} />
+      {regions.pageBar && <PageBar onHome={onHome} />}
 
       {/* After the page, so its slots have placed these nodes before anything inside measures. */}
       <Hosted name="viewer">
