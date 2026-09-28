@@ -26,6 +26,7 @@ Either way it cannot go into a skill as a cited fact now.
 | `podclip.md` | **Usable with corrections** (§8) | All algorithm numbers and file:line refs check out, and both claimed defects reproduce. The doc missed that its leading-cut defect defeats podclip's one-state refusal, so its Safety and one-mic claims are wrong. The smart-mode table compares SigLIP scores across searches, which `search_footage` says is invalid. |
 | `threejs.md` | **Trustworthy, small corrections** (§9) | Route A reproduced with real three r186 under bay's own sandbox filter. The worker-GPU claim is confirmed and broader than stated: WebGL2 shaders, `readPixels` and the unmasked GPU name all work after lockdown. **Priority fix now, not with 3D.** The r160 → r161 date is wrong and the bundle estimate is low. |
 | `masking.md` | **Usable with corrections** (§10) | Every licence, hash, revision and exclusion checks out, and MODNet can be bundled (licence copy + attribution; no NOTICE). The compositor design and the two-element drift warning are real. The two sizing estimates are wrong, both measured: MODNet ~83 ms/frame (not 15–40; CoreML is slower) and ~90 KB per 1080p matte (~1.6 GB per 10 min). Apple Vision is reachable through JXA with no native addon. |
+| `value-controls.md` | **Trustworthy** (§11) | Every call-site count reproduces exactly (41 NumberFields against 16 sliders), and every code claim is confirmed (inverted Shift, the 8× vs 16× speed ceilings, averaged lift/gamma/gain, horizontal fader, no reset, stale live-preview comment). All licences are quoted correctly, and the React Bits reading is right. Fixes are small: the react-dial-knob date and labelling the Adobe/Resolve modifier sources as secondary. |
 | `style-clips.md` | **Trustworthy** (§7) | 11 licences checked on the live source: 8 Commons files (API `extmetadata` + wikitext) and 3 Mixkit pages. All match, including which reviews are pending and which passed. Three speech clips range-fetched and re-measured: streams, levels, pause counts and whisper openings all reproduce. One soft spot: the Mixkit **music** licence could not be confirmed, because the cited page redirects. Its self-reported gaps are accurate. |
 
 Counts across both documents: **WRONG 10**: 3 web claims (arXiv count, Netflix cps, the "deceptively simple" attribution), 6 bay
@@ -752,3 +753,96 @@ BiRefNet_lite timings are correctly labelled [E] and were not measured.
 - The Apple Vision spike via JXA, before any bundle or pipeline decision.
 - Not yet: the throughput and size figures in UI copy, and the "one-click in ~40 s" promise. At the
   measured rate, 60 s of 1080p is ~2.5 min of MODNet inference plus decode.
+
+---
+
+## 11. value-controls.md
+
+Checked 28 Sep 2026 against the working tree (HEAD `ab78d03`, the commit the doc names). I read
+licences from each repository's own LICENSE file (GitHub contents API), read peer ranges from the
+npm registry JSON, and web-searched for editor conventions. Adobe's help pages return 403 to both
+WebFetch and curl, and the Resolve 18 manual mirror returns 404, so those rows rest on secondary
+sources, as the doc itself says.
+
+**Verdict: trustworthy.** Every call-site count reproduces exactly, and every code claim is
+correct, including the two inconsistencies it found (inverted drag modifiers, two speed ceilings).
+Every licence is quoted correctly, and the React Bits reading is right. One of the doc's own
+"unverified" items is now confirmed (react-colorful `onChangeEnd`). The corrections are small: one
+date, and some sourcing strength.
+
+Counts for this doc: **WRONG 0** · **UNSOURCED 0** · PARTIAL 4 (secondary-only sourcing or a small
+date) · CONFIRMED ~35.
+
+### 11.1 Licences
+
+| Library | Claim | Status | Evidence (LICENSE file / npm registry) |
+|---|---|---|---|
+| shadcn/ui | MIT | **CONFIRMED** | "MIT License / Copyright (c) 2023 shadcn" |
+| Radix Primitives | MIT; `@radix-ui/react-slider` 1.4.7 | **CONFIRMED** | "MIT License / Copyright (c) 2022 WorkOS". npm 1.4.7 MIT, peer `react ^16.8 … ^19.0`, so **React 19 is supported**. |
+| react-colorful | MIT, 5.8.1, modified 2026-09-01 | **CONFIRMED** | "Copyright (c) 2020-present Vlad Shilov". npm 5.8.1 MIT, peer `react >=16.8.0`. |
+| react-colorful `onChangeEnd` | doc: "unverified" | **CONFIRMED** | README: "`onChangeEnd` … Called when the user finishes changing a color (mouseup, touchend, or keyup)". Commit-on-release comes for free, so drop the "if absent" fallback. |
+| react-knob-headless | MIT; 0.4.0; peers stop at React 18 | **CONFIRMED** | "Copyright (c) 2023 @satelllte". npm 0.4.0 (2025-06-25), peer `react: '^16.8 \|\| ^17.0 \|\| ^18.0'`. bay is on `react ^19.2.0` (`package.json:46`), so installing needs a peer override, as the doc says. Last repo push 2026-01-01. |
+| quickLiquid | MIT, in `NOTICE:29-37` | **CONFIRMED** | "Copyright (c) 2026 Amarnath". `NOTICE` carries it (0.1.2) at that position. |
+| iro.js | MPL-2.0, "on hiatus" | **CONFIRMED** | "Mozilla Public License Version 2.0". README: "this project is currently on **hiatus** until further notice". npm `@jaames/iro` 5.5.2 was last published 2021-07-05. |
+| React Bits | MIT + Commons Clause; commercial use allowed, redistributing the components forbidden | **CONFIRMED** | LICENSE.md: "MIT + Commons Clause License Condition v1.0 … You may use this Software, including for any commercial purpose, **so long as you do not sell, sublicense, or redistribute the components themselves—whether alone, in a bundle, or as a ported version.**" GitHub reports `NOASSERTION`. The doc's reading holds: a compiled component inside bay is use, but a copied source file in a repository that is ever shared or published is redistribution of the component. Not using its code is the right call. |
+| react-dial-knob | MIT, abandoned, "npm modified 2022-05-14", peer `react ^17.0.1` | **PARTIAL** (date) | MIT and peer confirmed. The **last release was 1.3.0 on 2021-01-31**; 2022-05-14 is only npm's metadata `modified` stamp, and the last repo push was 2022-09-16. "Stale since 2021/2022" either way. Reject stands. |
+
+### 11.2 Claims about bay's code
+
+| Claim | Status | Evidence |
+|---|---|---|
+| Call sites outside `components/`: NumberField 41, Select 32, SegmentedControl 10, ColorField 9, SliderField 12, Slider 4, Switch 5, SwitchRow 5, Checkbox 2 | **CONFIRMED, exactly** | `grep -E "<Name([ >/<]\|$)"` over `src/renderer/src/**/*.tsx`, excluding `components/`. Every number matches. Select and SegmentedControl only match once `<Select<T>` generics are counted, which the doc evidently did. So **41 NumberFields against 16 sliders** (12 + 4). |
+| NumberField drag: Shift = fine ÷10, Alt = coarse ×10 | **CONFIRMED** | `NumberField.tsx:126, 133`: `state.shift ? 0.1 : state.alt ? 10 : 1`. The comment above it claims "the convention every editor shares", which is itself wrong (below). |
+| NumberField arrows: Shift = ×10 (coarse) | **CONFIRMED** | `NumberField.tsx:204` `event.shiftKey ? 10 : 1`. The same field means opposite things for Shift. `Slider.tsx:132` also uses Shift ×10. |
+| No double-click reset in NumberField, Slider or SliderField; three hand-rolled ones | **CONFIRMED** | No `onDoubleClick` in either component. The three wrappers are `Mixer.tsx:125`, `Mixer.tsx:140`, `AudioSection.tsx:103`. |
+| Dragging does not preview live; the comment says a transient mode "does not exist yet"; `beginGesture`/`endGesture` now exist | **CONFIRMED** | `NumberField.tsx:51-58` (the stale comment). `store/types.ts:666-671` (`beginGesture`). Used by `viewer/TransformOverlay.tsx`, tested in `mcp/one-undo-step.test.ts` and `store/editor.test.ts`. Passing callbacks from the caller respects the "components reach no store" boundary. |
+| Speed capped at 8× in the Inspector, 16× in the clip menu | **CONFIRMED** | `Inspector.tsx:522` `max={8}`, `ClipCommands.tsx:232` `max={16}` (both `min 0.1`, `step 0.05`). |
+| Lift/gamma/gain as averaged sliders | **CONFIRMED** | `GradeSection.tsx:86` `mean = (w.r + w.g + w.b) / 3`, rendered as a centred `SliderField` at `:200-202`. Per-channel values sit in a Disclosure. |
+| The Mixer fader is horizontal | **CONFIRMED** | `Mixer.tsx:130` `<Slider>` has no orientation, and `Slider.tsx` has none to give. The meter beside it is `orientation="vertical"` (`:78`). |
+| Pan is a slider | **CONFIRMED** | Mixer `:145` (`bipolar` Slider), Inspector `AudioSection.tsx:107` `SliderField`. |
+| Ease is a preset list | **CONFIRMED** | `EASE_CHOICES` (`@shared/inspector.ts:159-165`): Linear, Ease in, Ease out, Ease in and out, Hold. A bezier tuple shows as a disabled "Custom curve" (`KeyframesSection.tsx:158`). |
+| No curves UI | **CONFIRMED** | `GradeSection.tsx:234` "Curves are set by the agent." The model has curves (`edit_item.grade.curves`). |
+| `KEYFRAME_PROPERTIES` at `project.ts:283`, `KEYFRAME_LIMITS` at `keyframes.ts:301` | **CONFIRMED** | Both correct in today's tree. (§10's "`project.ts:273`" was right when §10 was written; the file has since grown by 10 lines.) |
+| ProvidersSection has two raw `<input type="number">` | **CONFIRMED** | `ProvidersSection.tsx:121, 135` |
+| No scroll-wheel value handler | **CONFIRMED** | No `onWheel` in any renderer `.tsx`. |
+
+### 11.3 Pro-editor conventions
+
+| Claim | Status | Evidence |
+|---|---|---|
+| After Effects: Ctrl/Cmd-drag = fine (tenths), Shift-drag = ×10 | **CONFIRMED (secondary)** | Adobe community thread (the doc's link) and search excerpts: "Hold down CTRL … single decimal digits… SHIFT … values of 10s". helpx 403s, so this is not the official shortcut table. |
+| Premiere: Shift = larger increments, Ctrl/Cmd = finer | **CONFIRMED (secondary)** | Search excerpts of Adobe community and Premiere help: "hold the Ctrl (Win)/Command (Mac) key … reduce the increment… Shift … increases". Adobe's own pages 403. |
+| Resolve: Alt/Option-drag = finer in the Inspector | **PARTIAL** | Only the Blackmagic forum thread via search excerpt (the forum 403s). Not found in the manual. The doc marks it unverified, correctly. |
+| Resolve wheels: a master wheel under each of Lift/Gamma/Gain/Offset; double-click the centre to reset; reset arrow | **CONFIRMED** | Larry Jordan's article (fetched): "double-click the white dot in the center of the wheel"; the "Go Back hookey-arrow" resets the whole wheel. Master wheel under each colour wheel for luminance: Envato Tuts+ / JayAreTV / Resolve Colorist Guide (search excerpts). The claim that double-clicking a numeric label resets it was not found. |
+| Premiere: scrubbable ("hot text") fields | **CONFIRMED** | The same Adobe sources. It is the defining Effect Controls interaction. |
+| Lumetri: double-click resets a wheel | **PARTIAL** | Search excerpt only (helpx 403). Plausible, but not directly read. |
+| Resolve Fairlight: vertical fader; "double-click a fader's handle" resets to 0 dB | **CONFIRMED (secondary)** | Resolve 18 manual "Fader Controls", via search excerpt: "To reset the level to default level of 0 dB: Double-click a fader's handle", with the caveat "does not work after you've recorded automation". The mirror page now 404s, as the doc notes. |
+| Premiere Audio Track Mixer: vertical faders + pan knob, unity at 0 dB | **PARTIAL** | Consistent with every screenshot and the doc's helpx link, but the page 403s. The doc's "modifier-click reset unverified" is honest. |
+
+**Net effect on the recommendation:** "Shift = coarse ×10, Alt = fine, Cmd = fine alias" matches
+Adobe (Shift coarse, Cmd fine) and the Resolve forum (Alt fine). It fixes bay's internal Shift
+contradiction either way, so it holds even if the Resolve row stays unverified.
+
+### 11.4 Required corrections to value-controls.md
+
+1. react-dial-knob: last release **1.3.0, 2021-01-31**. "Modified 2022-05-14" is npm metadata;
+   the repo was last pushed 2022-09-16.
+2. react-colorful `onChangeEnd` is **confirmed** in the README. Drop the fallback note.
+3. Sourcing notes: the Adobe modifier rows are community/search-excerpt sources (helpx 403s). The
+   Resolve Alt-fine row is forum-only. Label them that way in the conventions table (§2.5), the way
+   §2.1 already does.
+4. Also fix the misleading code comment at `NumberField.tsx:125` ("the convention every editor
+   shares") in the same change as the modifier flip. It is the sentence that made the inversion
+   look deliberate.
+
+### 11.5 Safe to implement from value-controls.md
+
+- All of §4.1: one modifier table (Shift ×10, Alt/Cmd ÷10) for drag, arrows and Slider keys; a
+  `defaultValue` prop with double-click reset; gesture callbacks wired by the caller to
+  `beginGesture`/`endGesture`; the stragglers (raw inputs, transition duration as timecode, one
+  Speed ceiling).
+- `Fader` (vertical, 0 dB double-click), `Knob`, `ColorWheel` with a master strip, `EaseEditor`
+  writing the existing `KeyframeEase` tuple, and `TimecodeField`, all built in-house on `useDrag`.
+- Dependencies, if any: `react-colorful` (MIT, React 19-compatible peers, `onChangeEnd`) and
+  `cmdk`. Skip react-knob-headless (React 18 peers), react-dial-knob, iro.js (MPL, hiatus) and
+  React Bits code (Commons Clause).
