@@ -21,7 +21,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Asset, Item, Project, Timeline, Track } from '@shared/project'
-import type { SubjectMatte, SubjectMatteIndex } from '@shared/matte'
+import { sourceFrameOnTimeline, type SubjectMatte, type SubjectMatteIndex } from '@shared/matte'
+import { cropDestRect } from '@shared/project'
 
 // -- a software 2D canvas ------------------------------------------------------------------------
 
@@ -249,6 +250,8 @@ const clipPixels = (): SoftCanvas => SoftCanvas.solid(W, H, (x) => (x < W / 2 ? 
 
 /** The pool surface the compositor uses, counting the elements it creates. */
 class CountingPool {
+  /** The clip's picture; a case may give its own shape. */
+  videoPixels: SoftCanvas | null = null
   readonly entries = new Map<string, { assetId: string; slot: number; kind: string; element: unknown; status: string }>()
   readonly used = new Set<string>()
   beginGeneration(): void { this.used.clear() }
@@ -257,7 +260,7 @@ class CountingPool {
     this.used.add(key)
     let entry = this.entries.get(key)
     if (!entry) {
-      const element = asset.kind === 'image' ? new FakeImage(SoftCanvas.solid(W, H, () => [...TITLE])) : new FakeVideo(clipPixels())
+      const element = asset.kind === 'image' ? new FakeImage(SoftCanvas.solid(W, H, () => [...TITLE])) : new FakeVideo(this.videoPixels ?? clipPixels())
       entry = { assetId: asset.id, slot, kind: asset.kind, element, status: 'ready' }
       this.entries.set(key, entry)
     }
@@ -484,4 +487,112 @@ test('a matte frame that cannot be read drops the pack index, so the next lookup
   }
   assert.equal(indexReads, 2, 'the index was read again after the frame failed')
   assert.ok('image' in found, `and the frame then drew: ${JSON.stringify(Object.keys(found))}`)
+})
+
+// -- where the matte lands: source → matte → item, in every shape ---------------------------------
+
+/**
+ * One case: a source of `sw × sh` whose person is where `isPerson(u, v)` says (u, v in 0..1 of the
+ * source), a matte of Vision's shape for it (4:3 for landscape, 3:4 for portrait) holding the same
+ * person, placed at `box` on a `cw × ch` canvas. Every canvas pixel is predicted independently of
+ * the compositor: inside the kept part of the box and over the person → the clip's person colour;
+ * anywhere else → the title. The prediction maps through `sourceFrameOnTimeline`, the function the
+ * in-app probe uses as its account of where the person is.
+ */
+async function placedCase(opts: {
+  cw: number; ch: number; sw: number; sh: number; mw: number; mh: number
+  box: { left: number; top: number; width: number; height: number; scale?: number }
+  crop?: Item['crop']
+  isPerson: (u: number, v: number) => boolean
+}): Promise<{ wrong: string[]; overPerson: number; beside: number }> {
+  const source = SoftCanvas.solid(opts.sw, opts.sh, (x, y) => (opts.isPerson((x + 0.5) / opts.sw, (y + 0.5) / opts.sh) ? [...PERSON] : [...BACKDROP]))
+  const mattePixels = SoftCanvas.solid(opts.mw, opts.mh, (x, y) => [255, 255, 255, opts.isPerson((x + 0.5) / opts.mw, (y + 0.5) / opts.mh) ? 255 : 0])
+  const loader = matteLoader()
+  subjectMattes.useLoader({ index: loader.index, frame: async () => ({ image: drawable(mattePixels), width: opts.mw, height: opts.mh }) })
+  const asset: Asset = { ...videoAsset(), width: opts.sw, height: opts.sh, subjectMattes: [{ ...MATTE, width: opts.mw, height: opts.mh }] }
+  const layout = { ...opts.box, opacity: 1, rotation: 0 }
+  const clip = item('base', 'ast_clip', 'v1', { layout, ...(opts.crop ? { crop: opts.crop } : {}) })
+  const title = item('title', 'ast_title', 'v2', { layout: { left: 0, top: 0, width: opts.cw, height: opts.ch, opacity: 1, rotation: 0 } })
+  const copy: Item = { ...clip, id: 'cutout', trackId: 'v3', audioDetached: true, masks: [{ kind: 'subject' }] }
+  const timeline: Timeline = { id: 'tl', name: 'tl', fps: FPS, width: opts.cw, height: opts.ch, background: '#000000', tracks: [track('v1', [clip]), track('v2', [title]), track('v3', [copy])], transitions: [] }
+  const project: Project = { id: 'p', name: 'p', version: 1, assets: [asset, titleAsset], timelines: [timeline], activeTimelineId: 'tl', createdAt: 0, updatedAt: 0 }
+  const pool = new CountingPool()
+  pool.videoPixels = source
+  const compositor = new Compositor(pool as never)
+  let out = new SoftCanvas(opts.cw, opts.ch)
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    out = new SoftCanvas(opts.cw, opts.ch)
+    const stats = compositor.drawFrame(out.getContext() as never, project, timeline, 45)
+    if (stats.pending === 0) break
+    await subjectMattes.settle(1000)
+  }
+  const frame = sourceFrameOnTimeline(layout)
+  const kept = opts.crop ? cropDestRect(opts.crop, opts.box) : { dx: opts.box.left, dy: opts.box.top, dw: opts.box.width, dh: opts.box.height }
+  // The crop is drawn zoomed about the box's centre too.
+  const zoom = opts.box.scale ?? 1
+  const bcx = opts.box.left + opts.box.width / 2
+  const bcy = opts.box.top + opts.box.height / 2
+  const keptZ = { dx: bcx + (kept.dx - bcx) * zoom, dy: bcy + (kept.dy - bcy) * zoom, dw: kept.dw * zoom, dh: kept.dh * zoom }
+  // Nearest-neighbour sampling can go either way within a sample of the person's edge; those
+  // pixels (and the kept rect's own edge) are left out, everything else must be exact.
+  const du = 1.5 / frame.width
+  const dv = 1.5 / frame.height
+  const nearEdge = (u: number, v: number): boolean => {
+    const at = opts.isPerson(u, v)
+    return [[du, 0], [-du, 0], [0, dv], [0, -dv]].some(([a, b]) => opts.isPerson(u + a!, v + b!) !== at)
+  }
+  const wrong: string[] = []
+  let overPerson = 0
+  let beside = 0
+  for (let y = 0; y < opts.ch; y += 1) {
+    for (let x = 0; x < opts.cw; x += 1) {
+      const cx = x + 0.5
+      const cy = y + 0.5
+      const u = (cx - frame.left) / frame.width
+      const v = (cy - frame.top) / frame.height
+      const inKept = cx >= keptZ.dx && cx < keptZ.dx + keptZ.dw && cy >= keptZ.dy && cy < keptZ.dy + keptZ.dh
+      if (nearEdge(u, v)) continue
+      if (Math.abs(cx - keptZ.dx) < 1 || Math.abs(cx - keptZ.dx - keptZ.dw) < 1 || Math.abs(cy - keptZ.dy) < 1 || Math.abs(cy - keptZ.dy - keptZ.dh) < 1) continue
+      const person = inKept && u >= 0 && u < 1 && v >= 0 && v < 1 && opts.isPerson(u, v)
+      if (person) overPerson += 1
+      else beside += 1
+      if (!near(out.at(x, y), person ? PERSON : TITLE, 3)) wrong.push(`(${x},${y}) ${person ? 'person' : 'title'} got ${out.at(x, y).join(',')}`)
+    }
+  }
+  return { wrong, overPerson, beside }
+}
+
+const upperMiddle = (u: number, v: number): boolean => u > 1 / 6 && u < 5 / 6 && v > 1 / 4 && v < 3 / 4
+
+test('a portrait clip pillarboxed in a 16:9 canvas: the cut-out is the person, where the person is', async () => {
+  // 9:16 source, Vision's 3:4 mask, the person in the upper middle; fitted into a 64×36 canvas.
+  const result = await placedCase({ cw: 64, ch: 36, sw: 18, sh: 32, mw: 6, mh: 8, box: { left: 22, top: 0, width: 20.25, height: 36 }, isPerson: upperMiddle })
+  assert.ok(result.overPerson > 40 && result.beside > 500, JSON.stringify(result).slice(0, 200))
+  assert.deepEqual(result.wrong.slice(0, 5), [], `${result.wrong.length} pixels wrong`)
+})
+
+test('a landscape clip letterboxed in a 9:16 canvas, and one filling a 16:9 canvas', async () => {
+  const person = (u: number, v: number): boolean => u < 0.5 && v > 1 / 3
+  const letterboxed = await placedCase({ cw: 36, ch: 64, sw: 32, sh: 18, mw: 8, mh: 6, box: { left: 0, top: 22, width: 36, height: 20.25 }, isPerson: person })
+  assert.ok(letterboxed.overPerson > 40, JSON.stringify(letterboxed).slice(0, 200))
+  assert.deepEqual(letterboxed.wrong.slice(0, 5), [], `${letterboxed.wrong.length} pixels wrong`)
+  const filling = await placedCase({ cw: 64, ch: 36, sw: 32, sh: 18, mw: 8, mh: 6, box: { left: 0, top: 0, width: 64, height: 36 }, isPerson: person })
+  assert.ok(filling.overPerson > 300, JSON.stringify(filling).slice(0, 200))
+  assert.deepEqual(filling.wrong.slice(0, 5), [], `${filling.wrong.length} pixels wrong`)
+})
+
+test('a cropped and zoomed portrait clip: the matte stays on the person, not on the crop or the box', async () => {
+  const result = await placedCase({
+    cw: 64, ch: 36, sw: 18, sh: 32, mw: 6, mh: 8,
+    box: { left: 22, top: 0, width: 20.25, height: 36, scale: 1.5 },
+    crop: { left: 0.25, right: 0, top: 0, bottom: 0.25 },
+    isPerson: upperMiddle
+  })
+  assert.ok(result.overPerson > 40, JSON.stringify(result).slice(0, 200))
+  assert.deepEqual(result.wrong.slice(0, 5), [], `${result.wrong.length} pixels wrong`)
+})
+
+test('sourceFrameOnTimeline: the whole source frame is the layout box, zoomed about its centre', () => {
+  assert.deepEqual(sourceFrameOnTimeline({ left: 22, top: 0, width: 20, height: 36 }), { left: 22, top: 0, width: 20, height: 36, rotation: 0 })
+  assert.deepEqual(sourceFrameOnTimeline({ left: 0, top: 0, width: 10, height: 20, scale: 2 }), { left: -5, top: -10, width: 20, height: 40, rotation: 0 })
 })
