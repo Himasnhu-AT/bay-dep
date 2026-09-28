@@ -14,11 +14,13 @@ export interface KeyGateInput {
   modalOpen: boolean
   typing: boolean
   whileTyping: boolean
+  /** The spec's `whileModal`; false refuses every key while a dialog is open. Default true. */
+  whileModal?: boolean
 }
 
-export function keyMayRun({ defaultPrevented, modalOpen, typing, whileTyping }: KeyGateInput): boolean {
+export function keyMayRun({ defaultPrevented, modalOpen, typing, whileTyping, whileModal = true }: KeyGateInput): boolean {
   if (defaultPrevented) return false
-  if (modalOpen && !(typing && whileTyping)) return false
+  if (modalOpen && !(typing && whileTyping && whileModal)) return false
   return true
 }
 
@@ -40,9 +42,11 @@ export interface MenuGateInput {
   typing: boolean
   whileTyping: boolean
   native: boolean
+  /** The spec's `whileModal`; false refuses a non-native command while a dialog is open. */
+  whileModal?: boolean
 }
 
-export function menuCommandMayRun({ modalOpen, typing, whileTyping, native }: MenuGateInput): boolean {
+export function menuCommandMayRun({ modalOpen, typing, whileTyping, native, whileModal = true }: MenuGateInput): boolean {
   if (!modalOpen || native) return true
-  return typing && whileTyping
+  return typing && whileTyping && whileModal
 }

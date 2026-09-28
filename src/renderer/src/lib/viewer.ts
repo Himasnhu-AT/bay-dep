@@ -92,7 +92,10 @@ export function requestTextFocus(itemId: string): void {
   // section's body is not mounted). So show both, and leave the request for the field to take
   // when it mounts — a double-click that did nothing in those states read as broken.
   pendingTextFocus = { itemId, at: Date.now() }
-  useEditor.getState().setRegionHidden('inspector', false)
+  // In the AI layout the inspector is a drawer, not a region: open it there.
+  const editor = useEditor.getState()
+  if (editor.layoutMode === 'ai') editor.setAiPanel('inspector', true)
+  else editor.setRegionHidden('inspector', false)
   openSection('inspector.clip')
   // After the reveal has rendered: until then the inspector is still `inert` and the section's
   // body hidden, and a focus() there silently does nothing (measured: focus stayed on body).

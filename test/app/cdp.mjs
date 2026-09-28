@@ -121,6 +121,19 @@ const APPROVAL_KEY = 'bay.agentApproval'
 const DOCK_KEY = 'bay.workspace.agentDocked'
 
 /**
+ * Puts the editor in the Resolve layout. The layout mode is remembered per machine, and in the AI
+ * layout the Inspector is a drawer that starts closed and the timeline waits in the hidden parking
+ * box — so a probe reading either would find nothing mounted and report a working field dead.
+ * `attach()` records the mode and runs this; the restore puts the mode back. A build without
+ * layout modes has no `layoutMode` and is left alone.
+ */
+export const RESOLVE_LAYOUT = `(() => {
+  const s = window.bayEngine.store.getState()
+  if (s.layoutMode !== undefined && s.layoutMode !== 'resolve') s.setLayoutMode('resolve')
+  return true
+})()`
+
+/**
  * Connects, enables the probe surface, brings the window to front, and waits for the engine.
  * Returns `{ send, evaluate, close, patch, reloaded, opened }`.
  *
@@ -233,12 +246,14 @@ export async function attach(port = Number(process.env.PORT ?? 9222)) {
     // put back through their own setters (which write the remembered value), not by setState.
     let dockRemembered = null
     try { dockRemembered = localStorage.getItem(${JSON.stringify(DOCK_KEY)}) } catch {}
-    const workspace = { page: st.page, inspectorTab: st.inspectorTab, libraryTab: st.libraryTab, dockRemembered }
+    const workspace = { page: st.page, inspectorTab: st.inspectorTab, libraryTab: st.libraryTab, dockRemembered, layoutMode: st.layoutMode }
     window.__bayProbeSnapshot = { state, approval, workspace }
     window.__bayProbePatches = window.__bayProbePatches || []
     return { leftover, fingerprint: ${FINGERPRINT}, project: JSON.stringify(st.project),
              dirty: st.dirty, playhead: st.playhead }
   })()`, 60_000)
+  // After the snapshot, so the restore knows which mode to put back.
+  await evaluate(RESOLVE_LAYOUT)
   if (snapshot.leftover) {
     console.error('[cdp] WARNING: an earlier probe left its snapshot behind (killed before it could restore?).')
     console.error('[cdp]          The state now open may be that probe\'s; check the project before trusting it.')
@@ -284,15 +299,19 @@ export async function attach(port = Number(process.env.PORT ?? 9222)) {
  *
  * The Inspector is tabbed and the workspace page is remembered per machine, so a probe that
  * reads an Inspector section must ask for the page and tab it reads rather than assume the app
- * was left on them. `attach()` records both, and the restore puts them back.
+ * was left on them. `attach()` records both, and the restore puts them back. The layout mode too:
+ * it switches to Resolve (`RESOLVE_LAYOUT`), where the Inspector is a panel rather than a drawer.
  */
 export async function showInspector(evaluate, tab) {
   return evaluate(`(async () => {
     const st = window.bayEngine.store
+    ;${RESOLVE_LAYOUT}
     if (st.getState().page !== 'edit') st.getState().setPage('edit')
     st.getState().setInspectorTab(${JSON.stringify(tab)})
     await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
-    return st.getState().page === 'edit' && st.getState().inspectorTab === ${JSON.stringify(tab)}
+    const layout = st.getState().layoutMode
+    return (layout === undefined || layout === 'resolve') && st.getState().page === 'edit' &&
+      st.getState().inspectorTab === ${JSON.stringify(tab)}
   })()`)
 }
 
@@ -354,6 +373,7 @@ async function restoreSession() {
       if (ws) {
         const now = store.getState()
         if (ws.page && now.page !== ws.page) now.setPage(ws.page)
+        if (ws.layoutMode && store.getState().layoutMode !== ws.layoutMode) store.getState().setLayoutMode(ws.layoutMode)
         if (ws.inspectorTab && store.getState().inspectorTab !== ws.inspectorTab) store.getState().setInspectorTab(ws.inspectorTab)
         if (ws.libraryTab && store.getState().libraryTab !== ws.libraryTab) store.getState().setLibraryTab(ws.libraryTab)
         try {
