@@ -214,7 +214,14 @@ async function scene(label, clipPath, expectPillarbox, options = {}) {
     const T = await __mask.render(__mask.variant((i) => { if (i.id === cutId) i.disabled = true }), F, ${MAX})
     const P = await __mask.render(__mask.variant((i) => { if (i.id === cutId || i.id === textId) i.disabled = true }), F, ${MAX})
     const G = await __mask.render(__mask.variant((i) => { if (i.id !== textId) i.disabled = true }), F, ${MAX})
-    const U = await __mask.render(__mask.variant((i) => { if (i.id === cutId) delete i.masks }), F, ${MAX})
+    // Unmasked, the copy is no longer a cut-out and would draw its own stored framing; give it the
+    // clip's, so this control is "the same picture, unmasked" in the punched-in scene too.
+    const U = await __mask.render(__mask.variant((i, _t, tl) => {
+      if (i.id !== cutId) return
+      const clip = tl.tracks.flatMap((t) => t.items).find((c) => c.id === clipId)
+      delete i.masks
+      i.layout = { ...clip.layout }
+    }), F, ${MAX})
     const C0 = await __mask.render(__mask.variant((i) => { if (i.id !== cutId) i.disabled = true }, (tl) => { tl.background = '#000000' }), F, ${MAX})
     const C1 = await __mask.render(__mask.variant((i) => { if (i.id !== cutId) i.disabled = true }, (tl) => { tl.background = '#FFFFFF' }), F, ${MAX})
     // The independent matte, at render size: the source frame's rectangle scaled with the canvas.
