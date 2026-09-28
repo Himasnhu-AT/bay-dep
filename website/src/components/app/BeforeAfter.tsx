@@ -1,11 +1,22 @@
 "use client";
 
-import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent,
+  type PointerEvent,
+  type ReactNode,
+} from "react";
 import { ChevronsLeftRight } from "lucide-react";
 
 /**
- * Before and after: the four clips as they came from Pexels, cut to the same
- * frames, and the edit bay made of them, in one frame with a line you drag.
+ * Before and after: raw footage and the edit bay made of it, in one frame with
+ * a line you drag (`layout="wipe"`), or in two frames side by side
+ * (`layout="split"`) when the edit changes the framing, such as a 16:9 source
+ * cut into a 9:16 short. The home page passes its one pair (`HOME_PAIR`);
+ * `/compare` passes one per entry in `src/lib/comparisons.ts`.
  *
  * Nothing is requested until the figure is near the viewport. Until then the
  * frame shows two posters (lazy images, AVIF with a WebP fallback); within
@@ -22,36 +33,101 @@ import { ChevronsLeftRight } from "lucide-react";
  * only when it has drifted by more than two frames.
  */
 
-const SOURCES = {
-  before: ["/compare/before.av1.mp4", "/compare/before.h264.mp4"],
-  after: ["/compare/after.av1.mp4", "/compare/after.h264.mp4"],
+export type Aspect = "16:9" | "9:16";
+
+/** One side of the pair: its video in one or two codecs, and its poster. */
+export type Side = {
+  /** AV1 `.mp4`, offered first. Omitted when the encoder had no AV1. */
+  av1?: string;
+  /** H.264 `.mp4`, the fallback every browser plays. */
+  h264: string;
+  poster: { avif: string; webp: string };
+  aspect: Aspect;
 };
 
-function Poster({ name }: { name: "before" | "after" }) {
+export type Pair = { before: Side; after: Side };
+
+/** The home page's pair: the four Pexels clips and the edit in Fig. 1. */
+export const HOME_PAIR: Pair = {
+  before: {
+    av1: "/compare/before.av1.mp4",
+    h264: "/compare/before.h264.mp4",
+    poster: { avif: "/compare/before-poster.avif", webp: "/compare/before-poster.webp" },
+    aspect: "16:9",
+  },
+  after: {
+    av1: "/compare/after.av1.mp4",
+    h264: "/compare/after.h264.mp4",
+    poster: { avif: "/compare/after-poster.avif", webp: "/compare/after-poster.webp" },
+    aspect: "16:9",
+  },
+};
+
+/** Poster dimensions for the `width`/`height` hint; the box sets the real size. */
+const DIMENSIONS: Record<Aspect, [number, number]> = { "16:9": [960, 540], "9:16": [540, 960] };
+
+/**
+ * The box for one aspect. A vertical frame is capped by the window's height,
+ * so its bottom is never below the fold when its top is at the top.
+ */
+const FRAME: Record<Aspect, string> = {
+  "16:9": "aspect-video w-full",
+  "9:16": "mx-auto aspect-[9/16] w-full max-w-[calc(78svh*9/16)]",
+};
+
+const ratio = (a: Aspect) => (a === "16:9" ? 16 / 9 : 9 / 16);
+
+const LINK_BUTTON =
+  "font-medium text-accent-ink underline decoration-accent-ink/40 underline-offset-4 transition-colors hover:text-ink disabled:text-muted disabled:no-underline";
+
+function Poster({ side }: { side: Side }) {
+  const [w, h] = DIMENSIONS[side.aspect];
   return (
     <picture>
-      <source srcSet={`/compare/${name}-poster.avif`} type="image/avif" />
+      <source srcSet={side.poster.avif} type="image/avif" />
       <img
-        src={`/compare/${name}-poster.webp`}
+        src={side.poster.webp}
         alt=""
         loading="lazy"
         decoding="async"
-        width={960}
-        height={540}
+        width={w}
+        height={h}
         className="absolute inset-0 size-full object-cover"
       />
     </picture>
   );
 }
 
-export function BeforeAfter() {
+export function BeforeAfter({
+  pair,
+  caption,
+  notes,
+  layout = "wipe",
+  sound = true,
+  seam = false,
+  label = "Before and after",
+}: {
+  pair: Pair;
+  /** The line beside Play: which side is which. */
+  caption: ReactNode;
+  /** Anything more the figure carries, under that line, inside the figcaption. */
+  notes?: ReactNode;
+  /** One frame with a line (both sides one aspect), or two frames side by side (the framing changes). */
+  layout?: "wipe" | "split";
+  /** Whether the after video has sound worth offering ("Hear the edit"). */
+  sound?: boolean;
+  /** The home page only: paper begins halfway down the frame. See globals.css. */
+  seam?: boolean;
+  /** Names the range input for a screen reader. */
+  label?: string;
+}) {
   const stage = useRef<HTMLDivElement>(null);
   const before = useRef<HTMLVideoElement>(null);
   const after = useRef<HTMLVideoElement>(null);
   const [near, setNear] = useState(false);
   const [still, setStill] = useState(false);
   const [playing, setPlaying] = useState(false);
-  const [sound, setSound] = useState(false);
+  const [soundOn, setSoundOn] = useState(false);
   const [position, setPosition] = useState(50);
   const dragging = useRef(false);
 
@@ -134,9 +210,9 @@ export function BeforeAfter() {
   const toggleSound = () => {
     const lead = after.current;
     if (!lead) return;
-    lead.muted = sound;
-    setSound(!sound);
-    if (!sound && lead.paused) togglePlay();
+    lead.muted = soundOn;
+    setSoundOn(!soundOn);
+    if (!soundOn && lead.paused) togglePlay();
   };
 
   const onKey = (e: KeyboardEvent<HTMLInputElement>) => {
@@ -144,7 +220,7 @@ export function BeforeAfter() {
     if (e.key === "End") setPosition(100);
   };
 
-  const video = (which: "before" | "after", ref: typeof before) => (
+  const video = (side: Side, ref: typeof before) => (
     <video
       ref={ref}
       muted
@@ -155,117 +231,140 @@ export function BeforeAfter() {
       onLoadedData={(e) => e.currentTarget.setAttribute("data-ready", "")}
       className="absolute inset-0 size-full object-cover opacity-0 transition-opacity duration-500 data-[ready]:opacity-100"
     >
-      {near
-        ? SOURCES[which].map((src) => (
-            <source
-              key={src}
-              src={src}
-              type={src.includes("av1") ? 'video/mp4; codecs="av01.0.05M.08"' : 'video/mp4; codecs="avc1.64001f"'}
-            />
-          ))
-        : null}
+      {near ? (
+        <>
+          {side.av1 ? <source src={side.av1} type='video/mp4; codecs="av01.0.05M.08"' /> : null}
+          <source src={side.h264} type='video/mp4; codecs="avc1.64001f"' />
+        </>
+      ) : null}
     </video>
   );
+
+  const figcaption = (
+    <figcaption className="relative mt-3 text-sm leading-relaxed text-muted sm:mt-4">
+      <div className="flex flex-wrap items-baseline gap-x-6 gap-y-2">
+        <span>{caption}</span>
+        <span className="ml-auto flex items-center gap-4">
+          <button type="button" onClick={togglePlay} disabled={!near} className={LINK_BUTTON}>
+            {playing ? "Pause" : "Play"}
+          </button>
+          {sound ? (
+            <button
+              type="button"
+              onClick={toggleSound}
+              disabled={!near}
+              aria-pressed={soundOn}
+              className={LINK_BUTTON}
+            >
+              {soundOn ? "Mute" : "Hear the edit"}
+            </button>
+          ) : null}
+        </span>
+      </div>
+      {notes}
+    </figcaption>
+  );
+
+  if (layout === "split") {
+    // Two frames at one height from `sm`: each column's share is its aspect's
+    // width. Stacked on a phone, where a vertical frame caps its own width.
+    const cols = `${ratio(pair.before.aspect)}fr ${ratio(pair.after.aspect)}fr`;
+    const frame = (side: Side, ref: typeof before) => (
+      <div className={`relative overflow-hidden rounded-[12px] bg-app-surface-0 ${FRAME[side.aspect]} sm:max-w-none`}>
+        <Poster side={side} />
+        {video(side, ref)}
+      </div>
+    );
+    return (
+      <figure>
+        <div
+          ref={stage}
+          className="grid grid-cols-1 items-start gap-3 sm:grid-cols-[var(--cols)] sm:gap-4"
+          style={{ "--cols": cols } as CSSProperties}
+        >
+          {frame(pair.before, before)}
+          {frame(pair.after, after)}
+        </div>
+        {figcaption}
+      </figure>
+    );
+  }
 
   return (
     <figure>
       {/* The seam: paper begins halfway down this frame. See globals.css. */}
-      <div className="seam">
-      <div
-        ref={stage}
-        onPointerDown={(e) => {
-          dragging.current = true;
-          e.currentTarget.setPointerCapture(e.pointerId);
-          fromPointer(e);
-        }}
-        onPointerMove={(e) => {
-          if (dragging.current) fromPointer(e);
-        }}
-        onPointerUp={() => {
-          dragging.current = false;
-        }}
-        onPointerCancel={() => {
-          dragging.current = false;
-        }}
-        className="relative aspect-video cursor-ew-resize touch-pan-y overflow-hidden rounded-[12px] bg-app-surface-0 select-none"
-        // The divider is one custom property: every layer reads it through a transform.
-        style={{ ["--p" as string]: position }}
-      >
-        {/* Before: the whole frame. */}
-        <div className="absolute inset-0">
-          <Poster name="before" />
-          {video("before", before)}
-        </div>
-
-        {/* After: a window onto the right of the line, its picture held still against it. */}
+      <div className={seam ? "seam" : undefined}>
         <div
-          className="absolute inset-0 overflow-hidden will-change-transform"
-          style={{ transform: "translateX(calc(var(--p) * 1%))" }}
+          ref={stage}
+          onPointerDown={(e) => {
+            dragging.current = true;
+            e.currentTarget.setPointerCapture(e.pointerId);
+            fromPointer(e);
+          }}
+          onPointerMove={(e) => {
+            if (dragging.current) fromPointer(e);
+          }}
+          onPointerUp={() => {
+            dragging.current = false;
+          }}
+          onPointerCancel={() => {
+            dragging.current = false;
+          }}
+          className={`relative ${FRAME[pair.after.aspect]} cursor-ew-resize touch-pan-y overflow-hidden rounded-[12px] bg-app-surface-0 select-none`}
+          // The divider is one custom property: every layer reads it through a transform.
+          style={{ ["--p" as string]: position }}
         >
-          <div className="absolute inset-0" style={{ transform: "translateX(calc(var(--p) * -1%))" }}>
-            <Poster name="after" />
-            {video("after", after)}
+          {/* Before: the whole frame. */}
+          <div className="absolute inset-0">
+            <Poster side={pair.before} />
+            {video(pair.before, before)}
           </div>
-        </div>
 
-        {/* The same control for a keyboard or a screen reader. It takes no
-            pointer events: the frame itself tracks the pointer. */}
-        <input
-          type="range"
-          min={0}
-          max={100}
-          step={1}
-          value={Math.round(position)}
-          onChange={(e) => setPosition(Number(e.target.value))}
-          onKeyDown={onKey}
-          aria-label="Before and after: move the line to compare"
-          aria-valuetext={`${Math.round(position)}% before`}
-          className="peer pointer-events-none absolute inset-0 size-full opacity-0"
-        />
-
-        {/* The line, and the handle on it. */}
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-0 will-change-transform"
-          style={{ transform: "translateX(calc(var(--p) * 1%))" }}
-        >
-          <span className="absolute inset-y-0 left-0 w-px -translate-x-1/2 bg-on-night/85" />
-          <span className="absolute top-1/2 left-0 grid size-10 -translate-1/2 place-items-center rounded-full border border-on-night/70 bg-night text-on-night">
-            <ChevronsLeftRight className="size-4" strokeWidth={1.5} />
-          </span>
-        </div>
-        <span
-          aria-hidden
-          className="pointer-events-none absolute inset-0 rounded-[12px] opacity-0 outline-2 -outline-offset-4 outline-accent outline-solid peer-focus-visible:opacity-100"
-        />
-      </div>
-      </div>
-
-      <figcaption className="relative mt-3 flex flex-wrap items-baseline gap-x-6 gap-y-2 text-sm leading-relaxed text-muted sm:mt-4">
-        <span>
-          <span className="font-medium text-ink-soft">Fig. 2</span> Left of the line, the four clips as they
-          came from Pexels, cut to the same frames. Right of it, the edit in Fig. 1.
-        </span>
-        <span className="ml-auto flex items-center gap-4">
-          <button
-            type="button"
-            onClick={togglePlay}
-            disabled={!near}
-            className="font-medium text-accent-ink underline decoration-accent-ink/40 underline-offset-4 transition-colors hover:text-ink disabled:text-muted disabled:no-underline"
+          {/* After: a window onto the right of the line, its picture held still against it. */}
+          <div
+            className="absolute inset-0 overflow-hidden will-change-transform"
+            style={{ transform: "translateX(calc(var(--p) * 1%))" }}
           >
-            {playing ? "Pause" : "Play"}
-          </button>
-          <button
-            type="button"
-            onClick={toggleSound}
-            disabled={!near}
-            aria-pressed={sound}
-            className="font-medium text-accent-ink underline decoration-accent-ink/40 underline-offset-4 transition-colors hover:text-ink disabled:text-muted disabled:no-underline"
+            <div className="absolute inset-0" style={{ transform: "translateX(calc(var(--p) * -1%))" }}>
+              <Poster side={pair.after} />
+              {video(pair.after, after)}
+            </div>
+          </div>
+
+          {/* The same control for a keyboard or a screen reader. It takes no
+              pointer events: the frame itself tracks the pointer. */}
+          <input
+            type="range"
+            min={0}
+            max={100}
+            step={1}
+            value={Math.round(position)}
+            onChange={(e) => setPosition(Number(e.target.value))}
+            onKeyDown={onKey}
+            aria-label={`${label}: move the line to compare`}
+            aria-valuetext={`${Math.round(position)}% before`}
+            className="peer pointer-events-none absolute inset-0 size-full opacity-0"
+          />
+
+          {/* The line, and the handle on it. */}
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-0 will-change-transform"
+            style={{ transform: "translateX(calc(var(--p) * 1%))" }}
           >
-            {sound ? "Mute" : "Hear the edit"}
-          </button>
-        </span>
-      </figcaption>
+            <span className="absolute inset-y-0 left-0 w-px -translate-x-1/2 bg-on-night/85" />
+            <span className="absolute top-1/2 left-0 grid size-10 -translate-1/2 place-items-center rounded-full border border-on-night/70 bg-night text-on-night">
+              <ChevronsLeftRight className="size-4" strokeWidth={1.5} />
+            </span>
+          </div>
+          <span
+            aria-hidden
+            className="pointer-events-none absolute inset-0 rounded-[12px] opacity-0 outline-2 -outline-offset-4 outline-accent outline-solid peer-focus-visible:opacity-100"
+          />
+        </div>
+      </div>
+
+      {figcaption}
     </figure>
   );
 }

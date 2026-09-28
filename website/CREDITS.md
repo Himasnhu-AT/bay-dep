@@ -34,6 +34,15 @@ presents the clips as material an editor was pointed at and says nothing about t
 
 The site credits the authors anyway, on the home page under Fig. 2.
 
+## Footage: /compare
+
+Each figure on `/compare` is raw footage beside the edit the app's agent made of it. The
+entries live in `src/lib/comparisons.ts` and the files in `public/compare/<slug>/`. When an
+entry is marked ready, its footage and sound are listed here, one table per entry in the same
+shape as the one above (title, author, page, file downloaded, licence), and the same rows are
+the entry's `credits`, which the page prints under the figure. No entry is ready yet, so none
+of that material is served.
+
 ## Sound
 
 The music bed (`coast-bed.m4a`) and the surf bed (`surf.m4a`) in the edit were generated

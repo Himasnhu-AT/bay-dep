@@ -484,6 +484,51 @@ export function Command({ children }: { children: ReactNode }) {
   );
 }
 
+/**
+ * The words a person gave the agent, verbatim, on paper: a quiet label and the
+ * message in body ink behind a 1px rule. It is a person's sentence, not the
+ * machine's, so it is not a `Command` and does not borrow the night.
+ */
+export function Prompt({
+  children,
+  label = "The prompt, verbatim",
+}: {
+  children: ReactNode;
+  label?: ReactNode;
+}) {
+  return (
+    <div>
+      <p className="text-xs text-muted">{label}</p>
+      <blockquote className="mt-2 max-w-[62ch] border-l border-line pl-4 text-base whitespace-pre-line text-ink-soft">
+        {children}
+      </blockquote>
+    </div>
+  );
+}
+
+/**
+ * What ran, in order: one line per step, the tool's name (when the step is a
+ * tool call) in the app's monospace and accent-ink, the rest in body ink.
+ */
+export function StepList({
+  steps,
+}: {
+  steps: { tool?: string; rest: ReactNode }[];
+}) {
+  return (
+    <ol className="space-y-1.5 text-sm text-ink-soft">
+      {steps.map((step, i) => (
+        <li key={i}>
+          {step.tool ? (
+            <span className="font-app-mono text-[13px] text-accent-ink">{step.tool}</span>
+          ) : null}
+          {step.rest}
+        </li>
+      ))}
+    </ol>
+  );
+}
+
 /** The closing statement of a page, set large. At most one per page. */
 export function PullQuote({
   children,
