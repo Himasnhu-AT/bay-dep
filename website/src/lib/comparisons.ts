@@ -22,7 +22,8 @@ import type { Aspect, Pair } from "@/components/app/BeforeAfter";
  *   explainer from one interview").
  * - `style`: the id of the built-in style the agent applied, as in
  *   `../src/shared/styles/` (`retention-talking-head`, `news-lower-thirds`,
- *   `kinetic-typography`, `luxury-minimal`, `product-launch-film`, `ugc-ad`).
+ *   `kinetic-typography`, `luxury-minimal`, `product-launch-film`, `ugc-ad`), or `podcast`
+ *   when the agent worked from the podcast skill and its tools rather than a style.
  *   The page shows its title from `STYLE_TITLES` below.
  * - `aspect`: the edit's frame, `16:9` or `9:16`.
  * - `beforeAspect`: the raw footage's frame, when it differs from `aspect`
@@ -55,7 +56,8 @@ export type StyleId =
   | "kinetic-typography"
   | "luxury-minimal"
   | "product-launch-film"
-  | "ugc-ad";
+  | "ugc-ad"
+  | "podcast";
 
 /** The built-in styles' titles, as `../src/shared/styles/*.ts` spells them. */
 export const STYLE_TITLES: Record<StyleId, string> = {
@@ -65,6 +67,7 @@ export const STYLE_TITLES: Record<StyleId, string> = {
   "luxury-minimal": "Luxury / minimal brand film",
   "product-launch-film": "Product launch film",
   "ugc-ad": "UGC ad / testimonial",
+  podcast: "Podcast edit (bay's podcast skill and tools)",
 };
 
 export type Credit = { text: string; url: string; licence: string; licenceUrl?: string };
@@ -121,15 +124,33 @@ export const comparisons: Comparison[] = [
     afterSound: true,
   },
   {
-    slug: "news-explainer",
-    status: "pending",
-    title: "A news explainer with lower-thirds",
-    style: "news-lower-thirds",
+    slug: "podcast-frisian",
+    status: "ready",
+    title: "A raw kitchen-table conversation cut into a one-minute podcast clip",
+    style: "podcast",
     aspect: "16:9",
-    durationSec: 0,
-    prompt: PENDING,
-    did: [],
-    credits: [],
+    durationSec: 60,
+    prompt: "/podcast This is a raw two-person conversation (Stephan and Simon, speaking West Frisian) filmed in one wide shot with one mixed mic. Use bay's podcast tools rather than reading a transcript — whisper can't transcribe Frisian, so don't rely on transcription, highlights or subtitles. Run detect_footage_mode first. Then make a 60-second 16:9 clip from the liveliest stretch of the first five minutes (the source is only 1080×606, so keep punch-ins gentle, no more than about 1.5×): remove_silences so only dead air goes, level_voices so both men sit at the same loudness, and reframe so the picture follows whoever is talking (a gentle punch-in on each man, back to the two-shot now and then, cut when the voice changes; if the audio can't tell them apart, cut on the natural turns). Add a clean lower third with their names and \"speaking West Frisian\", and a small credit at the end: \"Video: Wikitongues, Guillem Belmar (CC BY-SA 4.0)\". When it's done and checked, export it with streaming loudness to ~/Movies/bay-rnd/podcast/after.mp4.",
+    did: [
+      "detect_footage_mode: podcast, 68% confidence",
+      "Chose 1:40–2:51 of the 24-minute source, after the camera settles, where both men are most animated",
+      "remove_silences: 19 gaps of half a second or more, 12.1 s in all, keeping 0.2 s of breath at each cut",
+      "level_voices by stretch to −25 LUFS; with one mixed mic it evens the loudness per stretch, not strictly per speaker",
+      "switch_speakers not used: one mixed mic cannot tell the two men apart, so shots cut on visible turns",
+      "edit_item for 1.5× close-ups on whoever is talking, back to the two-shot for the shared laugh",
+      "write_brf for the lower third and the licence credit",
+      "export_timeline, mastered to −14 LUFS",
+    ],
+    credits: [
+      {
+        text: "WIKITONGUES: Stephan and Simon speaking Frisian (Wikitongues, recorded by Guillem Belmar)",
+        url: "https://commons.wikimedia.org/wiki/File:WIKITONGUES-_Stephan_and_Simon_speaking_Frisian.webm",
+        licence: "CC BY-SA 4.0",
+        licenceUrl: "https://creativecommons.org/licenses/by-sa/4.0/",
+      },
+    ],
+    afterSound: true,
+    beforeSound: false,
   },
   {
     slug: "kinetic-type",

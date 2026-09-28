@@ -69,6 +69,16 @@ No music or sound: these clips have no audio stream and none was added. The agen
 names out of frame (it dropped a fourth clip, item 3652, whose rotor is engraved with the
 maker's name); a faint generic "…S MADE" remains at the edge of the dial in the last seconds.
 
+### podcast-frisian
+
+| Title | Author | Page | File downloaded | Licence |
+|---|---|---|---|---|
+| WIKITONGUES: Stephan and Simon speaking Frisian | Wikitongues; recorded by Guillem Belmar | https://commons.wikimedia.org/wiki/File:WIKITONGUES-_Stephan_and_Simon_speaking_Frisian.webm | https://upload.wikimedia.org/wikipedia/commons/3/3f/WIKITONGUES-_Stephan_and_Simon_speaking_Frisian.webm | CC BY-SA 4.0 |
+
+Share-alike: the edit (`public/compare/podcast-frisian/after.*`) is an adaptation and is
+shared under CC BY-SA 4.0 too. The two speakers are private people talking about themselves;
+neither they nor Wikitongues endorse bay. The lower third and credit were drawn by bay's agent.
+
 ## Sound
 
 The music bed (`coast-bed.m4a`) and the surf bed (`surf.m4a`) in the edit were generated
