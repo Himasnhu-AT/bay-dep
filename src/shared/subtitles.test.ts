@@ -54,7 +54,7 @@ test('every design produces a composition bay itself accepts, with the right id 
     assert.equal(info?.compositionId, `subtitles-${style.id}`)
     assert.equal(info?.durationSeconds, 5)
     assert.deepEqual(fatalFaults(faults), [], style.id)
-    assert.deepEqual(faults.filter((f) => f.code === 'remote-resource' || f.code === 'outside-folder'), [], `${style.id} loads nothing`)
+    assert.deepEqual(faults.filter((f) => f.code === 'remote-resource' || f.code === 'remote-script' || f.code === 'outside-folder'), [], `${style.id} loads nothing`)
   }
 })
 

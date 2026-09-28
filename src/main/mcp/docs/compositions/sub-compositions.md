@@ -1,8 +1,8 @@
 <!--
 Migrated from the HyperFrames project (https://github.com/heygen-com/hyperframes),
 packages/../skills/hyperframes-core/references/sub-compositions.md, which is licensed Apache-2.0.
-Carried into bay unmodified except for this notice, because bay renders HyperFrames
-compositions and an agent writing one needs the same contract the renderer enforces.
+Adapted for bay: examples use a plain-JavaScript timeline rather than GSAP from a CDN,
+because a composition may load nothing from the network and bay ships no animation library.
 -->
 
 # Sub-Compositions
@@ -70,10 +70,12 @@ So `<template>` is not just a wrapper — it is the **transport container**. If 
       </div>
 
       <script>
-        window.__timelines = window.__timelines || {};
-        const tl = gsap.timeline({ paused: true });
-        // ... build timeline ...
-        window.__timelines["data-chart"] = tl;
+        window.__timelines["data-chart"] = {
+          time(t) {
+            // ... set this scene's styles from t ...
+          },
+          duration: () => 8,
+        };
       </script>
     </template>
   </body>
@@ -128,14 +130,14 @@ Static file checks cannot prove the **cross-file mount contract**. These failure
 <template>
   <div data-composition-id="data-chart" ...>...</div>
   <script>
-    window.__timelines["data-chart"] = tl;
+    window.__timelines["data-chart"] = { time, duration };
   </script>
 </template>
 
 <!-- ✅ RIGHT — both ids match, and the timeline key matches them too -->
 <div data-composition-id="data-chart" data-composition-src="compositions/chart.html" ...></div>
 <!-- chart.html template root: data-composition-id="data-chart" -->
-<!-- timeline: window.__timelines["data-chart"] = tl; -->
+<!-- timeline: window.__timelines["data-chart"] = { time, duration }; -->
 ```
 
 **Why this happens:** it feels natural to give the host slot a different name like `chart-mount` ("the mount point") vs `data-chart` ("the actual chart"). HyperFrames does not work that way — **the host's `data-composition-id` is the lookup key the framework uses to find the registered timeline**. Lint passes because each file's ids are individually valid; the cross-file mismatch only blows up at render.
@@ -213,18 +215,18 @@ For the runtime end-to-end check (a fast `snapshot` pass + per-scene frame eyeba
 - Seeks the sub-composition's timeline independently from the host's playhead.
 - Plays the sub-composition's content from `data-start` of the host clip, for `data-duration` seconds.
 
-**Do not** manually `master.add(child)` a sub-composition timeline into the host timeline. HyperFrames already drives them independently — nesting them in GSAP causes double-seeks.
+**Do not** manually `master.add(child)` a sub-composition timeline into the host timeline. HyperFrames already drives them independently — calling a child's `time()` from the host's causes double-seeks.
 
 ### The host clip's `data-duration` is the slot's visible window
 
-`data-duration` on the host clip defines **how long the slot is visible**, and it takes precedence over the sub-composition's internal GSAP timeline length. Two consequences follow:
+`data-duration` on the host clip defines **how long the slot is visible**, and it takes precedence over the sub-composition's own `duration()`. Two consequences follow:
 
-- **Internal timeline shorter than the slot → the slot holds.** If the sub-composition's GSAP timeline finishes before `data-duration` elapses, the slot keeps showing its final frame for the rest of the window. You do **not** need to pad the timeline with empty tweens.
+- **Internal timeline shorter than the slot → the slot holds.** If the sub-composition's animation finishes before `data-duration` elapses, the slot keeps showing its final frame for the rest of the window. You do **not** need to pad the timeline.
 - **`data-duration` shorter than the host composition → the slot ends (and goes blank) when its own `data-duration` elapses.** This is intended: the clip is a fixed-length window on the timeline, not "fill until the composition ends." To keep a sub-composition visible for the whole composition, set its `data-duration` to span the host window (or add another clip to cover the remaining time). Leaving a single full-bleed sub-composition shorter than the composition is almost always a mistake — the linter flags it as `subcomposition_blanks_before_host`.
 
 ## Animations Inside Sub-Compositions
 
-Prefer `gsap.fromTo()` over `gsap.from()` for entrance tweens. The host re-seeks the sub-composition every time its clip becomes visible; `gsap.from()` records the starting state at registration and can desync on seek-back, while `gsap.fromTo()` declares both endpoints explicitly and replays cleanly.
+Write `time(t)` so it sets both ends of every entrance from `t` alone — the start value before the entrance, the end value after it, the mix in between. The host re-seeks the sub-composition every time its clip becomes visible, and in any order; a `time` that reads the element's current style, or remembers the previous call, desyncs on seek-back.
 
 ## Per-Instance Variables
 
