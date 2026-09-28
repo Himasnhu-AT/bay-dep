@@ -85,6 +85,15 @@ Share-alike: the edit (`public/compare/explainer-drawboard/after.*`) is an adapt
 shared under CC BY-SA 4.0 too. The drawboard (tree, map, labels) was drawn by bay's agent from
 what he says; two small captions are its paraphrase. Neither he nor Wikitongues endorses bay.
 
+### mask-3d
+
+| Title | Author | Page | File downloaded | Licence |
+|---|---|---|---|---|
+| James speaking West Riding Yorkshire English | Wikitongues | https://commons.wikimedia.org/wiki/File:James_speaking_West_Riding_Yorkshire_English.webm | the original `.webm` (1080×1920, 6:20); a different passage from kinetic-type | CC0 1.0 |
+
+The 3D title uses bay's bundled Inter (OFL-1.1). The person on camera keeps his personality and
+publicity rights; no endorsement is implied.
+
 ## Sound
 
 The music bed (`coast-bed.m4a`) and the surf bed (`surf.m4a`) in the edit were generated

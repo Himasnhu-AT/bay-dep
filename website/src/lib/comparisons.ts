@@ -58,7 +58,8 @@ export type StyleId =
   | "product-launch-film"
   | "ugc-ad"
   | "podcast"
-  | "explainer";
+  | "explainer"
+  | "effects";
 
 /** The built-in styles' titles, as `../src/shared/styles/*.ts` spells them. */
 export const STYLE_TITLES: Record<StyleId, string> = {
@@ -70,6 +71,7 @@ export const STYLE_TITLES: Record<StyleId, string> = {
   "ugc-ad": "UGC ad / testimonial",
   podcast: "Podcast edit (bay's podcast skill and tools)",
   explainer: "Educational explainer with a drawboard",
+  effects: "Effects: a 3D title and text behind the speaker",
 };
 
 export type Credit = { text: string; url: string; licence: string; licenceUrl?: string };
@@ -124,6 +126,34 @@ export const comparisons: Comparison[] = [
     afterSound: true,
     retouched:
       "Trimmed for this page to 0:06.9–0:59.6 of the agent's 61.8 s export: 4 s either side of the drawboard, with a 0.15 s sound fade at each end. Both sides are cut on the same frames; nothing else was changed.",
+  },
+  {
+    slug: "mask-3d",
+    status: "ready",
+    title: "A 3D title you fly through, and words that sit behind the speaker",
+    style: "effects",
+    aspect: "9:16",
+    durationSec: 20.3,
+    prompt: "Make a 20-second vertical (1080×1920) short from James talking that shows off two effects. Pick a passage of about 18 seconds that stands on its own and has one strong key phrase. (1) Open with a 3D title: the key phrase as extruded 3D text that the camera flies through (a .brf <scene3d> with <text3d>, lights and a little fog; the camera starts far back and pushes through the letters into the shot of him), about 2.5 seconds, landing on his first word. (2) Then, while he talks, put a huge bold word BEHIND him — behind his head and shoulders, in front of the wall — using put_behind_subject, and change the word on his key words (two or three words across the clip). Keep his face fully clear. Add word-by-word subtitles low in the frame. Check the 3D frames and the masked frames with preview_frame, then export it with streaming loudness to ~/Movies/bay-rnd/mask3d/after.mp4.",
+    did: [
+      "find_highlights and transcribe to choose the passage about keeping Yorkshire dialect alive",
+      "set_canvas to vertical 1080×1920; remove_range to cut two pauses",
+      "write_brf with <scene3d> and <text3d>: KEEP DIALECT ALIVE as extruded 3D type, lit and fogged; the camera flies in and pushes through the letters",
+      "write_brf for three words, YORKSHIRE, POEMS and DIALECT, each on the word he says",
+      "put_behind_subject for each: Apple Vision finds him in every frame and a cut-out copy of him sits above the word, so his hair and hands pass in front of the letters",
+      "add_subtitles, word by word, low in the frame",
+      "export_timeline, mastered to −14 LUFS",
+      "A second message asked for bigger, lower words, no guessed subtitle words and punch-ins over the two jump cuts; the agent zoomed the cut-out to match",
+    ],
+    credits: [
+      {
+        text: "James speaking West Riding Yorkshire English (Wikitongues)",
+        url: "https://commons.wikimedia.org/wiki/File:James_speaking_West_Riding_Yorkshire_English.webm",
+        licence: "CC0 1.0",
+        licenceUrl: "https://creativecommons.org/publicdomain/zero/1.0/",
+      },
+    ],
+    afterSound: true,
   },
   {
     slug: "podcast-frisian",

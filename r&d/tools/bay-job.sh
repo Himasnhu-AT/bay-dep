@@ -9,7 +9,10 @@ T="$(cd "$(dirname "$0")" && pwd)"
 NAME=$1; BRIEF=$2; REC=$3; shift 3
 STOPDIR="${STOPDIR:-${TMPDIR:-/tmp}/bay-jobs}"; mkdir -p "$STOPDIR"
 SLUG=$(echo "$NAME" | tr ' A-Z' '-a-z'); STOP="$STOPDIR/stop-$SLUG"; rm -f "$STOP"
-b(){ agent-browser --session bay "$@"; }
+# agent-browser follows new targets (composition windows) and tab ids change after a restart, so
+# every call first selects the editor tab by its title, "bay".
+baytab(){ local l t; l=$(agent-browser --session bay tab 2>/dev/null); echo "$l" | grep -qE '^→ \[t[0-9]+\] bay - ' && return 0; t=$(echo "$l" | grep -E '\] bay - ' | grep -oE 't[0-9]+' | head -1); [ -n "$t" ] && agent-browser --session bay tab $t >/dev/null 2>&1; }
+b(){ baytab; agent-browser --session bay "$@"; }
 mark(){ echo "$1" > "$STOP.mark"; sleep 0.3; }
 
 b connect http://127.0.0.1:9222 >/dev/null 2>&1
@@ -27,7 +30,10 @@ ref=$(b snapshot -i | grep -oE 'button "[A-Z][a-z]+ [A-Z][a-z]+ [A-Z][a-z]+" \[r
 b click @$ref >/dev/null; sleep .5; b press Meta+a >/dev/null; b keyboard type "$NAME" >/dev/null; b press Enter >/dev/null; sleep 1; mark renamed
 
 # drop the media where the empty media pool says "No media yet"
-P=$(b eval "(()=>{const r=[...document.querySelectorAll('*')].find(e=>e.textContent.trim()==='No media yet');const x=r.getBoundingClientRect();return Math.round(x.left+x.width/2)+' '+Math.round(x.top+x.height/2)})()" | tr -d '"')
+P=$(b eval "(()=>{const r=[...document.querySelectorAll('*')].find(e=>e.textContent.trim()==='No media yet');if(!r)return 'none';const x=r.getBoundingClientRect();return Math.round(x.left+x.width/2)+' '+Math.round(x.top+x.height/2)})()" | tr -d '"')
+# Never drop into a project that already has media: that means the new project was not created
+# and the brief would go to whatever was open (it did once, into a finished project).
+case "$P" in ''|none|*[!0-9\ ]*) echo "refusing: no empty media pool (got '$P'); the new project was not created"; touch "$STOP"; exit 1;; esac
 mark "drop media"; node "$T/drop.mjs" 9222 index.html ${=P} "$@"; sleep 6
 echo "media: $(b eval "document.body.innerText.match(/Media Pool\s*(\d+)/)?.[1]")"
 
