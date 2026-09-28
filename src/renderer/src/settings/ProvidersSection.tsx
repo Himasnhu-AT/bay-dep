@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import {
+  DEFAULT_GENERATION_LIMITS,
   GENERATION_PROVIDERS,
   MAX_GENERATION_ACTIVE,
   MAX_GENERATION_BUDGET_USD,
@@ -8,7 +9,7 @@ import {
   type GenerationSpending,
   type ProviderKeyStatus
 } from '@shared/generation'
-import { Button } from '@/components'
+import { Button, NumberField } from '@/components'
 import { bay } from '@/lib/bay'
 import { cn } from '@/lib/cn'
 import { Group, Row, Section } from './parts'
@@ -52,8 +53,6 @@ export function ProvidersSection(): ReactNode {
   )
 }
 
-const inputClass =
-  'h-7 w-20 rounded-sm border border-line-strong bg-surface-2 px-2 font-mono text-[12px] text-ink-0 outline-none focus:border-accent disabled:opacity-40'
 
 /**
  * The spend guard's limits. Main enforces them on every generation, whoever asks — the agent
@@ -115,35 +114,39 @@ function SpendingRow(): ReactNode {
             void save()
           }}
         >
-          <label className="flex items-center gap-1 text-[12px] text-ink-1">
-            $
-            <input
-              type="number"
+          {/* The kit's field rather than a raw number input: the same drag, arrows (Shift ×10,
+              Cmd/Alt ×0.1), wheel and double-click reset as every other number in bay. */}
+          <span className="flex items-center gap-1 text-[12px] text-ink-1">
+            <NumberField
+              label="$"
+              ariaLabel="Session budget in US dollars"
+              value={Number(budget) || 0}
               min={0}
               max={MAX_GENERATION_BUDGET_USD}
-              step="0.5"
-              value={budget}
-              onChange={(event) => setBudget(event.target.value)}
-              aria-label="Session budget in US dollars"
+              step={0.5}
+              precision={2}
+              defaultValue={DEFAULT_GENERATION_LIMITS.budgetUsd}
+              onCommit={(next) => setBudget(String(next))}
               disabled={busy || !spending}
-              className={inputClass}
+              className="w-24"
             />
             per session
-          </label>
-          <label className="flex items-center gap-1 text-[12px] text-ink-1">
-            <input
-              type="number"
+          </span>
+          <span className="flex items-center gap-1 text-[12px] text-ink-1">
+            <NumberField
+              label="Jobs"
+              ariaLabel="Jobs at once"
+              value={Number(active) || 1}
               min={1}
               max={MAX_GENERATION_ACTIVE}
-              step="1"
-              value={active}
-              onChange={(event) => setActive(event.target.value)}
-              aria-label="Jobs at once"
+              step={1}
+              defaultValue={DEFAULT_GENERATION_LIMITS.maxActive}
+              onCommit={(next) => setActive(String(next))}
               disabled={busy || !spending}
-              className={cn(inputClass, 'w-14')}
+              className="w-20"
             />
-            jobs at once
-          </label>
+            at once
+          </span>
           <Button type="submit" variant="primary" disabled={busy || !spending}>
             {busy ? 'Saving…' : 'Save'}
           </Button>

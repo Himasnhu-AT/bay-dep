@@ -11,6 +11,7 @@ import {
   isVisualItem,
   keyTimeBounds,
   MAX_VOLUME_DB,
+  spokenPan,
   VOLUME_DB_FLOOR, audioNoteForPerson } from './inspector'
 import { mergeKeyframes } from './keyframes'
 import type { Keyframe } from './project'
@@ -125,4 +126,12 @@ test('J/L notes use the Audio section’s own words, not the model’s', () => {
   const person = audioNoteForPerson(note)
   assert.ok(!/audio lead|in-point/.test(person), person)
   assert.ok(person.includes('sound-early time') && person.includes("clip's start"), person)
+})
+
+test('a pan is spoken in words: Left 30, Centre, Right 100', () => {
+  assert.equal(spokenPan(-0.3), 'Left 30')
+  assert.equal(spokenPan(0), 'Centre')
+  assert.equal(spokenPan(0.004), 'Centre')
+  assert.equal(spokenPan(1), 'Right 100')
+  assert.equal(spokenPan(Number.NaN), 'Centre')
 })

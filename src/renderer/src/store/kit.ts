@@ -39,6 +39,13 @@ export interface History {
   txDepth: number
   txBefore: Project | null
   txRecorded: boolean
+  /**
+   * How much of `txDepth` is pointer gestures (`beginGesture`) rather than `transact`. A gesture
+   * spans many events — a wheel's stays open 400 ms after its last notch — so other things can
+   * happen inside it: an undo, an agent's tool call. Those must not join the user's step
+   * (`aside`, `closeGestureStep`).
+   */
+  gestureDepth: number
 }
 
 export interface StoreKit {
@@ -51,10 +58,68 @@ export interface StoreKit {
   turnMarks(state: EditorState): Partial<EditorState>
   restoreFiles(ids: string[], side: 'before' | 'after'): void
   followReverts(project: Project): void
+  closeGestureStep(): void
+  reopenGesture(): void
+  aside(work: () => void): void
+  intrudes(): boolean
 }
 
 export function createKit(set: Set, get: Get): StoreKit {
-  const history: History = { saved: null, txDepth: 0, txBefore: null, txRecorded: false }
+  const history: History = { saved: null, txDepth: 0, txBefore: null, txRecorded: false, gestureDepth: 0 }
+
+  /**
+   * Pushes what an open gesture has changed so far as its own undo step, and leaves the gesture
+   * open from here. For whatever must happen between two halves of a user's gesture as a step of
+   * its own: an undo (which would otherwise undo *past* the gesture's start, and the gesture's end
+   * would then push the pre-gesture state and clear redo), or an agent's edit (which would
+   * otherwise be folded into the user's step, and undone with it).
+   */
+  function closeGestureStep(): void {
+    if (history.gestureDepth === 0) return
+    const before = history.txBefore
+    const recorded = history.txRecorded
+    set((state) => {
+      if (!recorded || !before || before === state.project) return state
+      const past = [...state.past, before]
+      if (past.length > HISTORY_LIMIT) past.shift()
+      return { past, future: [], dirty: true }
+    })
+    reopenGesture()
+  }
+
+  /** The open gesture starts again from the project as it is now. */
+  function reopenGesture(): void {
+    if (history.gestureDepth === 0) return
+    history.txBefore = get().project
+    history.txRecorded = false
+  }
+
+  /** An edit on someone else's behalf — the agent's or an MCP client's tool call. */
+  const forSomeoneElse = (): boolean => agentActingDepth() > 0 || clientActingDepth() > 0
+
+  /**
+   * Runs `work` outside the open gesture: the gesture's changes so far become one step, `work`
+   * records its own, and the gesture carries on from the result. Only between the gesture's own
+   * events (no `transact` open inside it), which is the only time anything else can run.
+   */
+  function aside(work: () => void): void {
+    closeGestureStep()
+    const depth = history.txDepth
+    const gestures = history.gestureDepth
+    history.txDepth = 0
+    history.gestureDepth = 0
+    try {
+      work()
+    } finally {
+      history.txDepth = depth
+      history.gestureDepth = gestures
+      reopenGesture()
+    }
+  }
+
+  /** Whether an edit now is someone else's arriving inside a user's gesture. */
+  const intrudes = (): boolean =>
+    history.gestureDepth > 0 && history.txDepth === history.gestureDepth && forSomeoneElse()
 
   /**
    * Every mutation of `project` goes through here. It snapshots the previous project for
@@ -62,6 +127,7 @@ export function createKit(set: Set, get: Get): StoreKit {
    * caller has to remember to do any of that, and none of them can forget.
    */
   function edit(mutator: (project: Project) => void, options?: { silent?: boolean }): void {
+    if (!options?.silent && intrudes()) return aside(() => edit(mutator, options))
     set((state) => {
       const before = state.project
       const next = clone(before)
@@ -181,5 +247,19 @@ export function createKit(set: Set, get: Get): StoreKit {
     return activeTimeline(get().project)
   }
 
-  return { set, get, history, edit, editTimeline, currentTimeline, turnMarks, restoreFiles, followReverts }
+  return {
+    set,
+    get,
+    history,
+    edit,
+    editTimeline,
+    currentTimeline,
+    turnMarks,
+    restoreFiles,
+    followReverts,
+    closeGestureStep,
+    reopenGesture,
+    aside,
+    intrudes
+  }
 }

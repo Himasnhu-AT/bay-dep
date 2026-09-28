@@ -16,6 +16,7 @@ import type {
   TrackKind,
   Transition,
   TransitionDirection,
+  KeyframeEase,
   TransitionKind
 } from '@shared/project'
 import type { BrfCodeMeta, BrfDocument } from '@shared/brf'
@@ -513,6 +514,8 @@ export interface EditorActions {
     kind: TransitionKind
     durationInFrames: Frames
     direction?: TransitionDirection
+    /** Absent is linear. */
+    ease?: KeyframeEase
   }): { id: string } | { error: string }
   removeTransition(transitionId: string): void
   /**
@@ -522,7 +525,7 @@ export interface EditorActions {
   applyScript(timelineId: string, operations: readonly ScriptOp[]): void
   patchTransition(
     transitionId: string,
-    patch: Partial<Pick<Transition, 'kind' | 'durationInFrames' | 'direction'>>
+    patch: Partial<Pick<Transition, 'kind' | 'durationInFrames' | 'direction' | 'ease'>>
   ): void
 
   // captions ------------------------------------------------------------------

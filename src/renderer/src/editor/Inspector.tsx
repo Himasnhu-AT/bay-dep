@@ -23,8 +23,10 @@ import {
   type Layout
 } from '@shared/project'
 import {
+  AngleDial,
   Field,
   NumberField,
+  TimecodeField,
   Panel,
   ScrollArea,
   Section,
@@ -47,15 +49,15 @@ import { TextStyleSection } from './TextStyleSection'
 import { KeyDiamond, KeyNavigation, Keyed, relativeFrame } from './KeyframeControls'
 import { animatedLayoutAt, animatedVolumeAt, PICTURE_PROPERTIES } from '@shared/keyframes'
 import { canSound, commonValue, hasSourceTime, isVisualItem, timingRefusal } from '@shared/inspector'
-import { retimedLength, speedNote, type SpeedPlan } from '@shared/speed'
+import { CLIP_SPEED_RANGE, retimedLength, speedNote, type SpeedPlan } from '@shared/speed'
 import { AudioSection } from './AudioSection'
 import { ClipSection, Readout } from './ClipSection'
 import { KeyframesSection } from './KeyframesSection'
-import { timecodeField } from './timecodeField'
 import { chooseTab, inspectorTabs, tabForSection, type SelectionShape } from './inspector/tabs'
 import { TimelineTab } from './inspector/TimelineTab'
 import { TransitionTab, transitionCount } from './inspector/TransitionTab'
 import { useNarrow } from './inspector/useNarrow'
+import { LIVE } from './liveGesture'
 
 /** One value across the selection, or `mixed` — see `commonValue` in `@shared/inspector`. */
 function common<T>(items: Item[], read: (item: Item) => T): { value: T; mixed: boolean } {
@@ -285,6 +287,17 @@ export function Inspector(): ReactNode {
 
   const left = layout((item) => positionOf(item).x)
   const top = layout((item) => positionOf(item).y)
+  // Where X and Y reset to: the first clip centred in the frame, in the chosen origin's numbers.
+  const centreOf = (item: Item | undefined): { x: number; y: number } | undefined => {
+    if (!item) return undefined
+    const shown = view(item)
+    return positionFromOrigin(
+      { ...shown, left: (frame.width - shown.width) / 2, top: (frame.height - shown.height) / 2 },
+      frame,
+      origin
+    )
+  }
+  const centre = centreOf(visualItems[0])
 
   /** Writes one axis back, keeping the other where the clip already is. */
   const setPosition = (axis: 'x' | 'y', next: number): void => {
@@ -365,7 +378,6 @@ export function Inspector(): ReactNode {
   const fadeOut = layout((item) => item.fadeOutFrames, selected)
   const from = layout((item) => item.from, selected)
   const durationInFrames = layout((item) => item.durationInFrames, selected)
-  const tc = timecodeField(fps)
   const notTime = (text: string): void =>
     notify(`“${text.trim()}” is not a time. Type a timecode (00:00:04:15), seconds (4.5s) or frames (135f).`, 'error')
   const longestSource = Math.max(0, ...timedItems.map((item) => findAsset(project, item.assetId)?.durationUs ?? 0))
@@ -401,7 +413,7 @@ export function Inspector(): ReactNode {
       hint="Times read hours:minutes:seconds:frames. Type a timecode (00:00:04:15), 4.5s for seconds or 135f for frames; a bare number is seconds. Source in slips the footage under the clip without moving it."
     >
       <div className="space-y-1.5">
-        <NumberField
+        <TimecodeField
           row
           label="Start"
           ariaLabel="Start on the timeline"
@@ -421,9 +433,9 @@ export function Inspector(): ReactNode {
           }}
           onInvalid={notTime}
           min={0}
-          {...tc}
+          fps={fps}
         />
-        <NumberField
+        <TimecodeField
           row
           label="Duration"
           value={durationInFrames.value}
@@ -448,10 +460,10 @@ export function Inspector(): ReactNode {
           }}
           onInvalid={notTime}
           min={1}
-          {...tc}
+          fps={fps}
         />
         {timedItems.length > 0 && (
-          <NumberField
+          <TimecodeField
             row
             label="Source in"
             ariaLabel="Source in: where in the source this clip starts reading"
@@ -459,8 +471,9 @@ export function Inspector(): ReactNode {
             mixed={sourceIn.mixed}
             onCommit={setSourceIn}
             min={0}
+            defaultValue={0}
             max={longestSource > 0 ? usToFrames(longestSource, fps) : undefined}
-            {...tc}
+            fps={fps}
           />
         )}
       </div>
@@ -504,7 +517,7 @@ export function Inspector(): ReactNode {
               const store = useEditor.getState()
               const plans: (SpeedPlan | null)[] = []
               store.transact(() => {
-                for (const item of timedItems) plans.push(useEditor.getState().setClipSpeed(item.id, Math.max(0.1, next)))
+                for (const item of timedItems) plans.push(useEditor.getState().setClipSpeed(item.id, Math.max(CLIP_SPEED_RANGE.min, next)))
               })
               // Say when the length stopped short (at the next clip, or at the end of the
               // footage), the way the clip menu's Speed… does — silently getting 180 frames
@@ -518,13 +531,14 @@ export function Inspector(): ReactNode {
               if (notes.length > 0) after.notify(notes.join(' '))
             }}
             step={0.05}
-            min={0.1}
-            max={8}
+            min={CLIP_SPEED_RANGE.min}
+            max={CLIP_SPEED_RANGE.max}
             precision={2}
             suffix="×"
+            defaultValue={1}
           />
         )}
-        <NumberField
+        <TimecodeField
           row
           label="Fade in"
           value={fadeIn.value}
@@ -532,9 +546,10 @@ export function Inspector(): ReactNode {
           onCommit={(next) => applyItem({ fadeInFrames: Math.max(0, Math.round(next)) })}
           onInvalid={notTime}
           min={0}
-          {...tc}
+          defaultValue={0}
+          fps={fps}
         />
-        <NumberField
+        <TimecodeField
           row
           label="Fade out"
           value={fadeOut.value}
@@ -542,7 +557,8 @@ export function Inspector(): ReactNode {
           onCommit={(next) => applyItem({ fadeOutFrames: Math.max(0, Math.round(next)) })}
           onInvalid={notTime}
           min={0}
-          {...tc}
+          defaultValue={0}
+          fps={fps}
         />
       </div>
     </Section>
@@ -591,23 +607,35 @@ export function Inspector(): ReactNode {
         <div className="space-y-1.5">
           <Keyed diamond={pictureDiamond('left')}>
             <NumberField row label="X" ariaLabel="X position" value={left.value} mixed={left.mixed}
-              onCommit={(next) => setPosition('x', next)} suffix="px" />
+              onCommit={(next) => setPosition('x', next)} suffix="px" defaultValue={centre?.x} gesture={LIVE} />
           </Keyed>
           <Keyed diamond={pictureDiamond('top')}>
             <NumberField row label="Y" ariaLabel="Y position" value={top.value} mixed={top.mixed}
-              onCommit={(next) => setPosition('y', next)} suffix="px" />
+              onCommit={(next) => setPosition('y', next)} suffix="px" defaultValue={centre?.y} gesture={LIVE} />
           </Keyed>
           <Keyed diamond={pictureDiamond('width')}>
             <NumberField row label="Width" value={width.value} mixed={width.mixed}
-              onCommit={(next) => applyLayout({ width: Math.max(1, next) })} min={1} suffix="px" />
+              onCommit={(next) => applyLayout({ width: Math.max(1, next) })} min={1} suffix="px" gesture={LIVE} />
           </Keyed>
           <Keyed diamond={pictureDiamond('height')}>
             <NumberField row label="Height" value={height.value} mixed={height.mixed}
-              onCommit={(next) => applyLayout({ height: Math.max(1, next) })} min={1} suffix="px" />
+              onCommit={(next) => applyLayout({ height: Math.max(1, next) })} min={1} suffix="px" gesture={LIVE} />
           </Keyed>
           <Keyed diamond={pictureDiamond('rotation')}>
-            <NumberField row label="Rotation" value={rotation.value} mixed={rotation.mixed}
-              onCommit={(next) => applyLayout({ rotation: next })} precision={1} suffix="°" />
+            <div className="flex items-center gap-1.5">
+              <NumberField row className="min-w-0 flex-1" label="Rotation" value={rotation.value} mixed={rotation.mixed}
+                onCommit={(next) => applyLayout({ rotation: next })} precision={1} suffix="°" defaultValue={0} gesture={LIVE} />
+              {/* A dial beside the number, as After Effects draws its angle controls: the number
+                  keeps revolutions (720° is two turns), the dial shows where the clip points. */}
+              <AngleDial
+                label="Rotation dial"
+                value={rotation.value}
+                mixed={rotation.mixed}
+                onCommit={(next) => applyLayout({ rotation: next })}
+                defaultValue={0}
+                gesture={LIVE}
+              />
+            </div>
           </Keyed>
           {/* A zoom about the centre, like Rotation: it enlarges a title rather than reflowing
               it, and it is what a push-in keys. */}
@@ -621,6 +649,8 @@ export function Inspector(): ReactNode {
               min={0}
               precision={1}
               suffix="%"
+              defaultValue={100}
+              gesture={LIVE}
             />
           </Keyed>
           <Keyed diamond={pictureDiamond('opacity')}>
@@ -630,6 +660,8 @@ export function Inspector(): ReactNode {
               mixed={opacity.mixed}
               format={(v) => `${Math.round(v * 100)}%`}
               onCommit={(next) => applyLayout({ opacity: next })}
+              defaultValue={1}
+              gesture={LIVE}
             />
           </Keyed>
         </div>
@@ -663,6 +695,8 @@ export function Inspector(): ReactNode {
                   step={1}
                   precision={1}
                   suffix="%"
+                  defaultValue={0}
+                  gesture={LIVE}
                   onCommit={(next) => applyCrop(edge, next / 100)}
                 />
               )

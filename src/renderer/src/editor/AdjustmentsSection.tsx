@@ -9,9 +9,10 @@ import {
   type Timeline
 } from '@shared/project'
 import { Field, Section, SectionReset, Select, SliderField } from '@/components'
-import { centredRange } from '@/components/Slider'
+import { centredRange } from '@/components/controls/Slider'
 import { adjustmentFilter, NO_FILTER } from '../engine/looks'
 import { useEditor } from '@/store/editor'
+import { LIVE } from './liveGesture'
 
 /**
  * One adjustment slider's range and units.
@@ -178,6 +179,8 @@ export function AdjustmentsSection({
                 step={control.step}
                 format={(v) => formatAdjustment(v, control)}
                 onCommit={(next) => set(control.key, next)}
+                defaultValue={control.identity}
+                gesture={LIVE}
               />
             )
           })}

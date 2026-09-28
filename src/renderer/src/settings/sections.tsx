@@ -5,6 +5,7 @@ import { bayTheme, type ThemePreference } from '@/lib/theme'
 import { useViewer } from '@/lib/viewer'
 import { selectTimeline, useEditor } from '@/store/editor'
 import {
+  EDITING_DEFAULTS,
   STILL_SECONDS,
   TRANSITION_SECONDS,
   transitionLengthFrames,
@@ -251,6 +252,7 @@ export function EditingSection(): ReactNode {
             precision={1}
             suffix="s"
             onCommit={setStillSeconds}
+            defaultValue={EDITING_DEFAULTS.stillSeconds}
             className="w-28"
           />
         </Row>
@@ -268,6 +270,7 @@ export function EditingSection(): ReactNode {
             precision={2}
             suffix="s"
             onCommit={setTransitionSeconds}
+            defaultValue={EDITING_DEFAULTS.transitionSeconds}
             className="w-28"
           />
         </Row>

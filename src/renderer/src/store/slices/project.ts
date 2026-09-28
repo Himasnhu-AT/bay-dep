@@ -43,7 +43,7 @@ type Actions = Pick<
   | 'endGesture'
 >
 
-export function projectSlice({ set, get, history, edit, turnMarks, followReverts }: StoreKit): Actions {
+export function projectSlice({ set, get, history, edit, turnMarks, followReverts, closeGestureStep, reopenGesture, aside, intrudes }: StoreKit): Actions {
   return {
     // -- project ------------------------------------------------------------
     setProject(project, options) {
@@ -93,6 +93,12 @@ export function projectSlice({ set, get, history, edit, turnMarks, followReverts
 
     // -- history ------------------------------------------------------------
     undo() {
+      // Inside a gesture (a wheel stays open 400 ms after its last notch, and ⌘Z reaches the
+      // store while a knob or slider has focus), the gesture's changes so far become a step first
+      // and this undoes them; the gesture then carries on from the undone state. Without it, undo
+      // reached past the gesture's start, and closing the gesture pushed the pre-gesture state
+      // and cleared redo.
+      closeGestureStep()
       const state = get()
       const previous = state.past[state.past.length - 1]
       if (!previous) return
@@ -105,9 +111,11 @@ export function projectSlice({ set, get, history, edit, turnMarks, followReverts
         ...turnMarks(state)
       })
       followReverts(previous)
+      reopenGesture()
     },
 
     redo() {
+      closeGestureStep()
       const state = get()
       const next = state.future[0]
       if (!next) return
@@ -120,6 +128,7 @@ export function projectSlice({ set, get, history, edit, turnMarks, followReverts
         ...turnMarks(state)
       })
       followReverts(next)
+      reopenGesture()
     },
 
     markSaved() {
@@ -140,10 +149,12 @@ export function projectSlice({ set, get, history, edit, turnMarks, followReverts
         history.txRecorded = false
       }
       history.txDepth += 1
+      history.gestureDepth += 1
     },
 
     endGesture() {
-      if (history.txDepth === 0) return
+      if (history.gestureDepth === 0 || history.txDepth === 0) return
+      history.gestureDepth -= 1
       history.txDepth -= 1
       if (history.txDepth > 0) return
       const before = history.txBefore
@@ -159,6 +170,9 @@ export function projectSlice({ set, get, history, edit, turnMarks, followReverts
     },
 
     transact(work) {
+      // An agent's (or MCP client's) call arriving while the user's gesture is open is its own
+      // step, not a part of the user's drag that one ⌘Z would take back with it.
+      if (intrudes()) return aside(() => get().transact(work))
       if (history.txDepth > 0) {
         // Already inside one: join it. Closing here would end the outer group early and
         // split one logical edit across two undo steps, which is the bug this prevents.

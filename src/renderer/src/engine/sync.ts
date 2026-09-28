@@ -7,6 +7,7 @@
  */
 
 import { sourceTimeAt, US_PER_SECOND, type Item, type Asset } from '@shared/project'
+import { CLIP_SPEED_RANGE } from '@shared/speed'
 
 /**
  * How far a media element may run from where the timeline says it should be before we
@@ -101,5 +102,5 @@ export function sourceSecondsAt(item: Item, asset: Asset, frame: number, fps: nu
  *   never played. The export is the more correct of the two, so this is left as it is.
  */
 export function playbackRateFor(speed: number): number {
-  return clamp(finite(speed, 1), 0.0625, 16)
+  return clamp(finite(speed, 1), 0.0625, CLIP_SPEED_RANGE.max)
 }
