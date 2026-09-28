@@ -141,7 +141,8 @@ export default function ComparePage() {
           <Rule className="mb-14" />
           <Block title="What it will not do">
             These are runs someone picked, and the page does not say how many came before each
-            one. Each prompt is printed as it was typed. Every edit was made by the agent inside{" "}
+            one. Each prompt is printed as it was typed, except that the home folder in an export path is
+            shortened to ~. Every edit was made by the agent inside{" "}
             {product.name}, with the tools listed under it, and exported by {product.name}; nobody
             changed a frame afterwards unless the figure says so. The agent did not choose the
             footage. A person did, and the credits say where it came from.

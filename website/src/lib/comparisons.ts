@@ -31,7 +31,8 @@ import type { Aspect, Pair } from "@/components/app/BeforeAfter";
  *   height, sized so both fit one screen; there is no per-entry layout.
  * - `durationSec`: the length of both videos. They must be one length and cut
  *   on the same frames, because the page plays them on one clock.
- * - `prompt`: the exact message given to bay's agent, verbatim, typos and all.
+ * - `prompt`: the exact message given to bay's agent, verbatim, typos and all, except that a
+ *   home folder in a path is written as `~` (no usernames on a public page).
  * - `did`: what actually ran, in order, one line each. Start a line with the
  *   tool's name as the catalog spells it (`detect_beats`, `remove_range`) and
  *   the page sets that word in monospace; the rest of the line is plain text
@@ -96,7 +97,7 @@ export const comparisons: Comparison[] = [
     style: "retention-talking-head",
     aspect: "9:16",
     durationSec: 46.5,
-    prompt: "Turn this into a vertical short of about 45 seconds in the retention talking-head style. James speaks English with a Yorkshire accent, so transcribe it as English. Pick his most interesting 45 seconds, open on the strongest line, and keep his words exactly as he says them. When it's done and checked, export it to /Users/himanshu/Movies/bay-rnd/retention/after.mp4.",
+    prompt: "Turn this into a vertical short of about 45 seconds in the retention talking-head style. James speaks English with a Yorkshire accent, so transcribe it as English. Pick his most interesting 45 seconds, open on the strongest line, and keep his words exactly as he says them. When it's done and checked, export it to ~/Movies/bay-rnd/retention/after.mp4.",
     did: [
       "read_style retention-talking-head, with the short-form and highlights skills loaded",
       "set_canvas to vertical 1080×1920",
@@ -137,7 +138,7 @@ export const comparisons: Comparison[] = [
     style: "kinetic-typography",
     aspect: "9:16",
     durationSec: 18.6,
-    prompt: "Make a kinetic-typography piece of about 20 seconds from James talking: his voice is the soundtrack, and his words animate on screen exactly as he says them, in the kinetic typography style. Pick one passage that works on its own. Vertical 1080×1920. When it's done and checked, export it to /Users/himanshu/Movies/bay-rnd/kinetic/after.mp4.",
+    prompt: "Make a kinetic-typography piece of about 20 seconds from James talking: his voice is the soundtrack, and his words animate on screen exactly as he says them, in the kinetic typography style. Pick one passage that works on its own. Vertical 1080×1920. When it's done and checked, export it to ~/Movies/bay-rnd/kinetic/after.mp4.",
     did: [
       "read_style kinetic-typography, with the motion-graphics skill loaded",
       "find_highlights to choose a passage that stands on its own",
@@ -166,7 +167,7 @@ export const comparisons: Comparison[] = [
     style: "luxury-minimal",
     aspect: "16:9",
     durationSec: 20,
-    prompt: "Cut a luxury, minimal film of about 20 seconds from these four watch clips, in the luxury/minimal style. There's no music, so let the picture carry it. Keep any brand names or logos out of frame. When it's done and checked, export it to /Users/himanshu/Movies/bay-rnd/luxury/after.mp4.",
+    prompt: "Cut a luxury, minimal film of about 20 seconds from these four watch clips, in the luxury/minimal style. There's no music, so let the picture carry it. Keep any brand names or logos out of frame. When it's done and checked, export it to ~/Movies/bay-rnd/luxury/after.mp4.",
     did: [
       "read_style luxury-minimal, with the rough-cut skill loaded",
       "frame_grid over every clip to find engraved or printed brand names",
