@@ -186,7 +186,10 @@ export function AgentPanel({ palette }: AgentPanelProps = {}): ReactNode {
   // draft: which clip, whose name, what style are theirs to add, and sending on click would
   // start a paid turn from a single mis-click.
   const pickStarter = (starter: AgentStarter): void => {
-    setDraft(insertSkill(draft, starter.skill))
+    if (starter.draft) {
+      const body = draft.replace(/\s+$/, '')
+      setDraft(body ? `${body} ${starter.draft}` : starter.draft)
+    } else setDraft(insertSkill(draft, starter.skill))
     focusComposer()
   }
 
@@ -569,7 +572,7 @@ function PaletteRow({ palette, onPick }: { palette: readonly AgentStarter[]; onP
         const Icon = starter.icon
         return (
           <button
-            key={starter.skill}
+            key={starter.id ?? starter.skill}
             type="button"
             onClick={() => onPick(starter)}
             className="t-fast flex shrink-0 items-center gap-1 rounded-full border border-line bg-surface-2 py-0.5 pr-2 pl-1 text-[11px] font-medium text-ink-1 hover:border-line-hover hover:bg-surface-3 hover:text-ink-0"

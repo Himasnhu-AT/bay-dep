@@ -12,7 +12,7 @@ export const tool: ToolSpec = {
     'when two people talk at once. The angles must be stacked on different video tracks and already ' +
     'in sync (run sync_angles first if they are not). Each angle is razored where it goes on or off ' +
     'screen and the off pieces are disabled — nothing is deleted, the sound keeps playing, any ' +
-    'piece can be switched back on with set_item_enabled, and the whole switch is one undo step. ' +
+    'piece can be switched back on with set_item_enabled (linked: false, or every piece of that angle comes back), and the whole switch is one undo step. ' +
     'Sound embedded in an angle is detached first so disabling its picture does not silence it. ' +
     'Rules: a mic counts once it has been above its threshold for 0.35 s and until 0.45 s after; ' +
     'a mic dominanceDb (default 6) under the loudest is bleed; no shot is shorter than minShotSec ' +

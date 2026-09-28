@@ -15,6 +15,8 @@
  * other signals, at a lower confidence, and says so in `reasons`.
  */
 
+import type { Asset } from './project'
+
 export type FootageMode = 'podcast' | 'talking-head' | 'screen-recording' | 'b-roll-pile' | 'music-video' | 'mixed'
 
 /** What is known about one imported file. Absent or null means "not measured", never zero. */
@@ -243,6 +245,29 @@ export function classifyFootage(signals: FootageSignals): FootageClassification 
     speechLine
   )
   return result('mixed', 0.4)
+}
+
+/**
+ * The signals the project's own assets carry — probe data and any beat grid — with nothing
+ * measured. What the UI can classify on without running anything; `detect_footage_mode` adds
+ * speech and cut rate on top.
+ */
+export function signalsFromAssets(assets: readonly Asset[]): FootageSignals {
+  return {
+    assets: assets
+      .filter((a) => (a.kind === 'video' || a.kind === 'audio') && a.path && !a.error)
+      .map((a) => ({
+        name: a.name,
+        kind: a.kind as 'video' | 'audio',
+        durationSec: a.durationUs / 1_000_000,
+        width: a.width,
+        height: a.height,
+        fps: a.fps,
+        hasAudio: a.hasAudio,
+        channels: a.channels ?? null,
+        beatConfidence: a.beats ? a.beats.confidence : null
+      }))
+  }
 }
 
 // --- What to offer --------------------------------------------------------------------------

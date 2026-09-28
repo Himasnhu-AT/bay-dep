@@ -325,7 +325,7 @@ export function applyAngleSwitch(
     cuts.sort((a, b) => a - b)
     const pieces: Item[] = [found.item]
     for (const at of cuts) {
-      const right = splitItemAt(pieces[pieces.length - 1]!, at, timeline.fps, newId())
+      const right = splitItemAt(pieces[pieces.length - 1]!, at, timeline.fps, newId(), timeline.transitions)
       if (!right) continue
       pieces.push(right)
       track.items.push(right)

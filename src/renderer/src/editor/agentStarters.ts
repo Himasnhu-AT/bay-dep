@@ -26,11 +26,32 @@ import {
   Type,
   Wand2
 } from 'lucide-react'
+import {
+  AudioLines,
+  AudioWaveform,
+  Blend,
+  Eye,
+  ListOrdered,
+  Mic,
+  Music,
+  ScanSearch,
+  SlidersHorizontal,
+  SwitchCamera
+} from 'lucide-react'
 import { BAY_SKILLS } from '@shared/skills'
+import { actionsFor, classifyFootage, signalsFromAssets, type FootageMode } from '@shared/footage-mode'
+import type { Asset } from '@shared/project'
 
 export interface AgentStarter {
   /** The skill it starts: `/<slug>` at the front of the message. See `@shared/skills`. */
   skill: string
+  /**
+   * A whole message to put in the composer instead of just `/<skill>` — a footage action such as
+   * "Remove silences". Never sent on click, like every starter.
+   */
+  draft?: string
+  /** Distinguishes starters that share a skill (two footage actions can). Defaults to `skill`. */
+  id?: string
   title: string
   /** Picks out a starter that uses something new. Shown as a small uppercase tag. */
   badge?: 'new'
@@ -62,6 +83,44 @@ export const AGENT_STARTERS: readonly AgentStarter[] = BAY_SKILLS.map((skill) =>
   title: skill.title,
   ...(LOOK[skill.slug] ?? { icon: Wand2, tint: ['#2a2a2a', '#444444'] as [string, string] })
 }))
+
+/** The icons `@shared/footage-mode` names as hints, by name. An unknown name draws the wand. */
+const FOOTAGE_ICONS: Record<string, LucideIcon> = {
+  Mic, AudioWaveform, SwitchCamera, Scissors, SlidersHorizontal, Sparkles, AudioLines, Captions,
+  ListOrdered, ScanSearch, Film, Music, Blend, Wand2, Eye
+}
+
+const FOOTAGE_TINT: Record<FootageMode, [string, string]> = {
+  podcast: ['#2a2238', '#5a4a80'],
+  'talking-head': ['#3b2a22', '#7a4a32'],
+  'screen-recording': ['#1f2d3a', '#35577a'],
+  'b-roll-pile': ['#2a2a2a', '#555555'],
+  'music-video': ['#33222e', '#6e3f5f'],
+  mixed: ['#2a2a2a', '#444444']
+}
+
+/** Heuristic, like the classifier's own: under this, the footage kind is a guess not worth acting on. */
+const PALETTE_CONFIDENCE = 0.5
+
+/**
+ * The AI layout's tool palette, chosen from the footage ("smart mode"): the one-click actions for
+ * what the project looks like — Auto-switch speakers for a podcast, Remove silences for a talking
+ * head — ahead of every skill's starter. Classified on probe data alone (`signalsFromAssets`), so
+ * it costs nothing to recompute when the media changes; unsure, it is just the skills.
+ */
+export function footagePalette(assets: readonly Asset[]): readonly AgentStarter[] {
+  const { mode, confidence } = classifyFootage(signalsFromAssets(assets))
+  if (confidence < PALETTE_CONFIDENCE) return AGENT_STARTERS
+  const actions: AgentStarter[] = actionsFor(mode).map((action) => ({
+    id: `footage:${action.id}`,
+    skill: /^\/([a-z0-9-]+)/.exec(action.prompt)?.[1] ?? '',
+    title: action.label,
+    draft: action.prompt,
+    icon: FOOTAGE_ICONS[action.icon] ?? Wand2,
+    tint: FOOTAGE_TINT[mode]
+  }))
+  return [...actions, ...AGENT_STARTERS]
+}
 
 /** How many starters show before "More". Two columns, four rows. */
 export const STARTERS_SHOWN = 8

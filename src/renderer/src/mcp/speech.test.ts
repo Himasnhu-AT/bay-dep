@@ -31,6 +31,8 @@ const sounds = new Map<string, Sound>()
 const silenceAnswers = new Map<string, SilenceInterval[]>()
 const loudnessAnswers = new Map<string, number>()
 const asked: { kind: string; path: string; span: AudioSpan; windowUs?: number }[] = []
+/** Runs while a measurement is "in flight" — the moment a user could edit the timeline. */
+let duringAnalysis: (() => void) | null = null
 
 const talking = (...ranges: [number, number][]): Sound => (t) => (ranges.some(([a, b]) => t >= a && t < b) ? -20 : -60)
 
@@ -39,6 +41,7 @@ const talking = (...ranges: [number, number][]): Sound => (t) => (ranges.some(([
     media: {
       levels: async (path: string, span: AudioSpan, windowUs: number) => {
         asked.push({ kind: 'levels', path, span, windowUs })
+        duringAnalysis?.()
         const sound = sounds.get(path)
         if (!sound) return { ok: false, error: `no specimen for ${path}` }
         const n = Math.floor(span.durationUs / windowUs)
@@ -46,6 +49,7 @@ const talking = (...ranges: [number, number][]): Sound => (t) => (ranges.some(([
       },
       silences: async (path: string, span: AudioSpan) => {
         asked.push({ kind: 'silences', path, span })
+        duringAnalysis?.()
         return { ok: true, value: silenceAnswers.get(path) ?? [] }
       },
       loudness: async (path: string, span: AudioSpan) => {
@@ -128,6 +132,7 @@ beforeEach(() => {
   silenceAnswers.clear()
   loudnessAnswers.clear()
   asked.length = 0
+  duringAnalysis = null
 })
 
 const state = () => useEditor.getState()
@@ -437,4 +442,76 @@ test('detect_footage_mode calls matching long recordings a podcast and suggests 
   const quick = await run('detect_footage_mode', { analyzeAudio: false })
   assert.ok(quick.ok)
   assert.ok((quick.value as { confidence: number }).confidence < value.confidence, 'less sure without the speech signal')
+})
+
+// ---------------------------------------------------------------------------
+// The timeline changing while the audio is measured
+// ---------------------------------------------------------------------------
+
+test('remove_silences refuses when a clip it measured is trimmed during the analysis, and cuts nothing', async () => {
+  podcast()
+  silenceAnswers.set('/rec/mic1', [{ startSec: 2, endSec: 6 }])
+  // The user trims the mic's head while ffmpeg runs: every planned frame is now 30 frames off.
+  duringAnalysis = () => state().trimItem('mic1', 'start', 30)
+  const after = () => JSON.stringify(state().project.timelines)
+  const result = await run('remove_silences', { itemId: 'mic1' })
+  assert.ok(!result.ok)
+  assert.match(result.error, /The timeline changed during analysis — mic1 \(moved, trimmed or retimed\)/)
+  assert.match(result.error, /Run again/)
+  const trimmed = after()
+  assert.equal(items('v1')[0]!.durationInFrames, 300, 'the other tracks were not cut')
+  assert.equal(after(), trimmed)
+  // Positive control: the same call with nothing moving meanwhile does cut.
+  duringAnalysis = null
+  const again = await run('remove_silences', { itemId: 'mic1' })
+  assert.ok(again.ok, again.ok ? '' : again.error)
+})
+
+test('switch_speakers refuses when an angle is moved during the analysis', async () => {
+  podcast()
+  sounds.set('/rec/mic1', talking([0, 5]))
+  sounds.set('/rec/mic2', talking([5.5, 10]))
+  let once = true
+  duringAnalysis = () => {
+    if (once) state().moveItem('camB', 12)
+    once = false
+  }
+  const result = await run('switch_speakers', { angles: ANGLES, thresholdDb: -40 })
+  assert.ok(!result.ok)
+  assert.match(result.error, /timeline changed during analysis — camB \(moved, trimmed or retimed\)/)
+  assert.ok(items('v1').every((i) => !i.disabled) && items('v1').length === 1, 'no angle was razored')
+})
+
+test('switch_speakers refuses, changing nothing, when an angle\'s sound cannot be detached', async () => {
+  // camB's file failed to decode: bay cannot separate its sound, so switching its picture off
+  // would silence it wherever it is off screen.
+  const assets = ['camA', 'camB', 'wide'].map((id) => asset(id, 'video', id === 'camB' ? { error: 'decode failed' } : {}))
+    .concat(['mic1', 'mic2'].map((id) => asset(id, 'audio')))
+  load([
+    track('v1', 'video', [clip('camA', 'camA', 'v1')]),
+    track('v2', 'video', [clip('camB', 'camB', 'v2')]),
+    track('a1', 'audio', [clip('mic1', 'mic1', 'a1')]),
+    track('a2', 'audio', [clip('mic2', 'mic2', 'a2')])
+  ], assets)
+  sounds.set('/rec/mic1', talking([0, 5]))
+  sounds.set('/rec/mic2', talking([5.5, 10]))
+  const before = JSON.stringify(state().project)
+  const result = await run('switch_speakers', { angles: ANGLES, thresholdDb: -40 })
+  assert.ok(!result.ok)
+  assert.match(result.error, /camB: camB draws camB\.mov, which has/)
+  assert.match(result.error, /Nothing was changed/)
+  assert.equal(JSON.stringify(state().project), before)
+})
+
+test('the switch tells the agent to re-enable a piece with linked: false', async () => {
+  podcast()
+  sounds.set('/rec/mic1', talking([0, 5]))
+  sounds.set('/rec/mic2', talking([5.5, 10]))
+  const result = await run('switch_speakers', { angles: ANGLES, thresholdDb: -40 })
+  assert.ok(result.ok, result.ok ? '' : result.error)
+  assert.match((result.value as { next: string }).next, /set_item_enabled its pieces with linked: false/)
+  // Following the hint puts exactly that piece back.
+  const off = items('v1').find((i) => i.disabled)!
+  await run('set_item_enabled', { itemIds: [off.id], enabled: true, linked: false })
+  assert.equal(items('v1').filter((i) => !i.disabled).length, 2)
 })

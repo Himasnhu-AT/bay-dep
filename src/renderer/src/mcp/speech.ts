@@ -15,9 +15,9 @@
  */
 
 import type { AudioResult, AudioSpan } from '@shared/ipc'
-import { allItems, findAsset, framesToUs, itemEnd, type Asset, type Item, type Track } from '@shared/project'
+import { activeTimeline, allItems, findAsset, framesToUs, itemEnd, type Asset, type Item, type Track } from '@shared/project'
 import { resolveId, VALIDATE_ONLY } from '@shared/mcp'
-import { linkedPartners, withLinked } from '@shared/links'
+import { detachAudio, linkedPartners, withLinked } from '@shared/links'
 import { commonSilence, framesRemoved, removalRanges, silenceFrames, SILENCE_DEFAULTS, type AnalysedClip } from '@shared/silences'
 import { LEVEL_WINDOW_SEC, planSwitch, SWITCH_DEFAULTS, type MicStats, type SwitchOptions } from '@shared/speaker-switch'
 import { DEFAULT_VOICE_LUFS, planVoiceLevel, SILENT_LUFS } from '@shared/voice-level'
@@ -79,6 +79,46 @@ function sourceSpan(item: Item, fps: number, fromFrame = item.from, toFrame = it
 /** The call is a dry run: measure and plan, apply nothing. */
 const dryRun = (args: Record<string, unknown>): boolean => args[VALIDATE_ONLY] === true
 const DRY_NOTE = 'validateOnly: nothing was changed. Call again without it to apply this.'
+
+/** Where each clip a plan is built on sits, when the measuring starts. */
+interface Placement {
+  id: string
+  from: number
+  durationInFrames: number
+  sourceStartUs: number
+  speed: number
+}
+
+function placementsOf(items: readonly Item[]): { fps: number; items: Placement[] } {
+  return {
+    fps: timeline().fps,
+    items: items.map((i) => ({ id: i.id, from: i.from, durationInFrames: i.durationInFrames, sourceStartUs: i.sourceStartUs, speed: i.speed }))
+  }
+}
+
+/**
+ * Measuring takes seconds to minutes, and the store can change meanwhile — a trim, a ripple, the
+ * user's own drag. A plan made from the old positions would then cut the wrong frames, so after
+ * measuring, every clip the plan rests on must be exactly where it was, or nothing is applied.
+ */
+function refuseIfMoved(before: { fps: number; items: Placement[] }): void {
+  const now = allItems(timeline())
+  const moved: string[] = []
+  if (timeline().fps !== before.fps) moved.push(`the frame rate (${before.fps} → ${timeline().fps} fps)`)
+  for (const was of before.items) {
+    const item = now.find((i) => i.id === was.id)
+    if (!item) moved.push(`${was.id} (removed)`)
+    else if (item.from !== was.from || item.durationInFrames !== was.durationInFrames || item.sourceStartUs !== was.sourceStartUs || item.speed !== was.speed) {
+      moved.push(`${was.id} (moved, trimmed or retimed)`)
+    }
+  }
+  if (moved.length > 0) {
+    fail(
+      `The timeline changed during analysis — ${moved.join(', ')} — so the plan measured before it no longer fits and nothing was changed. ` +
+        'Run again once the timeline is still.'
+    )
+  }
+}
 
 const speedOf = (item: Item): number => (Number.isFinite(item.speed) && item.speed > 0 ? item.speed : 1)
 
@@ -170,6 +210,7 @@ export async function removeSilences(args: Record<string, unknown>): Promise<Rec
   const keepPaddingSec = Math.max(0, numberArg(args, 'keepPaddingSec', SILENCE_DEFAULTS.keepPaddingSec))
 
   const api = media()
+  const placed = placementsOf(entries.map((e) => e.item))
   const analysed: AnalysedClip[] = []
   let found = 0
   for (const { item } of entries) {
@@ -178,6 +219,7 @@ export async function removeSilences(args: Record<string, unknown>): Promise<Rec
     found += silences.length
     analysed.push({ clip: item, silent: silenceFrames(item, silences, fps) })
   }
+  refuseIfMoved(placed)
   const common = commonSilence(analysed)
   const ranges = removalRanges(common, keepPaddingSec * fps)
   if (ranges.length === 0) {
@@ -292,12 +334,14 @@ export async function switchSpeakers(args: Record<string, unknown>): Promise<Rec
   }
 
   const api = media()
+  const placed = placementsOf([...pictures, ...mics].map((e) => e.item))
   const curves: number[][] = []
   for (const { item } of mics) {
     const asset = audioAsset(item, 'measure as a mic')
     const windowUs = Math.round(LEVEL_WINDOW_SEC * 1_000_000 * speedOf(item))
     curves.push(await measured('Reading mic levels', asset, api.levels(asset.path, sourceSpan(item, fps, spanFrom, spanTo), windowUs)))
   }
+  refuseIfMoved(placed)
   const plan = planSwitch(curves, { startFrame: spanFrom, endFrame: spanTo, fps }, wide !== null, options)
   const labels = videos.map((_, i) => `angle ${i + 1} (${nameOf(mics[i]!.item)})`)
 
@@ -316,9 +360,30 @@ export async function switchSpeakers(args: Record<string, unknown>): Promise<Rec
   }
 
   // Sound embedded in an angle would go silent with its picture: detach it first, in the same step.
+  // Read from the store now, not from the clips resolved before measuring.
+  const current = allItems(timeline())
   const embedded = pictures
-    .filter(({ item }) => !item.audioDetached && findAsset(project(), item.assetId)?.hasAudio)
-    .map(({ item }) => item.id)
+    .map(({ item }) => current.find((i) => i.id === item.id)!)
+    .filter((item) => !item.audioDetached && findAsset(project(), item.assetId)?.hasAudio)
+    .map((item) => item.id)
+  // A detach that is refused would leave that angle's sound inside a picture about to be switched
+  // off — silenced for every stretch it is off screen. Tried on a copy first, so a refusal
+  // changes nothing.
+  if (embedded.length > 0) {
+    const trial = structuredClone(project())
+    const trialTimeline = activeTimeline(trial)!
+    let trialTracks = 0
+    const refused = detachAudio(trial, trialTimeline, embedded, {
+      makeId: (prefix) => `${prefix}_trial${trialTracks++}`,
+      makeAudioTrack: () => ({ id: `trk_trial${trialTracks++}`, kind: 'audio', name: 'A', locked: false, muted: false, hidden: false, items: [] })
+    }).refused
+    if (refused.length > 0) {
+      fail(
+        `The angles' own sound must move to an audio track before their pictures can be switched off, and that was refused: ` +
+          refused.map((r) => `${r.itemId}: ${r.reason}`).join('; ') + '. Nothing was changed. Fix that (or detach_audio by hand), then run again.'
+      )
+    }
+  }
   const angleIds = pictures.map((p) => p.item.id)
   const total = spanTo - spanFrom
   const screenTime = pictures.map((p, index) => {
@@ -348,9 +413,16 @@ export async function switchSpeakers(args: Record<string, unknown>): Promise<Rec
     if (embedded.length > 0) {
       const result = store().detachAudio(embedded)
       detached = result.detached.map((d) => d.audioId)
+      // The trial above said this would not happen; if it does, switching now would silence a voice.
+      if (result.refused.length > 0) return
     }
     applied = store().applyAngleSwitch(angleIds, plan.segments)
   })
+  if (embedded.length > 0 && detached.length < embedded.length) {
+    throw new ToolError(
+      'The angles\' sound could not all be detached, so no angle was switched off. Undo the partial detach, detach_audio the angles by hand, then run again.'
+    )
+  }
   return {
     ...planned,
     createdItemIds: applied.createdItemIds,
@@ -362,7 +434,7 @@ export async function switchSpeakers(args: Record<string, unknown>): Promise<Rec
       (starved.length > 0
         ? `Angle ${starved.map((s) => s.angle).join(', ')} is on screen under 10% of the time — check that mic, or that its speaker really spoke so little. `
         : '') +
-      'To keep an angle on longer, set_item_enabled the pieces; to calm the cutting, undo and run again with a larger minShotSec.' +
+      'To keep an angle on longer, set_item_enabled its pieces with linked: false (so their sound is left alone); to calm the cutting, undo and run again with a larger minShotSec.' +
       (detached.length > 0 ? ' The angles\' own sound was detached onto audio tracks so it keeps playing.' : '')
   }
 }
@@ -407,6 +479,7 @@ export async function levelVoices(args: Record<string, unknown>): Promise<Record
   }
 
   const api = media()
+  const placed = placementsOf(entries.map((e) => e.item))
   const rows: Record<string, unknown>[] = []
   const silent: string[] = []
   const patches: { id: string; volume: number }[] = []
@@ -430,6 +503,7 @@ export async function levelVoices(args: Record<string, unknown>): Promise<Record
       ...(plan.neededGainDb !== undefined ? { shortOfTargetDb: round(targetLufs - plan.afterLufs, 1) } : {})
     })
   }
+  refuseIfMoved(placed)
   if (patches.length === 0) {
     fail(`Every clip named is silent (${silent.join(', ')}): no speech to measure. Pass the clips that carry the voices.`)
   }
@@ -472,12 +546,14 @@ export async function syncAngles(args: Record<string, unknown>): Promise<Record<
   refuseLocked(entries, 'moving them into sync')
 
   const api = media()
+  const placed = placementsOf(entries.map((e) => e.item))
   const curves: number[][] = []
   for (const { item } of entries) {
     const asset = audioAsset(item, 'sync by')
     const windowUs = Math.round(SYNC_WINDOW_SEC * 1_000_000 * speedOf(item))
     curves.push(await measured('Reading the sound envelope', asset, api.levels(asset.path, sourceSpan(item, fps), windowUs)))
   }
+  refuseIfMoved(placed)
   const reference = entries[0]!
   const rows: { itemId: string; offsetSec: number; correlation: number; peakRatio: number; overlapSec: number; target: number }[] = []
   const doubtful: string[] = []

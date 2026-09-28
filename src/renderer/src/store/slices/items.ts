@@ -377,7 +377,7 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
             if (targets && !targets.includes(item.id)) continue
             // A cut exactly on an edge is not a cut — it would make a zero-length clip.
             if (at <= item.from || at >= itemEnd(item)) continue
-            const right = splitItemAt(item, at, tl.fps, newId('itm'))
+            const right = splitItemAt(item, at, tl.fps, newId('itm'), tl.transitions)
             if (!right) continue
             additions.push(right)
             created.push(right.id)
