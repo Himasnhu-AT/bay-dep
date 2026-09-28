@@ -315,10 +315,13 @@ a key light from the upper right.
   family; a variable font extrudes its default instance). WOFF2 cannot be read, and an installed
   font is refused — `write_brf` names what you can use. A character the font has no glyph for is
   refused by name.
-- **Keep shapes still, move the objects.** A text's geometry is built once per `text`, `size`,
-  `depth`, `bevel`, `font` and `curveSegments`, then reused. Animate `position`, `rotation`,
-  `scale`, colours, `opacity` and the camera freely; changing `size` or `depth` every frame
-  rebuilds the geometry every frame — use `scale`.
+- **Keep shapes still, move the objects.** A text's geometry is built once per `text`, `font`,
+  `weight`, `bevel`, `align`, `lineHeight` and `curveSegments`, then reused; `size`, `depth` and a
+  box's or plane's `size` are applied as a scale, so animating them is free, like `position`,
+  `rotation`, `scale`, colours, `opacity` and the camera. **A bevel is the exception**: it is an
+  absolute width, so a bevelled text is rebuilt whenever its `bevel`, `size` or `depth` changes —
+  animating any of those on a bevelled text rebuilds it every frame (up to the whole vertex budget).
+  Animate `scale` instead, or drop the bevel.
 - **Limits**: 64 meshes and 8 lights per `<scene3d>`, and a vertex budget (about 2M, estimated from
   the text before anything is built) — a very long bevelled title at high `curveSegments` is
   refused with what to lower.

@@ -31,11 +31,28 @@ export class Scene3dRuntime {
   }
 
   /** Whether `scene` can be drawn now. Never blocks: the first call starts loading the renderer. */
-  prepare(scene: Scene3dFrame): { ready: true } | { pending: true } | { error: string } {
+  prepare(scene: Scene3dFrame): { ready: true } | { pending: true } | { error: string; object?: number } {
     if (this.#error) return { error: this.#error }
     const renderer = this.#ensure()
     if (!renderer) return { pending: true }
     return renderer.prepare(scene, this.#files())
+  }
+
+  /**
+   * For `write_brf`: whether `scene` can be drawn, waiting out the renderer's and its fonts' loads —
+   * so a glyph the font lacks, an unreadable font file or geometry over budget is refused when the
+   * module is written, not exported later as a grey card. `null` when it can be drawn, and also
+   * when 3D cannot be checked here at all (the renderer did not load), because then the drawing
+   * reports it on every frame anyway.
+   */
+  async check(scene: Scene3dFrame, timeoutMs: number): Promise<{ error: string; object?: number } | null> {
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const answer = this.prepare(scene)
+      if ('ready' in answer) return null
+      if ('error' in answer) return this.#error !== null && answer.error === this.#error ? null : answer
+      await this.settle(timeoutMs)
+    }
+    return { error: `3D text was still loading its font after ${Math.round((timeoutMs * 4) / 1000)}s` }
   }
 
   /** `scene` at `width`×`height` device pixels. Only after `prepare` said ready. */

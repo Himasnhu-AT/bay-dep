@@ -14,7 +14,7 @@
  * which is the fault with no visual cue. Pure, so `write_brf`'s check and the renderer agree.
  */
 
-import type { BrfDocument, Layer } from '@shared/brf'
+import type { BrfDocument, Layer, Scene3dLayer } from '@shared/brf'
 import { BUILTIN_3D_FONT } from '@shared/scene3d'
 
 export interface FontFile {
@@ -92,4 +92,17 @@ export function text3dFontRequests(docs: readonly BrfDocument[]): { font: string
   }
   for (const doc of docs) walk(doc.layers)
   return [...seen.values()]
+}
+
+/** Every `<scene3d>` layer in `doc`, with its path — what `write_brf` names when one cannot be drawn. */
+export function scene3dLayers(doc: BrfDocument): { at: string; layer: Scene3dLayer }[] {
+  const found: { at: string; layer: Scene3dLayer }[] = []
+  const walk = (layers: readonly Layer[], at: string): void => {
+    layers.forEach((layer, i) => {
+      if (layer.type === 'group') walk(layer.layers, `${at}[${i}].layers`)
+      else if (layer.type === 'scene3d') found.push({ at: `${at}[${i}]`, layer })
+    })
+  }
+  walk(doc.layers, 'layers')
+  return found
 }

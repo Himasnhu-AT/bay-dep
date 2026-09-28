@@ -457,14 +457,51 @@ export function resolveScene3d(layer: Scene3dFields, r: Scene3dResolve): Scene3d
   }
 }
 
+type TextObject3d = Extract<ResolvedObject3d, { type: 'text3d' }>
+
+/** What an extruded text's geometry is built from, at the size it is built. */
+export interface TextShape {
+  text: string
+  size: number
+  depth: number
+  bevelSize: number
+  bevelThickness: number
+  curveSegments: number
+  align: 'left' | 'center' | 'right'
+  lineHeight: number
+}
+
 /**
- * The key one extruded text's geometry is cached under: everything that changes its shape, and
- * nothing that does not. Colour, position, rotation and opacity change every frame of a fly-through
- * and must not rebuild anything; a new size, depth or font must. `fontKey` names the exact face.
+ * A text's geometry is built at **unit size and unit depth** and sized by the mesh's scale, so a
+ * text whose `size` or `depth` animates is extruded once, not once per frame (a title that grows
+ * would otherwise rebuild up to the whole vertex budget every frame). The bevel is the exception:
+ * it is absolute, so in unit space it is `bevel / size` wide and `bevel / depth` deep, and a
+ * bevelled text rebuilds when its size or depth changes — the guide says so. A depth of 0 is built
+ * flat (unit depth 0, no z scale), so a bevel keeps its own thickness.
  */
-export function text3dGeometryKey(
-  o: Pick<Extract<ResolvedObject3d, { type: 'text3d' }>, 'text' | 'size' | 'depth' | 'bevel' | 'curveSegments' | 'align' | 'lineHeight'>,
-  fontKey: string
-): string {
-  return JSON.stringify([fontKey, o.text, o.size, o.depth, o.bevel, o.curveSegments, o.align, o.lineHeight])
+export function textUnit(o: Pick<TextObject3d, 'text' | 'size' | 'depth' | 'bevel' | 'curveSegments' | 'align' | 'lineHeight'>): { shape: TextShape; scale: Vec3 } {
+  const zScale = o.depth > 0 ? o.depth : 1
+  return {
+    shape: {
+      text: o.text,
+      size: 1,
+      depth: o.depth > 0 ? 1 : 0,
+      bevelSize: o.bevel > 0 ? o.bevel / o.size : 0,
+      bevelThickness: o.bevel > 0 ? o.bevel / zScale : 0,
+      curveSegments: o.curveSegments,
+      align: o.align,
+      lineHeight: o.lineHeight
+    },
+    scale: [o.size, o.size, zScale]
+  }
+}
+
+/**
+ * The key one extruded text's geometry is cached under: its shape (`textUnit`'s, in the renderer)
+ * and nothing else. Colour, position, rotation, opacity — and, without a bevel, size and depth —
+ * change every frame of a fly-through and must not rebuild anything; new words, a font or a bevel
+ * must. `fontKey` names the exact face.
+ */
+export function text3dGeometryKey(shape: TextShape, fontKey: string): string {
+  return JSON.stringify([fontKey, shape.text, shape.size, shape.depth, shape.bevelSize, shape.bevelThickness, shape.curveSegments, shape.align, shape.lineHeight])
 }

@@ -39,8 +39,9 @@ import {
 } from 'three'
 import { parse, type Font } from 'opentype.js/dist/opentype.mjs'
 import { parseColor } from '@shared/brf'
-import type { ResolvedObject3d, Scene3dFrame } from '@shared/scene3d'
+import type { ResolvedObject3d, Scene3dFrame, Vec3 } from '@shared/scene3d'
 import { GeometryCache } from './text3dGeometry'
+import { CanvasSize, releaseRenderer } from './glContext'
 import { resolveText3dFont, type BuiltinWeight, type FontFile, type Text3dFont } from './scene3dFonts'
 import inter400 from '@fontsource/inter/files/inter-latin-400-normal.woff?inline'
 import inter700 from '@fontsource/inter/files/inter-latin-700-normal.woff?inline'
@@ -93,6 +94,7 @@ export class Scene3dRenderer {
   readonly #geometries = new GeometryCache()
   readonly #fonts = new Map<string, Loaded>()
   #materials: MeshStandardMaterial[] = []
+  readonly #size = new CanvasSize()
 
   /** `track` is told of every font still loading, so the runtime can `settle` and redraw. */
   constructor(track: (work: Promise<void>) => void) {
@@ -101,14 +103,15 @@ export class Scene3dRenderer {
 
   /**
    * Whether `scene` can be drawn now: every font read and every text extruded. Pending while an
-   * imported font's file is on its way; an error names what cannot be drawn, before anything is.
+   * imported font's file is on its way; an error names what cannot be drawn, before anything is,
+   * and `object` is its index in `scene.objects` — which `write_brf` turns into the field's path.
    */
-  prepare(scene: Scene3dFrame, files: readonly FontFile[]): { ready: true } | { pending: true } | { error: string } {
+  prepare(scene: Scene3dFrame, files: readonly FontFile[]): { ready: true } | { pending: true } | { error: string; object: number } {
     let pending = false
-    for (const o of scene.objects) {
+    for (const [index, o] of scene.objects.entries()) {
       if (o.type !== 'text3d') continue
       const got = this.#textGeometry(o, files)
-      if ('error' in got) return { error: `3D text ${JSON.stringify(o.text.slice(0, 40))}: ${got.error}` }
+      if ('error' in got) return { error: `3D text ${JSON.stringify(o.text.slice(0, 40))}: ${got.error}`, object: index }
       if ('pending' in got) pending = true
     }
     return pending ? { pending: true } : { ready: true }
@@ -122,7 +125,7 @@ export class Scene3dRenderer {
     const fit = Math.min(1, MAX_EDGE / Math.max(width, height))
     const w = Math.max(1, Math.round(width * fit))
     const h = Math.max(1, Math.round(height * fit))
-    renderer.setSize(w, h, false)
+    this.#size.resize(renderer, w, h)
 
     if (scene.background) {
       const [r, g, b, a] = rgba(scene.background)
@@ -160,18 +163,19 @@ export class Scene3dRenderer {
         }
         continue
       }
-      let geometry: BufferGeometry
-      if (o.type === 'box3d') geometry = this.#geometries.box(o.size)
-      else if (o.type === 'plane3d') geometry = this.#geometries.plane(o.size)
+      // Unit geometry, sized here: the shape's own scale times the object's.
+      let sized: { geometry: BufferGeometry; scale: Vec3 }
+      if (o.type === 'box3d') sized = this.#geometries.box(o.size)
+      else if (o.type === 'plane3d') sized = this.#geometries.plane(o.size)
       else {
         const got = this.#textGeometry(o, files)
         if (!('geometry' in got)) return { error: 'error' in got ? got.error : '3D text was drawn before its font had loaded' }
-        geometry = got.geometry
+        sized = got
       }
-      const mesh = new Mesh(geometry, this.#material(slot++, o, fade))
+      const mesh = new Mesh(sized.geometry, this.#material(slot++, o, fade))
       mesh.position.set(...o.position)
       mesh.rotation.set(radians(o.rotation[0]), radians(o.rotation[1]), radians(o.rotation[2]))
-      mesh.scale.set(...o.scale)
+      mesh.scale.set(sized.scale[0] * o.scale[0], sized.scale[1] * o.scale[1], sized.scale[2] * o.scale[2])
       world.add(mesh)
     }
 
@@ -183,7 +187,7 @@ export class Scene3dRenderer {
     return { canvas }
   }
 
-  #textGeometry(o: TextObject, files: readonly FontFile[]): { geometry: BufferGeometry } | { pending: true } | { error: string } {
+  #textGeometry(o: TextObject, files: readonly FontFile[]): { geometry: BufferGeometry; scale: Vec3 } | { pending: true } | { error: string } {
     const choice = resolveText3dFont(o.font, o.weight, files)
     if ('error' in choice) return choice
     const font = this.#font(choice)
@@ -274,6 +278,7 @@ export class Scene3dRenderer {
       renderer.toneMapping = NoToneMapping
       this.#canvas = canvas
       this.#renderer = renderer
+      this.#size.reset()
       this.#lost = false
       return { renderer, canvas }
     } catch (error) {
@@ -284,7 +289,7 @@ export class Scene3dRenderer {
   #release(): void {
     for (const material of this.#materials) material?.dispose()
     this.#materials = []
-    this.#renderer?.dispose()
+    if (this.#renderer) releaseRenderer(this.#renderer)
     this.#renderer = null
     this.#canvas = null
   }

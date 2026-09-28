@@ -2,7 +2,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { evaluateBrf, parseBrf, type DrawOp } from './brf'
 import { loadBrf, renderBrf } from './brf-code'
-import { estimateVertices, SCENE3D_LIMITS, text3dGeometryKey, type Scene3dFrame } from './scene3d'
+import { estimateVertices, SCENE3D_LIMITS, text3dGeometryKey, textUnit, type Scene3dFrame } from './scene3d'
 
 /** A document holding one scene3d layer with `fields` merged over a legal one. */
 const doc = (fields: Record<string, unknown> = {}, objects: unknown[] = [{ type: 'text3d', text: 'SOC 2' }]) => ({
@@ -138,14 +138,23 @@ test('3D elements are refused outside <scene3d>, and 2D ones inside it', () => {
   assert.equal(run('export default () => <scene duration={1}><scene3d w={10} h={10}><text3d>Hi</text3d></scene3d></scene>'), '', 'the positive control')
 })
 
-test('the geometry key changes with shape and with nothing else', () => {
-  const base = { text: 'SOC 2', size: 1, depth: 0.2, bevel: 0, curveSegments: 8, align: 'center' as const, lineHeight: 1.2 }
-  const key = text3dGeometryKey(base, 'builtin:700')
-  // What moves every frame of a fly-through must not rebuild geometry…
-  assert.equal(text3dGeometryKey({ ...base, ...{ position: [1, 2, 3], color: '#f00', opacity: 0.5 } }, 'builtin:700'), key)
-  // …and everything that changes the shape must.
-  for (const change of [{ text: 'SOC 3' }, { size: 2 }, { depth: 0.3 }, { bevel: 0.01 }, { curveSegments: 9 }, { align: 'left' as const }, { lineHeight: 1 }]) {
-    assert.notEqual(text3dGeometryKey({ ...base, ...change }, 'builtin:700'), key, JSON.stringify(change))
+test('the geometry key changes with shape and nothing else: size and depth are a scale, not a shape', () => {
+  const base: { text: string; size: number; depth: number; bevel: number; curveSegments: number; align: 'left' | 'center' | 'right'; lineHeight: number } = { text: 'SOC 2', size: 1, depth: 0.2, bevel: 0, curveSegments: 8, align: 'center', lineHeight: 1.2 }
+  const keyOf = (o: typeof base, font = 'builtin:700'): string => text3dGeometryKey(textUnit(o).shape, font)
+  const key = keyOf(base)
+  // What moves every frame of a fly-through must not rebuild geometry, size and depth included,
+  // which the mesh's scale carries (a title that grows would otherwise re-extrude every frame)...
+  for (const change of [{ size: 2.5 }, { depth: 0.9 }, { size: 0.3, depth: 4 }]) {
+    assert.equal(keyOf({ ...base, ...change }), key, JSON.stringify(change))
   }
-  assert.notEqual(text3dGeometryKey(base, 'builtin:900'), key, 'another face is another shape')
+  assert.deepEqual(textUnit({ ...base, size: 2.5, depth: 0.9 }).scale, [2.5, 2.5, 0.9], 'and the scale is what sizes it')
+  // ...and everything that changes the shape must.
+  for (const change of [{ text: 'SOC 3' }, { bevel: 0.01 }, { curveSegments: 9 }, { align: 'left' as const }, { lineHeight: 1 }, { depth: 0 }]) {
+    assert.notEqual(keyOf({ ...base, ...change }), key, JSON.stringify(change))
+  }
+  assert.notEqual(keyOf(base, 'builtin:900'), key, 'another face is another shape')
+  // A bevel is absolute, so with one, size and depth are shape too (the guide says animating it is costly).
+  const bevelled = { ...base, bevel: 0.02 }
+  assert.notEqual(keyOf({ ...bevelled, size: 2 }), keyOf(bevelled))
+  assert.notEqual(keyOf({ ...bevelled, depth: 0.4 }), keyOf(bevelled))
 })

@@ -17,14 +17,14 @@
 
 import { BoxGeometry, BufferGeometry, ExtrudeGeometry, PlaneGeometry, ShapePath, type Shape } from 'three'
 import type { Font } from 'opentype.js/dist/opentype.mjs'
-import { BEVEL_SEGMENTS, SCENE3D_LIMITS, text3dGeometryKey, type ResolvedObject3d } from '@shared/scene3d'
+import { BEVEL_SEGMENTS, SCENE3D_LIMITS, text3dGeometryKey, textUnit, type ResolvedObject3d, type TextShape, type Vec3 } from '@shared/scene3d'
 
 type TextObject = Extract<ResolvedObject3d, { type: 'text3d' }>
 
 /** Extruded `o.text` in `font`, centred on the origin (horizontally by `align`), or why not. */
 export function buildTextGeometry(
   font: Font,
-  o: Pick<TextObject, 'text' | 'size' | 'depth' | 'bevel' | 'curveSegments' | 'align' | 'lineHeight'>,
+  o: TextShape,
   budget: number = SCENE3D_LIMITS.vertices
 ): { geometry: BufferGeometry } | { error: string } {
   const scale = o.size / font.unitsPerEm
@@ -66,9 +66,9 @@ export function buildTextGeometry(
   const geometry = new ExtrudeGeometry(shapes, {
     depth: o.depth,
     curveSegments: o.curveSegments,
-    bevelEnabled: o.bevel > 0,
-    bevelThickness: o.bevel,
-    bevelSize: o.bevel,
+    bevelEnabled: o.bevelSize > 0 || o.bevelThickness > 0,
+    bevelThickness: o.bevelThickness,
+    bevelSize: o.bevelSize,
     bevelSegments: BEVEL_SEGMENTS
   })
   // The estimate the document was admitted on is calibrated on Inter; an ornate font can build
@@ -87,15 +87,18 @@ export function buildTextGeometry(
 
 /**
  * Geometry kept across frames. A fly-through changes transforms every frame and shape never, so
- * a text is extruded once per shape (`text3dGeometryKey`) and reused; the oldest entry is
- * disposed past the cap. Each entry is either geometry or the reason it cannot be built, so a bad
- * text is not re-extruded on every frame to fail again.
+ * a text is extruded once per shape (`text3dGeometryKey` of its unit shape, `textUnit`) and
+ * reused, and boxes and planes are one unit geometry each: every size is a mesh scale, so
+ * animating `size`, `depth` or a box's dimensions rebuilds nothing. The oldest entry is disposed
+ * past the cap, which is twice the meshes one scene may hold, so a frame never evicts geometry it
+ * is about to draw. Each entry is geometry or the reason it cannot be built, so a bad text is not
+ * re-extruded on every frame to fail again.
  */
 export class GeometryCache {
   readonly #entries = new Map<string, { geometry: BufferGeometry } | { error: string }>()
   readonly #cap: number
 
-  constructor(cap = 48) {
+  constructor(cap = 2 * SCENE3D_LIMITS.meshes) {
     this.#cap = cap
   }
 
@@ -103,18 +106,27 @@ export class GeometryCache {
     return this.#entries.size
   }
 
-  text(font: Font, fontKey: string, o: TextObject): { geometry: BufferGeometry } | { error: string } {
-    return this.#get(text3dGeometryKey(o, fontKey), () => buildTextGeometry(font, o))
+  get cap(): number {
+    return this.#cap
   }
 
-  box(size: [number, number, number]): BufferGeometry {
-    const entry = this.#get(`box:${size.join(',')}`, () => ({ geometry: new BoxGeometry(size[0], size[1], size[2]) }))
-    return 'geometry' in entry ? entry.geometry : new BufferGeometry()
+  /** The text's unit geometry and the scale that sizes it, to multiply into the mesh's own. */
+  text(font: Font, fontKey: string, o: TextObject): { geometry: BufferGeometry; scale: Vec3 } | { error: string } {
+    const { shape, scale } = textUnit(o)
+    const entry = this.#get(text3dGeometryKey(shape, fontKey), () => buildTextGeometry(font, shape))
+    return 'geometry' in entry ? { geometry: entry.geometry, scale } : entry
   }
 
-  plane(size: [number, number]): BufferGeometry {
-    const entry = this.#get(`plane:${size.join(',')}`, () => ({ geometry: new PlaneGeometry(size[0], size[1]) }))
-    return 'geometry' in entry ? entry.geometry : new BufferGeometry()
+  /** A 1×1×1 box; the size is the mesh's scale. */
+  box(size: Vec3): { geometry: BufferGeometry; scale: Vec3 } {
+    const entry = this.#get('box', () => ({ geometry: new BoxGeometry(1, 1, 1) }))
+    return { geometry: 'geometry' in entry ? entry.geometry : new BufferGeometry(), scale: [size[0], size[1], size[2]] }
+  }
+
+  /** A 1×1 plane; the size is the mesh's scale. */
+  plane(size: [number, number]): { geometry: BufferGeometry; scale: Vec3 } {
+    const entry = this.#get('plane', () => ({ geometry: new PlaneGeometry(1, 1) }))
+    return { geometry: 'geometry' in entry ? entry.geometry : new BufferGeometry(), scale: [size[0], size[1], 1] }
   }
 
   #get(key: string, build: () => { geometry: BufferGeometry } | { error: string }): { geometry: BufferGeometry } | { error: string } {
