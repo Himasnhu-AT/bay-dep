@@ -40,8 +40,28 @@ Each figure on `/compare` is raw footage beside the edit the app's agent made of
 entries live in `src/lib/comparisons.ts` and the files in `public/compare/<slug>/`. When an
 entry is marked ready, its footage and sound are listed here, one table per entry in the same
 shape as the one above (title, author, page, file downloaded, licence), and the same rows are
-the entry's `credits`, which the page prints under the figure. No entry is ready yet, so none
-of that material is served.
+the entry's `credits`, which the page prints under the figure.
+
+### retention-short
+
+| Title | Author | Page | File downloaded | Licence |
+|---|---|---|---|---|
+| James speaking West Riding Yorkshire English | Wikitongues | https://commons.wikimedia.org/wiki/File:James_speaking_West_Riding_Yorkshire_English.webm | the original `.webm` (1080×1920, 6:20); the page uses 5:15–6:01 as "before" | CC0 1.0 |
+
+The person on camera keeps his personality and publicity rights; the page presents the clip as
+material the agent was given and implies no endorsement.
+
+### luxury-minimal
+
+| Title | Author | Page | File downloaded | Licence |
+|---|---|---|---|---|
+| Close-up view of an elegant watch | Mixkit | https://mixkit.co/free-stock-video/ (item 44070) | https://assets.mixkit.co/videos/44070/44070-1080.mp4 | Mixkit Stock Video Free License |
+| Machinery of a very close watch | Mixkit | https://mixkit.co/free-stock-video/ (item 3673) | https://assets.mixkit.co/videos/3673/3673-1080.mp4 | Mixkit Stock Video Free License |
+| Hands on an automatic watch | Mixkit | https://mixkit.co/free-stock-video/ (item 3672) | https://assets.mixkit.co/videos/3672/3672-1080.mp4 | Mixkit Stock Video Free License |
+
+No music or sound: these clips have no audio stream and none was added. The agent kept brand
+names out of frame (it dropped a fourth clip, item 3652, whose rotor is engraved with the
+maker's name); a faint generic "…S MADE" remains at the edge of the dial in the last seconds.
 
 ## Sound
 
