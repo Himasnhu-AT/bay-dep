@@ -29,6 +29,7 @@ import type { RecentProject } from '@shared/ipc'
 import { cacheDir, downloadsDir } from './paths'
 import { sweepStaleCaches } from './media/cache-key'
 import { VISION_CACHE_FAMILY } from './vision/cache'
+import { MATTE_CACHE_FAMILY, stopSubjectMattes, sweepInterruptedMattes } from './matte/host'
 import { cancelCacheUpkeep, runCacheUpkeep } from './media/cache-upkeep'
 import { startMcpServer, stopMcpServer } from './mcp/server'
 import { isOpenableExternally } from './external'
@@ -258,6 +259,9 @@ void app.whenReady().then(() => {
   onRecentsChanged(rebuildMenu)
   rebuildMenu()
 
+  // A subject matte a crash or a kill interrupted leaves its `.part`; nothing is computing yet.
+  void sweepInterruptedMattes()
+
   // What the user attached to a conversation that ended without `dispose` — a crash, a force
   // quit. No conversation exists yet, so nothing is reading them.
   sweepAgentAttachments()
@@ -266,7 +270,7 @@ void app.whenReady().then(() => {
   // in bay evicts, so without this a scheme change leaks its entire previous cache for the
   // life of the install. Startup is the only moment nothing is reading them.
   // `vision` is visual search's frame index (`vision/cache.ts`), versioned the same way.
-  void sweepStaleCaches(cacheDir(), ['thumbs', 'peaks', VISION_CACHE_FAMILY]).then((removed) => {
+  void sweepStaleCaches(cacheDir(), ['thumbs', 'peaks', VISION_CACHE_FAMILY, MATTE_CACHE_FAMILY]).then((removed) => {
     if (removed.length > 0) {
       console.log(
         `[bay] Reclaimed ${removed.length} stale cache director${removed.length === 1 ? 'y' : 'ies'}: ${removed.join(', ')}`
@@ -322,6 +326,8 @@ app.on('will-quit', () => {
   stopGeneration()
   // A download yt-dlp is still running would otherwise write on after bay has gone.
   cancelUrlImports()
+  // The Apple Vision process (osascript) and any subject matte it is computing.
+  stopSubjectMattes()
   stopUpdates()
   cancelCacheUpkeep()
   void stopMcpServer()

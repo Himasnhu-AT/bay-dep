@@ -18,6 +18,7 @@ import type { CompositionVariable } from './composition'
 import type { BrfDocument } from './brf'
 import type { BeatGrid } from './beats'
 import type { Grade, LutData } from './grade'
+import type { Mask, SubjectMatte } from './matte'
 import type { DeliverySettings } from './loudness'
 
 /**
@@ -126,6 +127,14 @@ export interface Asset {
    * and speed. Derived data like the poster: written silently, and recomputable from the file.
    */
   beats?: BeatGrid
+  /**
+   * Subject mattes computed for stretches of this source (`@shared/matte`), once
+   * `put_behind_subject` has asked for one: which source range, which engine, and the key of the
+   * pack in main's cache. Derived data like `beats` — written silently, recomputable — and in
+   * source time, so every placement maps it through its own in-point and speed. Optional and
+   * additive.
+   */
+  subjectMattes?: SubjectMatte[]
   createdAt: number
   /** Set when probing failed; the asset still lists, but cannot be placed. */
   error?: string
@@ -541,6 +550,13 @@ export interface Item {
    * `playableTimeline`. Absent or false is enabled, which is every project written before this.
    */
   disabled?: boolean
+  /**
+   * Masks on this clip's picture (`@shared/matte`): today one `{ kind: 'subject' }`, which keeps only
+   * the person — the cut-out copy `put_behind_subject` puts over a title. Applied by the compositor
+   * inside `#drawSource`, after the grade, from the same media element as any other drawing of this
+   * clip at the same source time. Absent is the fast path. Optional and additive.
+   */
+  masks?: Mask[]
 }
 
 /**

@@ -18,6 +18,7 @@ import { handlers as generationHandlers } from './generation'
 import { handlers as highlightsHandlers } from './highlights'
 import { handlers as linksHandlers } from './links'
 import { handlers as markersHandlers } from './markers'
+import { handlers as mattesHandlers } from './mattes'
 import { handlers as previewHandlers } from './preview'
 import { handlers as projectsHandlers } from './projects'
 import { handlers as promptKitsHandlers } from './promptKits'
@@ -52,6 +53,7 @@ export const HANDLER_GROUPS: Record<string, Handlers> = {
   'highlights': highlightsHandlers,
   'links': linksHandlers,
   'markers': markersHandlers,
+  'mattes': mattesHandlers,
   'preview': previewHandlers,
   'projects': projectsHandlers,
   'promptKits': promptKitsHandlers,
@@ -87,6 +89,7 @@ export const HANDLERS: Handlers = {
   ...highlightsHandlers,
   ...linksHandlers,
   ...markersHandlers,
+  ...mattesHandlers,
   ...previewHandlers,
   ...projectsHandlers,
   ...promptKitsHandlers,

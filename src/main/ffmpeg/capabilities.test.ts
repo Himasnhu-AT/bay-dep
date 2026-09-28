@@ -41,6 +41,7 @@ import { sceneCutFilter } from '../media/scene-cuts'
 import { LOUDNESS_FILTER, silenceFilter } from '../media/audio-analysis'
 import { contactSheetArgs, contactSheetPlan, imageScaleFilter } from '../agent/attachments'
 import { sampleFilter } from '@shared/visual-search'
+import { matteDecodeFilter } from '../matte/compute'
 import { NO_VENDORED_FFMPEG, vendoredTools } from './vendor'
 
 const TOOLS = vendoredTools()
@@ -147,6 +148,8 @@ function filtersTheCodeWrites(): Set<string> {
   graphs.push(valueOf(sheet, '-filter_complex') ?? '', imageScaleFilter(2000, 1000))
   // Visual search's index pass (shared/visual-search.ts `sampleFilter`): select, showinfo, scale, format.
   graphs.push(sampleFilter())
+  // Subject mattes (matte/compute.ts): scale, format, showinfo — frames for Apple Vision.
+  graphs.push(matteDecodeFilter())
   for (const format of FORMATS) {
     for (const quality of QUALITIES) {
       const vf = valueOf(videoCodecArgs(format, quality), '-vf')
