@@ -226,9 +226,10 @@ unpackaged build, with `BAY_SITE=local`). Outside the code, the owner must:
   `bay-editor-app`, Authentication › Settings), or Google sign-in on the site fails with
   `auth/unauthorized-domain`;
 - add `bay.himanshuat.com` as a domain of the website's Vercel project, and point its DNS at
-  Vercel (a `CNAME` to the target Vercel shows);
-- make `hello@himanshuat.com` (the site's contact address, `product.email`) receive mail:
-  `himanshuat.com` had no MX record when this was set.
+  Vercel (a `CNAME` to the target Vercel shows).
+
+The site's contact address (`product.email`, in the footer and every mailto link) is
+`hyattherate2005@gmail.com`.
 
 ## History
 

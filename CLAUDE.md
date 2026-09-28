@@ -545,6 +545,17 @@ writes the autosave sidecar while locked, and installs only if that succeeded. T
 channels are open while locked (`OPEN_WHILE_LOCKED`), because an update is how a build that
 cannot sign in gets fixed.
 
+**No downgrades, judged by the bundle, not the feed** (`main/update/bundle-version.ts`). Squirrel
+installs any bay signed by the same Developer ID, older ones included, and `allowDowngrade` reads
+only `latest-mac.yml`'s `version:`. So bay reads `CFBundleShortVersionString` from the downloaded
+zip (the file electron-updater's proxy hands Squirrel) when the download finishes and again right
+before `quitAndInstall`, and anything not strictly newer is the `refused` status, shown in the
+banner and Preferences › About. That needs `autoInstallOnAppQuit = false`: with it on,
+electron-updater gives Squirrel the zip the moment it lands and Squirrel installs it at any quit,
+with no hook between. An update therefore installs only from Restart to update. The unit tests
+cover the verdict and the zip reading; the wiring in `updater.ts` imports Electron and is
+typecheck-only.
+
 **A grant comes from the owner or a referral.** The owner approves a waitlist entry or grants an
 email directly on the website's `/admin`; an entitled user refers one from inside bay
 (`accessRefer`, five each). The `no-access` screen therefore shows the email with a Copy button

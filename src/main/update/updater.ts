@@ -8,7 +8,12 @@
  *   GitHub Releases feed, GitHub's asset hosts (`allowUpdateRequest`, enforced in `onBeforeRequest` on electron-updater's partition, which
  *   carries all its requests and their redirects). The renderer stays offline.
  * - Installing is Squirrel.Mac. It swaps the bundle only for one signed by the same Developer ID
- *   as the running app, so a feed cannot install anything else.
+ *   as the running app, so a feed cannot install anything else — but it would install an older
+ *   one. So bay reads the version inside the downloaded zip (`./bundle-version`) when the download
+ *   finishes and again right before `quitAndInstall`, and refuses anything not strictly newer.
+ *   Squirrel is handed the zip only at that point (`autoInstallOnAppQuit = false`): with it on,
+ *   electron-updater passes the zip to Squirrel the moment it is downloaded, and Squirrel then
+ *   installs it at any quit, with no hook in between.
  * - Works while bay is locked: the update channels are in `OPEN_WHILE_LOCKED`. Updating is how a
  *   locked-out build gets fixed.
  * - Restarting is the renderer's to ask for, because the renderer holds the project. It saves or
@@ -23,6 +28,7 @@ import { IPC } from '@shared/ipc'
 import { UPDATE_FEED } from '@shared/update-feed'
 import { UPDATE_CHECK_INTERVAL_MS, isNewer, releaseNotesText, updateErrorMessage, type UpdateStatus, type UpdateStep } from '@shared/update'
 import { allowUpdateRequest, updaterConfigYaml, updaterMode, type UpdaterMode } from './policy'
+import { installVerdict, readBundleVersion } from './bundle-version'
 
 type AppUpdater = typeof electronUpdater.autoUpdater
 
@@ -62,6 +68,23 @@ function fail(error: unknown, during: UpdateStep): UpdateStatus {
   return publish({ state: 'error', current: app.getVersion(), feed: feedLabel, during, message: updateErrorMessage(raw, during, feedLabel, lastRefusal), next, notes })
 }
 
+/** The zip electron-updater downloaded and will hand to Squirrel. */
+let downloadedFile: string | null = null
+
+/**
+ * Whether the downloaded bundle is strictly newer than this bay, by the version inside it. A
+ * refusal is published (Preferences › About and the banner say why) and logged, never silent.
+ */
+async function verifyDownloaded(advertised: string): Promise<{ ok: true } | { ok: false; reason: string }> {
+  const found = downloadedFile ? await readBundleVersion(downloadedFile) : { error: 'the download is gone' }
+  const verdict = installVerdict(found, app.getVersion(), advertised)
+  if (!verdict.ok) {
+    console.warn(`[bay] update: ${verdict.reason}`)
+    publish({ state: 'refused', current: app.getVersion(), feed: feedLabel, next: advertised, message: verdict.reason })
+  }
+  return verdict
+}
+
 /** Call once, after `ready`. */
 export async function startUpdates(): Promise<void> {
   const current = app.getVersion()
@@ -97,9 +120,11 @@ export async function startUpdates(): Promise<void> {
   instance.updateConfigPath = configPath
   instance.forceDevUpdateConfig = !app.isPackaged
   instance.autoDownload = false
-  // A downloaded update also installs when the user quits normally. That quit is theirs, with
-  // whatever it does about unsaved work. Restarting from the banner saves first.
-  instance.autoInstallOnAppQuit = true
+  // Off, so Squirrel receives the zip only from `quitAndInstall`, after bay has checked the version
+  // inside it. On, electron-updater hands it over as soon as it is downloaded and Squirrel installs
+  // it at the next quit of any kind, which no check of bay's could stop. So an update installs
+  // only from Restart to update, which saves first.
+  instance.autoInstallOnAppQuit = false
   instance.allowPrerelease = false
   instance.allowDowngrade = false
   instance.logger = {
@@ -110,23 +135,11 @@ export async function startUpdates(): Promise<void> {
     // it is the step that fails silently.
     debug: (message?: unknown) => console.log(`[bay] update (debug): ${String(message)}`)
   }
-  // On a Mac, electron-updater says "downloaded" when ITS copy of the zip is on disk. Squirrel.Mac
-  // then fetches the zip from it, unpacks it and checks its signature, and only then can it
-  // install. So "Restart to update" is offered only once Squirrel says it is ready. Until then
-  // the status stays at downloading, 100%, which reads "Preparing…". An unpackaged bay has no
-  // Squirrel and cannot install, so there electron-updater's word is final.
-  const waitForSquirrel = process.platform === 'darwin' && app.isPackaged
-  let downloaded: { next: string; notes: string } | null = null
-  let squirrelReady = false
-  const offerRestart = (): void => {
-    if (!downloaded || (waitForSquirrel && !squirrelReady)) return
-    publish({ state: 'ready', current, feed: feedLabel, next: downloaded.next, notes: downloaded.notes })
-  }
-  nativeUpdater.on('update-downloaded', () => {
-    console.log('[bay] update: Squirrel has the update ready to install')
-    squirrelReady = true
-    offerRestart()
-  })
+  // On a Mac, electron-updater says "downloaded" when ITS copy of the zip is on disk. bay then
+  // reads the version inside it (the status stays at downloading, 100%, "Preparing…") and offers
+  // "Restart to update" only for a strictly newer bay. Squirrel fetches, unpacks and checks the
+  // signature after Restart is pressed; a signature it refuses arrives as an `error` event then.
+  nativeUpdater.on('update-downloaded', () => console.log('[bay] update: Squirrel has the update ready to install'))
   nativeUpdater.on('before-quit-for-update', () => console.log('[bay] update: quitting to install'))
 
   instance.on('update-available', (info) => {
@@ -141,9 +154,12 @@ export async function startUpdates(): Promise<void> {
     publish({ ...status, percent: progress.percent, transferred: progress.transferred, total: progress.total })
   })
   instance.on('update-downloaded', (info) => {
-    downloaded = { next: info.version, notes: 'notes' in status ? status.notes : releaseNotesText(info.releaseNotes) }
+    const notes = 'notes' in status ? status.notes : releaseNotesText(info.releaseNotes)
+    downloadedFile = info.downloadedFile
     if (status.state === 'downloading') publish({ ...status, percent: 100, transferred: status.total, total: status.total })
-    offerRestart()
+    void verifyDownloaded(info.version).then((verdict) => {
+      if (verdict.ok) publish({ state: 'ready', current, feed: feedLabel, next: info.version, notes })
+    })
   })
   instance.on('error', (error) => {
     fail(error, lastStep)
@@ -210,7 +226,11 @@ export async function installUpdate(): Promise<UpdateStatus> {
     return fail(new Error('A development build cannot replace itself. The update was downloaded but not installed.'), 'install')
   }
   lastStep = 'install'
-  console.log(`[bay] update: restarting into ${'next' in status ? status.next : '?'}`)
+  const next = 'next' in status && status.next ? status.next : '?'
+  // Again, immediately before Squirrel is handed the file: the check at download time is not
+  // the one that guards the install.
+  if (!(await verifyDownloaded(next)).ok) return status
+  console.log(`[bay] update: restarting into ${next}`)
   // Squirrel's install is asynchronous. Its failure arrives as an `error` event, not a throw.
   setImmediate(() => updater?.quitAndInstall(false, true))
   return status

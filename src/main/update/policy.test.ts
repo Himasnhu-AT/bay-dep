@@ -107,6 +107,40 @@ test('a GitHub feed refuses every other host, scheme, port and method', () => {
   }
 })
 
+test('on github.com, a GitHub feed reaches only its own repo releases', () => {
+  // Positive control: the measured chain, feed -> tagged release -> asset host.
+  for (const url of [`${GH_FEED}latest-mac.yml`, `${GH_FEED}bay-0.1.1-arm64-mac.zip`, GH_TAGGED, GH_ASSET]) {
+    assert.deepEqual(allowUpdateRequest(url, GH_FEED), { ok: true }, url)
+  }
+  const refused = [
+    // Another owner's repo of the same name, and another repo of this owner.
+    'https://github.com/someone-else/Himasnhu-AT/releases/download/v9.9.9/bay-9.9.9-arm64-mac.zip',
+    'https://github.com/Himasnhu-AT/other-repo/releases/download/v9.9.9/bay-9.9.9-arm64-mac.zip',
+    // A repo whose name merely starts with this one's.
+    'https://github.com/Himasnhu-AT/Himasnhu-AT-evil/releases/download/v9.9.9/x.zip',
+    // This repo, but not its releases.
+    'https://github.com/Himasnhu-AT/Himasnhu-AT/archive/refs/heads/main.zip',
+    'https://github.com/Himasnhu-AT/Himasnhu-AT/raw/main/latest-mac.yml',
+    // Climbing out of the prefix: `URL` resolves these before the check.
+    'https://github.com/Himasnhu-AT/Himasnhu-AT/releases/../../../someone-else/r/releases/download/v1/x.zip',
+    'https://github.com/Himasnhu-AT/Himasnhu-AT/releases/%2e%2e/%2e%2e/%2e%2e/someone-else/r/releases/x.zip',
+    'https://github.com/login'
+  ]
+  // The specimens defeat naive checks, or they would test nothing.
+  assert.ok(refused[2]!.startsWith('https://github.com/Himasnhu-AT/Himasnhu-AT'), 'specimen shares the repo prefix without its slash')
+  assert.ok(refused[5]!.startsWith('https://github.com/Himasnhu-AT/Himasnhu-AT/releases/'), 'specimen shares the whole prefix as a string')
+  assert.ok(refused[6]!.startsWith('https://github.com/Himasnhu-AT/Himasnhu-AT/releases/'), 'specimen shares the whole prefix as a string')
+  for (const url of refused) {
+    const verdict = allowUpdateRequest(url, GH_FEED)
+    assert.equal(verdict.ok, false, url)
+    if (!verdict.ok) assert.match(verdict.reason, /updates come only from \/Himasnhu-AT\/Himasnhu-AT\/releases\//, url)
+  }
+  // The prefix is the feed's, not a constant: another repo's feed reaches its own releases only.
+  const other = 'https://github.com/o/r/releases/latest/download/'
+  assert.deepEqual(allowUpdateRequest('https://github.com/o/r/releases/download/v1/x.zip', other), { ok: true })
+  assert.equal(allowUpdateRequest(GH_TAGGED, other).ok, false)
+})
+
 test('a feed that is not on GitHub does not open the GitHub asset hosts', () => {
   // Negative: the same hops, from the example feed and from a local feed.
   for (const feed of [FEED, 'http://127.0.0.1:8123/']) {

@@ -140,6 +140,7 @@ function UpdateActions({ status, restart }: { status: UpdateStatus; restart: () 
     }
     case 'idle':
     case 'current':
+    case 'refused':
       return (
         <Button icon={<RefreshCw className="size-3.5" />} onClick={() => void api?.update.check()}>
           Check now

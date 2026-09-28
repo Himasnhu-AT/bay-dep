@@ -34,7 +34,7 @@ export const product: Product = {
   description:
     "Bay is a video editor for the Mac. The timeline you cut on is the one an agent edits over the Model Context Protocol, and every change it makes lands on your undo stack.",
   domain: "bay.himanshuat.com",
-  email: "hello@himanshuat.com",
+  email: "hyattherate2005@gmail.com",
   year: 2026,
   download: "/download",
   studio: { name: "Himanshu", url: "https://himanshuat.com" },

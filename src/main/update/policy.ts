@@ -83,8 +83,19 @@ const GITHUB_FEED_ORIGIN = 'https://github.com'
 const GITHUB_ASSET_HOSTS: ReadonlySet<string> = new Set(['release-assets.githubusercontent.com', 'objects.githubusercontent.com'])
 
 /**
- * Whether the updater's session may make this request: the feed's own origin, and — for a feed on
- * GitHub Releases only — a GET to one of GitHub's asset hosts (`GITHUB_ASSET_HOSTS`). Nothing else.
+ * On github.com the origin is everyone's, so a GitHub feed's own-origin hops must also stay inside
+ * the feed's repo releases: `/<owner>/<repo>/releases/`, read from the feed URL itself (both hops
+ * measured above are under it). Null when the feed names no repo, and then no github.com hop passes.
+ */
+function githubReleasesPrefix(feed: URL): string | null {
+  const [, owner, repo] = feed.pathname.split('/')
+  return owner && repo ? `/${owner}/${repo}/releases/` : null
+}
+
+/**
+ * Whether the updater's session may make this request: the feed's own origin (on github.com, only
+ * inside the feed repo's releases), and — for a feed on GitHub Releases only — a GET to one of
+ * GitHub's asset hosts (`GITHUB_ASSET_HOSTS`). Nothing else.
  */
 export function allowUpdateRequest(url: string, feed: string, method = 'GET'): { ok: true } | { ok: false; reason: string } {
   let parsed: URL
@@ -94,7 +105,13 @@ export function allowUpdateRequest(url: string, feed: string, method = 'GET'): {
     return { ok: false, reason: 'bay refused an update request to a malformed URL.' }
   }
   const allowed = new URL(feed)
-  if (parsed.origin === allowed.origin) return { ok: true }
+  if (parsed.origin === allowed.origin) {
+    if (allowed.origin !== GITHUB_FEED_ORIGIN) return { ok: true }
+    // `URL` has already resolved `..` and `%2e%2e` segments, so the prefix is judged on the real path.
+    const prefix = githubReleasesPrefix(allowed)
+    if (prefix && parsed.pathname.startsWith(prefix)) return { ok: true }
+    return { ok: false, reason: `bay refused to contact ${parsed.host}${parsed.pathname} for an update: on github.com updates come only from ${prefix ?? 'the feed repo'}.` }
+  }
   if (
     allowed.origin === GITHUB_FEED_ORIGIN &&
     parsed.protocol === 'https:' &&
