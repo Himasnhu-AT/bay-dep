@@ -12,7 +12,7 @@ import { describeAccess, lockedMessage, normaliseEmail, looksLikeEmail, type Acc
 const at = Date.UTC(2026, 8, 1)
 const states: AccessStatus[] = [
   { state: 'signed-out' },
-  { state: 'waiting', url: 'https://bay.everholt.com/desktop/sign-in?port=1&state=s', expiresAt: at },
+  { state: 'waiting', url: 'https://bay.himanshuat.com/desktop/sign-in?port=1&state=s', expiresAt: at },
   { state: 'checking', email: 'a@example.com' },
   { state: 'entitled', email: 'a@example.com', lastVerifiedAt: at, lockAt: at, offline: false, persisted: true, referralsLeft: 5, bypass: false },
   { state: 'entitled', email: 'a@example.com', lastVerifiedAt: at, lockAt: at, offline: true, persisted: true, referralsLeft: 5, bypass: false },

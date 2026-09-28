@@ -4,8 +4,8 @@
  *
  * - Checks at launch and every six hours, and never downloads until the user presses Update
  *   (`autoDownload = false`).
- * - Only this module's session reaches the network, and only the feed's origin
- *   (`allowUpdateRequest`, enforced in `onBeforeRequest` on electron-updater's partition, which
+ * - Only this module's session reaches the network, and only the feed's origin plus, for a
+ *   GitHub Releases feed, GitHub's asset hosts (`allowUpdateRequest`, enforced in `onBeforeRequest` on electron-updater's partition, which
  *   carries all its requests and their redirects). The renderer stays offline.
  * - Installing is Squirrel.Mac. It swaps the bundle only for one signed by the same Developer ID
  *   as the running app, so a feed cannot install anything else.
@@ -79,7 +79,7 @@ export async function startUpdates(): Promise<void> {
   // The host guard, installed before the updater exists so its first request is covered.
   const updaterSession = session.fromPartition('electron-updater', { cache: false })
   updaterSession.webRequest.onBeforeRequest((details, callback) => {
-    const verdict = allowUpdateRequest(details.url, feed)
+    const verdict = allowUpdateRequest(details.url, feed, details.method)
     if (!verdict.ok) {
       lastRefusal = verdict.reason
       console.warn(`[bay] update: ${verdict.reason}`)

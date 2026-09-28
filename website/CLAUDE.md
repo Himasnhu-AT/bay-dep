@@ -98,9 +98,11 @@ authority.
   stay a one-line edit.
 - **Status is honest.** The four words are defined in VOICE.md and describe the app
   today. Do not promote it to balance a layout.
-- **No download link until there is a build.** `download` stays undefined and the home
-  page shows a "Releasing soon" section instead, whose only action is the waitlist: it
-  says there is no download yet rather than showing a dead button. The waitlist is not
+- **No download link without a build.** `download` is `/download`, this site's own route,
+  which 302s to the newest notarized DMG (a release asset on a public GitHub repo; the
+  site never names GitHub). Unset it and the home page falls back to a "Releasing soon"
+  section whose only action is the waitlist, rather than a dead button. The copy beside
+  the button says the build is for Apple silicon and that access is needed to sign in. The waitlist is not
   email capture standing in for a download: it is how access to the app is granted, it
   sends no mail at all, and it must never grow a newsletter checkbox.
 - **Every page carries a "What it will not do" section.** The omissions are the reason

@@ -1058,7 +1058,11 @@ projects — indexing an array yields `T | undefined` and you must handle it.
   model runs on onnxruntime-node in a utility process (`vision/worker.js`, nice 10). The third is **updates**
   (`src/main/update/`): electron-updater's own session (`electron-updater` partition, never the
   editor's) may reach only the origin of the feed in `@shared/update-feed`, enforced in
-  `onBeforeRequest` by `allowUpdateRequest`, redirects included. The feed is **unset**, so a
+  `onBeforeRequest` by `allowUpdateRequest`, redirects included. The feed is the latest release
+  of the public repo `Himasnhu-AT/Himasnhu-AT` (release assets only, never this repo's source),
+  so it may also follow a GET over https to exactly `release-assets.githubusercontent.com` or
+  `objects.githubusercontent.com` — GitHub's asset redirect, measured with `curl -sIL` — and only
+  because the feed's origin is `https://github.com` (`GITHUB_ASSET_HOSTS`). Set to null, a
   shipped bay contacts nothing and Preferences › About says "Updates: releasing soon".
   `BAY_UPDATE_FEED` points it at a loopback feed for testing, and nothing else. The fourth is
   **AI generation** (`src/main/generate/`, `@shared/generation`, `@shared/speech`, `generate_image`/

@@ -56,10 +56,6 @@ const wrong = [
 
 const notYet = [
   {
-    title: "Notarized downloads",
-    body: "Builds can now be signed with a Developer ID. Notarization is wired up but has not been run, so there is no download on this site yet that Gatekeeper will open without a warning.",
-  },
-  {
     title: "Windows and Linux",
     body: "The packager is configured for both. Neither has been built and used, so neither is something to rely on.",
   },
@@ -138,19 +134,27 @@ export default function StatusPage() {
         />
 
         <Reveal delay={0.1} className="mt-24 border-t border-line pt-12">
-          <h2 className="text-section font-semibold text-ink">No download</h2>
+          <h2 className="text-section font-semibold text-ink">Download</h2>
           <p className="mt-3 max-w-[60ch] text-base text-ink-soft">
-            There is no build on this site, because there is not one worth
-            handing to a stranger. {product.name} is by invitation: you can{" "}
+            The{" "}
+            <a
+              href={product.download}
+              className="font-medium text-accent-ink underline decoration-accent-ink/40 underline-offset-4 transition-colors hover:text-ink"
+            >
+              download
+            </a>{" "}
+            is a notarized disk image for Macs with Apple silicon; there is no
+            Intel, Windows or Linux build. Anyone can download it, but{" "}
+            {product.name} is by invitation and you need access to sign in: you
+            can{" "}
             <a
               href="/waitlist"
               className="font-medium text-accent-ink underline decoration-accent-ink/40 underline-offset-4 transition-colors hover:text-ink"
             >
               ask for access
             </a>
-            , and when there is a build it will be a notarized disk image
-            served from here. Not a store listing, and not a button that says
-            coming soon.
+            . It is {product.status.toLowerCase()}, so expect the rough edges
+            listed above.
           </p>
         </Reveal>
       </Wrap>

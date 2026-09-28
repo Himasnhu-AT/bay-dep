@@ -18,8 +18,9 @@ export type Product = {
   email: string;
   year: number;
   /**
-   * A notarized build served by the studio. Absent until one exists, and the UI
-   * renders no button rather than a dead or coming-soon one.
+   * Where the Download button goes: this site's own `/download`, which redirects
+   * to the newest notarized disk image. Absent when there is no build, and the
+   * UI then renders no button rather than a dead or coming-soon one.
    */
   download?: string;
   /** The studio that makes it. A credit in the footer, not a parent brand. */
@@ -32,8 +33,9 @@ export const product: Product = {
   status: "In development",
   description:
     "Bay is a video editor for the Mac. The timeline you cut on is the one an agent edits over the Model Context Protocol, and every change it makes lands on your undo stack.",
-  domain: "bay.everholt.com",
-  email: "hello@everholt.com",
+  domain: "bay.himanshuat.com",
+  email: "hello@himanshuat.com",
   year: 2026,
-  studio: { name: "Everholt", url: "https://everholt.com" },
+  download: "/download",
+  studio: { name: "Himanshu", url: "https://himanshuat.com" },
 };

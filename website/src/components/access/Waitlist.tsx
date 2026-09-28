@@ -210,8 +210,8 @@ function StandingView({ user }: { user: User }) {
           {product.download ? (
             <>
               <p className="mt-4 text-base text-ink-soft">
-                Download {product.name}, open it, and sign in with Google as this
-                address. You sign in once; after that it works offline.
+                Download {product.name} (for Macs with Apple silicon), open it,
+                and sign in with Google as this address. You sign in once; after that it works offline.
               </p>
               <ActionLink href={product.download} className="mt-8">
                 Download for Mac

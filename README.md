@@ -182,29 +182,53 @@ The script:
   fails if Apple's log (`release/notary/<id>.json`) lists any issue.
 - checks Gatekeeper with `spctl` on the DMG, on the app, on a quarantined copy and on the app
   inside the update zip. Each must say `source=Notarized Developer ID`.
-- writes `release/bay-<version>-arm64.dmg`, `…-mac.zip`, their `.sha256` files and
-  `latest-mac.yml`.
+- writes `release/bay-<version>-arm64.dmg`, a byte copy of it named `bay-mac-arm64.dmg` (the
+  fixed name the website's `/download` points at), `…-mac.zip`, their `.sha256` files and
+  `latest-mac.yml`, and checks that `latest-mac.yml` names this version's zip. It uploads
+  nothing.
 
 `--version 0.1.1` stamps another version without touching `package.json`. `--notes file.txt`
 puts release notes in `latest-mac.yml`. `--out dir` writes somewhere other than `release/`.
 Builds are arm64 only, because pnpm installs only this Mac's `claude` package. ffmpeg must be
 built first (`script/build-ffmpeg.sh`), and packaging refuses without it.
 
-**Updates.** bay updates itself from a *generic feed*: an https folder that holds
-`latest-mac.yml` and the zip it names. No feed is configured yet, so a packaged bay checks
-nothing and Settings › About reads "Updates: releasing soon". To switch updates on, set one line
-in `src/shared/update-feed.ts`:
+**Downloads and updates are public GitHub release assets** on the owner's profile repo,
+`Himasnhu-AT/Himasnhu-AT`. Only the release files go there, never source from this repo. bay
+updates itself from a *generic feed*, an https folder holding `latest-mac.yml` and the zip it
+names, and the feed is that repo's latest release (`src/shared/update-feed.ts`):
 
 ```ts
-export const UPDATE_FEED: string | null = 'https://downloads.example.com/bay/mac/'
+export const UPDATE_FEED: string | null = 'https://github.com/Himasnhu-AT/Himasnhu-AT/releases/latest/download/'
 ```
 
-Then, for each release, upload `bay-<version>-arm64-mac.zip`, `bay-<version>-arm64.dmg` and
-`latest-mac.yml` to that folder. The feed must serve the files itself. bay contacts only the
-feed's origin and refuses redirects to another host. A shared-drive link that redirects to a
-download server will not work as a feed, though it is fine for the website's DMG link. To try
+For each release, after review, upload the five files as assets of one new, non-draft,
+non-prerelease release (`releases/latest` skips drafts and prereleases):
+`bay-<version>-arm64-mac.zip`, `bay-<version>-arm64.dmg`, `bay-mac-arm64.dmg`,
+`latest-mac.yml`, and the `.sha256` files if you want them public. For example
+`gh release create v0.1.0 --repo Himasnhu-AT/Himasnhu-AT release/bay-0.1.0-arm64-mac.zip
+release/bay-0.1.0-arm64.dmg release/bay-mac-arm64.dmg release/latest-mac.yml`.
+
+GitHub serves each asset by redirecting to its asset host, so bay's updater follows a GET to
+exactly `release-assets.githubusercontent.com` or `objects.githubusercontent.com`, over https,
+and only because the feed is on `https://github.com` (`GITHUB_ASSET_HOSTS` in
+`src/main/update/policy.ts`, which cites the measured redirect chain). Any other feed still
+reaches only its own origin. The website's Download button goes to its own `/download`, which
+302s to `…/releases/latest/download/bay-mac-arm64.dmg`. To try
 an update without publishing anything, serve a release folder locally and start bay with
 `BAY_UPDATE_FEED=http://127.0.0.1:<port>/`. Only loopback addresses are accepted.
+
+**The website is `https://bay.himanshuat.com`** (`SITE_ORIGIN` in `src/shared/access.ts`, and
+`website/src/lib/product.ts`). The desktop sign-in opens `/desktop/sign-in` there, and the app's
+loopback handoff accepts a POST only from that origin (plus `http://localhost:3000` in an
+unpackaged build, with `BAY_SITE=local`). Outside the code, the owner must:
+
+- add `bay.himanshuat.com` to **Authorized domains** in Firebase Authentication (project
+  `bay-editor-app`, Authentication › Settings), or Google sign-in on the site fails with
+  `auth/unauthorized-domain`;
+- add `bay.himanshuat.com` as a domain of the website's Vercel project, and point its DNS at
+  Vercel (a `CNAME` to the target Vercel shows);
+- make `hello@himanshuat.com` (the site's contact address, `product.email`) receive mail:
+  `himanshuat.com` had no MX record when this was set.
 
 ## History
 

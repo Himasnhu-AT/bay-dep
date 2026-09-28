@@ -35,8 +35,9 @@ It is not a funnel. There is no signup, no trial, no newsletter, and nothing to 
   drawn from the app's own theme and layout source rather than a capture, and why the
   caption under it says exactly that. A real capture would be better and should replace
   it when one exists.
-- Downloads. `download` in `src/lib/product.ts` is unset, so no button renders. It stays
-  that way until there is a notarized disk image to point at.
+- Download hosting. `download` in `src/lib/product.ts` is `/download`, which redirects to
+  the newest DMG uploaded as a release asset on a public GitHub repo (`src/app/download/`).
+  The site itself serves no file and names no host.
 - Documentation. The site links to nothing under `docs/`; that lives in the repository.
 
 ## Where the copy comes from
