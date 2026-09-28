@@ -134,7 +134,8 @@ export function timelineSlice({ set, get, edit, editTimeline, currentTimeline }:
           fromItemId: spec.fromItemId,
           toItemId: spec.toItemId,
           durationInFrames: Math.max(2, Math.floor(spec.durationInFrames)),
-          ...(spec.direction ? { direction: spec.direction } : {})
+          ...(spec.direction ? { direction: spec.direction } : {}),
+          ...(spec.ease ? { ease: spec.ease } : {})
         }
         const at = list.findIndex((t) => t.id === id)
         if (at >= 0) list[at] = next
@@ -163,6 +164,8 @@ export function timelineSlice({ set, get, edit, editTimeline, currentTimeline }:
         if (!transition) return
         Object.assign(transition, patch)
         if (transition.durationInFrames < 2) transition.durationInFrames = 2
+        // Linear is stored as absence, so a transition put back to linear saves as it was.
+        if (transition.ease === undefined || transition.ease === 'linear') delete transition.ease
       })
     },
 

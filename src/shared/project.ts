@@ -14,6 +14,7 @@
  */
 
 import { formatTimecode as formatTimecodeShared } from './timecode'
+import { easeProgress } from './ease'
 import type { CompositionVariable } from './composition'
 import type { BrfDocument } from './brf'
 import type { BeatGrid } from './beats'
@@ -693,6 +694,25 @@ export interface Transition {
   direction?: TransitionDirection
   /** Kind-specific extras — feather width, iris shape. Absent means the kind's default. */
   params?: Record<string, number | string>
+  /**
+   * How the transition travels across its window: a name or a CSS cubic-bezier, exactly as a
+   * keyframe's ease (`KeyframeEase`, sampled by `easeProgress`). It shapes `progress` itself, so
+   * the picture and the audio cross-fade follow one curve in preview and export alike. Absent is
+   * linear — every transition written before the field existed. Additive and optional, so an older
+   * build loads a file carrying it and writes it back untouched (it just plays linear).
+   */
+  ease?: KeyframeEase
+}
+
+/**
+ * A transition's progress at `frame`: 0 at its first frame, 1 at its last, shaped by its ease.
+ * The one place the window becomes a progress — the compositor's picture (`transitionAtFrame`) and
+ * every sound's gain (`transitionOfItemAt`) both read it, so they cannot disagree about the curve.
+ */
+export function transitionProgress(resolved: ResolvedTransition, frame: Frames): number {
+  const span = resolved.lastFrame - resolved.firstFrame + 1
+  const linear = span <= 1 ? 1 : (frame - resolved.firstFrame) / (span - 1)
+  return easeProgress(resolved.transition.ease, Math.max(0, Math.min(1, linear)))
 }
 
 /**
@@ -1206,9 +1226,7 @@ export function transitionAtFrame(
       if (!track || track.kind !== kind || (kind === 'video' && track.hidden)) continue
     }
     if (frame < resolved.firstFrame || frame > resolved.lastFrame) continue
-    const span = resolved.lastFrame - resolved.firstFrame + 1
-    const progress = span <= 1 ? 1 : (frame - resolved.firstFrame) / (span - 1)
-    return { resolved, progress: Math.max(0, Math.min(1, progress)) }
+    return { resolved, progress: transitionProgress(resolved, frame) }
   }
   return null
 }

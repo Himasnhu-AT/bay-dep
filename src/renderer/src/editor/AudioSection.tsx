@@ -3,11 +3,10 @@ import { AlertTriangle } from 'lucide-react'
 import type { Item, Project, Timeline } from '@shared/project'
 import { resolveAudioOffsets, MAX_DUCK_DB } from '@shared/audio-gain'
 import { asSentences, audioNoteForPerson, commonValue, dbToGain, formatDb, formatPan, gainToDb, MAX_VOLUME_DB, spokenPan, VOLUME_DB_FLOOR } from '@shared/inspector'
-import { Field, Knob, NumberField, Section, SectionReset, Select, SliderField, Switch } from '@/components'
+import { Field, Knob, NumberField, Section, SectionReset, Select, SliderField, Switch, TimecodeField } from '@/components'
 import { useEditor } from '@/store/editor'
 import { editItems } from './inspectorEdit'
 import { Keyed } from './KeyframeControls'
-import { timecodeField } from './timecodeField'
 import { LIVE } from './liveGesture'
 
 /**
@@ -39,7 +38,6 @@ export function AudioSection({
   const first = items[0]
   if (!first) return null
   const fps = timeline.fps
-  const tc = timecodeField(fps)
   const ids = items.map((item) => item.id)
 
   const pan = commonValue(items.map((item) => (Number.isFinite(item.pan) ? (item.pan as number) : 0)))
@@ -127,7 +125,7 @@ export function AudioSection({
         J/L cut
       </h4>
       <div className="space-y-1.5">
-        <NumberField
+        <TimecodeField
           row
           label="Sound early"
           ariaLabel="J-cut: sound starts before the picture"
@@ -135,10 +133,10 @@ export function AudioSection({
           mixed={lead.mixed}
           min={0}
           defaultValue={0}
-          {...tc}
+          fps={fps}
           onCommit={(next) => editItems(ids, () => ({ audioLeadFrames: Math.max(0, Math.round(next)) }))}
         />
-        <NumberField
+        <TimecodeField
           row
           label="Sound late"
           ariaLabel="L-cut: sound runs on after the picture"
@@ -146,7 +144,7 @@ export function AudioSection({
           mixed={trail.mixed}
           min={0}
           defaultValue={0}
-          {...tc}
+          fps={fps}
           onCommit={(next) => editItems(ids, () => ({ audioTrailFrames: Math.max(0, Math.round(next)) }))}
         />
       </div>
@@ -211,7 +209,7 @@ export function AudioSection({
             defaultValue={6}
             onCommit={(next) => editItems(ids, (id) => ({ duck: { keyTrackId: keyOf(items, id, suggested?.id), amountDb: next } }))}
           />
-          <NumberField
+          <TimecodeField
             row
             label="Attack"
             ariaLabel="Duck attack: ramp down before the key starts"
@@ -219,10 +217,10 @@ export function AudioSection({
             mixed={attack.mixed}
             min={0}
             defaultValue={Math.round(fps * 0.25)}
-            {...tc}
+            fps={fps}
             onCommit={(next) => editItems(ids, (id) => ({ duck: { keyTrackId: keyOf(items, id, suggested?.id), attackFrames: Math.round(next) } }))}
           />
-          <NumberField
+          <TimecodeField
             row
             label="Release"
             ariaLabel="Duck release: ramp back up after the key ends"
@@ -230,7 +228,7 @@ export function AudioSection({
             mixed={release.mixed}
             min={0}
             defaultValue={Math.round(fps * 0.5)}
-            {...tc}
+            fps={fps}
             onCommit={(next) => editItems(ids, (id) => ({ duck: { keyTrackId: keyOf(items, id, suggested?.id), releaseFrames: Math.round(next) } }))}
           />
         </div>

@@ -55,6 +55,8 @@ export interface NumberFieldProps {
   gesture?: Gesture
   /** The scroll wheel steps the value while the field is hovered and focused. Default true. */
   wheel?: boolean
+  /** What a screen reader hears for a value, when the box's text is not a sentence (a timecode). */
+  valueText?(value: number): string
 }
 
 /**
@@ -91,7 +93,8 @@ export function NumberField({
   ariaLabel,
   defaultValue,
   gesture,
-  wheel = true
+  wheel = true,
+  valueText
 }: NumberFieldProps): ReactNode {
   const inputRef = useRef<HTMLInputElement>(null)
   const boxRef = useRef<HTMLDivElement>(null)
@@ -231,7 +234,7 @@ export function NumberField({
         aria-valuenow={mixed || !Number.isFinite(value) ? undefined : value}
         aria-valuemin={min}
         aria-valuemax={max}
-        aria-valuetext={mixed ? 'Mixed' : `${shown(value)}${suffix ? ` ${suffix}` : ''}`}
+        aria-valuetext={mixed ? 'Mixed' : valueText ? valueText(value) : `${shown(value)}${suffix ? ` ${suffix}` : ''}`}
         aria-disabled={disabled || undefined}
         disabled={disabled}
         inputMode="decimal"

@@ -26,6 +26,7 @@ import {
   AngleDial,
   Field,
   NumberField,
+  TimecodeField,
   Panel,
   ScrollArea,
   Section,
@@ -52,7 +53,6 @@ import { CLIP_SPEED_RANGE, retimedLength, speedNote, type SpeedPlan } from '@sha
 import { AudioSection } from './AudioSection'
 import { ClipSection, Readout } from './ClipSection'
 import { KeyframesSection } from './KeyframesSection'
-import { timecodeField } from './timecodeField'
 import { chooseTab, inspectorTabs, tabForSection, type SelectionShape } from './inspector/tabs'
 import { TimelineTab } from './inspector/TimelineTab'
 import { TransitionTab, transitionCount } from './inspector/TransitionTab'
@@ -378,7 +378,6 @@ export function Inspector(): ReactNode {
   const fadeOut = layout((item) => item.fadeOutFrames, selected)
   const from = layout((item) => item.from, selected)
   const durationInFrames = layout((item) => item.durationInFrames, selected)
-  const tc = timecodeField(fps)
   const notTime = (text: string): void =>
     notify(`“${text.trim()}” is not a time. Type a timecode (00:00:04:15), seconds (4.5s) or frames (135f).`, 'error')
   const longestSource = Math.max(0, ...timedItems.map((item) => findAsset(project, item.assetId)?.durationUs ?? 0))
@@ -414,7 +413,7 @@ export function Inspector(): ReactNode {
       hint="Times read hours:minutes:seconds:frames. Type a timecode (00:00:04:15), 4.5s for seconds or 135f for frames; a bare number is seconds. Source in slips the footage under the clip without moving it."
     >
       <div className="space-y-1.5">
-        <NumberField
+        <TimecodeField
           row
           label="Start"
           ariaLabel="Start on the timeline"
@@ -434,9 +433,9 @@ export function Inspector(): ReactNode {
           }}
           onInvalid={notTime}
           min={0}
-          {...tc}
+          fps={fps}
         />
-        <NumberField
+        <TimecodeField
           row
           label="Duration"
           value={durationInFrames.value}
@@ -461,10 +460,10 @@ export function Inspector(): ReactNode {
           }}
           onInvalid={notTime}
           min={1}
-          {...tc}
+          fps={fps}
         />
         {timedItems.length > 0 && (
-          <NumberField
+          <TimecodeField
             row
             label="Source in"
             ariaLabel="Source in: where in the source this clip starts reading"
@@ -474,7 +473,7 @@ export function Inspector(): ReactNode {
             min={0}
             defaultValue={0}
             max={longestSource > 0 ? usToFrames(longestSource, fps) : undefined}
-            {...tc}
+            fps={fps}
           />
         )}
       </div>
@@ -539,7 +538,7 @@ export function Inspector(): ReactNode {
             defaultValue={1}
           />
         )}
-        <NumberField
+        <TimecodeField
           row
           label="Fade in"
           value={fadeIn.value}
@@ -548,9 +547,9 @@ export function Inspector(): ReactNode {
           onInvalid={notTime}
           min={0}
           defaultValue={0}
-          {...tc}
+          fps={fps}
         />
-        <NumberField
+        <TimecodeField
           row
           label="Fade out"
           value={fadeOut.value}
@@ -559,7 +558,7 @@ export function Inspector(): ReactNode {
           onInvalid={notTime}
           min={0}
           defaultValue={0}
-          {...tc}
+          fps={fps}
         />
       </div>
     </Section>

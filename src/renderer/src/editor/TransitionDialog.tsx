@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { Trash2 } from 'lucide-react'
 import { formatTimecode, type TransitionDirection, type TransitionKind } from '@shared/project'
-import { Button, Field, InlineAlert, NumberField, Select, Modal } from '@/components'
+import { Button, Field, InlineAlert, Select, Modal, TimecodeField } from '@/components'
 import { useEditor } from '@/store/editor'
 import { defaultTransitionFrames, whyNoRoom, type Junction } from '@/lib/junctions'
 
@@ -172,15 +172,18 @@ export function TransitionDialog({
             </Field>
           )}
 
-          <NumberField
+          {/* A timecode like every other duration in the inspector, with the frame count beside
+              it: at a cut, a frame either way is what a person is adjusting. */}
+          <TimecodeField
             row
             label="Duration"
-            ariaLabel="Duration in frames"
+            ariaLabel="Transition duration"
             value={requested}
+            fps={fps}
             min={2}
             step={2}
-            suffix="f"
-            onCommit={setRequested}
+            framesReadout
+            onCommit={(next) => setRequested(Math.max(2, Math.round(next)))}
             defaultValue={defaultTransitionFrames(junction, fps)}
             disabled={noRoom !== null}
           />

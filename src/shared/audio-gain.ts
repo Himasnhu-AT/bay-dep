@@ -20,7 +20,8 @@ import {
   itemEnd,
   resolveTransition,
   trackAudible,
-  transitionAtFrame
+  transitionAtFrame,
+  transitionProgress
 } from './project'
 import { animatedVolumeAt, volumeMayBeAudible } from './keyframes'
 
@@ -297,9 +298,7 @@ export function transitionOfItemAt(
     const resolved = resolveTransition(project, timeline, transition)
     if (!resolved) continue
     if (frame < resolved.firstFrame || frame > resolved.lastFrame) continue
-    const span = resolved.lastFrame - resolved.firstFrame + 1
-    const progress = span <= 1 ? 1 : (frame - resolved.firstFrame) / (span - 1)
-    return { resolved, progress: Math.max(0, Math.min(1, progress)) }
+    return { resolved, progress: transitionProgress(resolved, frame) }
   }
   return null
 }

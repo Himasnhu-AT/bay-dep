@@ -8,11 +8,11 @@ import {
   type KeyframeProperty
 } from '@shared/project'
 import { EASE_CHOICES, easeChoice, editKey, formatDb, gainToDb, keyTimeBounds } from '@shared/inspector'
-import { Button, Field, NumberField, Section, SectionReset, Select } from '@/components'
+import { Button, EaseEditor, Field, Section, SectionReset, TimecodeField } from '@/components'
+import { LIVE } from './liveGesture'
 import { cn } from '@/lib/cn'
 import { selectTimeline, useEditor } from '@/store/editor'
 import { editItems } from './inspectorEdit'
-import { timecodeField } from './timecodeField'
 
 const NAMES: Record<KeyframeProperty, string> = {
   opacity: 'Opacity',
@@ -79,7 +79,6 @@ export function KeyframesSection({ items }: { items: Item[] }): ReactNode {
   }
 
   const item = animated[0]!
-  const tc = timecodeField(fps)
   const rows = KEYFRAME_PROPERTIES.flatMap((property) =>
     (item.keyframes?.[property] ?? []).map((key) => ({ property, key }))
   )
@@ -138,27 +137,24 @@ export function KeyframesSection({ items }: { items: Item[] }): ReactNode {
 
       {current ? (
         <div className="mt-2 space-y-1.5 border-t border-line pt-2">
-          <NumberField
+          <TimecodeField
             row
             label="Key at"
             ariaLabel={`Time of the selected ${NAMES[current.property]} key`}
             value={item.from + current.key.frame}
             min={keyTimeBounds(item).min}
             max={keyTimeBounds(item).max}
-            {...tc}
+            fps={fps}
             onCommit={(next) => write(current.property, { to: Math.round(next) - item.from })}
           />
           <Field label="Ease">
-            <Select<string>
+            {/* Presets and a bezier box: a custom curve (the agent's, or one drawn here) is
+                editable rather than a disabled "Custom curve" entry. */}
+            <EaseEditor
               label="Ease from this key to the next"
-              value={easeChoice(current.key.ease)}
-              options={[
-                ...EASE_CHOICES,
-                ...(easeChoice(current.key.ease) === 'custom'
-                  ? [{ value: 'custom', label: 'Custom curve', disabled: true }]
-                  : [])
-              ]}
-              onChange={(value) => value !== 'custom' && write(current.property, { ease: value as KeyframeEase })}
+              value={current.key.ease}
+              onChange={(ease) => write(current.property, { ease })}
+              gesture={LIVE}
             />
           </Field>
           <div className="flex justify-end">
