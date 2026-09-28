@@ -43,7 +43,7 @@ export const FIREBASE = {
 /** The only hosts main talks to for access. Nothing else in the access code may be fetched. */
 export const ACCESS_HOSTS = ['securetoken.googleapis.com', 'firestore.googleapis.com'] as const
 
-export const SITE_ORIGIN = 'https://bay.everholt.com'
+export const SITE_ORIGIN = 'https://bay.himanshuat.com'
 /** The website's dev server. Accepted and opened only by an unpackaged build. */
 export const DEV_SITE_ORIGIN = 'http://localhost:3000'
 

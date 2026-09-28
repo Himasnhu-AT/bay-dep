@@ -71,14 +71,16 @@ This section once described the Rust/GPUI engine (seventeen GPU blend modes, twe
 tools, a low-frame-rate proxy for long clips). That engine is deleted; its record is at the
 `rust-engine-final` tag.
 
-Status is **In development**: real and running, not ready for a stranger. There is no
-download, and the site must not imply one exists.
+Status is **In development**: real and running, not ready for a stranger. There is a
+notarized download for Macs with Apple silicon (`/download`), and the site says beside it
+that the app is by invitation and needs access to sign in.
 
 ## Brand Commitments
 
 - The product name is **Bay**, and it is unsettled. It lives in `src/lib/product.ts` and
   appears nowhere else, so a rename is one edit.
-- Made by the studio **Everholt**, credited once in the footer. This is a product site, not
+- Credited once in the footer to its maker (`product.studio`, for now the owner's personal
+  site; a company name comes later). This is a product site, not
   a studio catalogue.
 - The site must make no third-party requests at runtime: no analytics, no tag manager, no
   session recorder, no remotely fetched fonts, no embedded player. The site is an argument
@@ -123,7 +125,7 @@ after".
 
 Absences future work must not fabricate: there are **no screenshots or recordings of the
 app's interface** on the site (the window on the plate is drawn), no users, no testimonials,
-no benchmarks anyone has published, no download, and no pricing. What the site shows of the
+no benchmarks anyone has published, and no pricing. What the site shows of the
 app's output is that one credited edit, and it is captioned as such.
 
 ## Product Principles

@@ -125,6 +125,14 @@ test('the banner speaks only when there is something to act on', () => {
   assert.equal(bannerVisible(null, null), false)
 })
 
+test('a refused update is shown, says why, and is not offered as a retry', () => {
+  const message = 'bay did not install the update the feed called 9.0.0: the download contains bay 0.0.9, which is not newer than this bay (0.1.0). Nothing was installed.'
+  const refused: UpdateStatus = { ...base, state: 'refused', next: '9.0.0', message }
+  assert.deepEqual(describeUpdate(refused), { title: 'bay did not install the downloaded update.', detail: message })
+  assert.equal(bannerVisible(refused, null), true, 'the user pressed Update; silence would read as success')
+  assert.equal(bannerVisible(refused, '9.0.0'), true, 'Not now is for an available update, not a refusal')
+})
+
 test('no feed yet reads as the owner wrote it, and is not an error', () => {
   const text = describeUpdate({ state: 'disabled', current: '0.1.0', reason: 'Updates: releasing soon.', soon: true })
   assert.equal(text.title, 'Updates: releasing soon')

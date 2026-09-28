@@ -545,6 +545,17 @@ writes the autosave sidecar while locked, and installs only if that succeeded. T
 channels are open while locked (`OPEN_WHILE_LOCKED`), because an update is how a build that
 cannot sign in gets fixed.
 
+**No downgrades, judged by the bundle, not the feed** (`main/update/bundle-version.ts`). Squirrel
+installs any bay signed by the same Developer ID, older ones included, and `allowDowngrade` reads
+only `latest-mac.yml`'s `version:`. So bay reads `CFBundleShortVersionString` from the downloaded
+zip (the file electron-updater's proxy hands Squirrel) when the download finishes and again right
+before `quitAndInstall`, and anything not strictly newer is the `refused` status, shown in the
+banner and Preferences › About. That needs `autoInstallOnAppQuit = false`: with it on,
+electron-updater gives Squirrel the zip the moment it lands and Squirrel installs it at any quit,
+with no hook between. An update therefore installs only from Restart to update. The unit tests
+cover the verdict and the zip reading; the wiring in `updater.ts` imports Electron and is
+typecheck-only.
+
 **A grant comes from the owner or a referral.** The owner approves a waitlist entry or grants an
 email directly on the website's `/admin`; an entitled user refers one from inside bay
 (`accessRefer`, five each). The `no-access` screen therefore shows the email with a Copy button
@@ -1058,7 +1069,11 @@ projects — indexing an array yields `T | undefined` and you must handle it.
   model runs on onnxruntime-node in a utility process (`vision/worker.js`, nice 10). The third is **updates**
   (`src/main/update/`): electron-updater's own session (`electron-updater` partition, never the
   editor's) may reach only the origin of the feed in `@shared/update-feed`, enforced in
-  `onBeforeRequest` by `allowUpdateRequest`, redirects included. The feed is **unset**, so a
+  `onBeforeRequest` by `allowUpdateRequest`, redirects included. The feed is the latest release
+  of the public repo `Himasnhu-AT/Himasnhu-AT` (release assets only, never this repo's source),
+  so it may also follow a GET over https to exactly `release-assets.githubusercontent.com` or
+  `objects.githubusercontent.com` — GitHub's asset redirect, measured with `curl -sIL` — and only
+  because the feed's origin is `https://github.com` (`GITHUB_ASSET_HOSTS`). Set to null, a
   shipped bay contacts nothing and Preferences › About says "Updates: releasing soon".
   `BAY_UPDATE_FEED` points it at a loopback feed for testing, and nothing else. The fourth is
   **AI generation** (`src/main/generate/`, `@shared/generation`, `@shared/speech`, `generate_image`/

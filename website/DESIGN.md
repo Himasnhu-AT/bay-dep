@@ -1,6 +1,6 @@
 # Design
 
-The visual system for bay.everholt.com. It exists so a page nobody has built yet already
+The visual system for bay.himanshuat.com. It exists so a page nobody has built yet already
 looks like it belongs. If you are writing the words rather than the layout, read
 [VOICE.md](./VOICE.md) as well.
 
