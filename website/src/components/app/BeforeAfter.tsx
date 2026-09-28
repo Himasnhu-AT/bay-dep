@@ -13,10 +13,9 @@ import { ChevronsLeftRight } from "lucide-react";
 
 /**
  * Before and after: raw footage and the edit bay made of it, in one frame with
- * a line you drag (`layout="wipe"`), or in two frames side by side
- * (`layout="split"`) when the edit changes the framing, such as a 16:9 source
- * cut into a 9:16 short. The home page passes its one pair (`HOME_PAIR`);
- * `/compare` passes one per entry in `src/lib/comparisons.ts`.
+ * a line you drag (`layout="wipe"`, the home page's `HOME_PAIR`), or in two
+ * labelled frames side by side at one height (`layout="split"`, every entry on
+ * `/compare`), sized so both are on screen at once.
  *
  * Nothing is requested until the figure is near the viewport. Until then the
  * frame shows two posters (lazy images, AVIF with a WebP fallback); within
@@ -104,16 +103,23 @@ export function BeforeAfter({
   notes,
   layout = "wipe",
   sound = true,
+  sides = { before: "the footage as given", after: "the exported edit" },
   seam = false,
   label = "Before and after",
 }: {
   pair: Pair;
-  /** The line beside Play: which side is which. */
-  caption: ReactNode;
-  /** Anything more the figure carries, under that line, inside the figcaption. */
+  /** The line beside Play: which side is which. A split's labels say it already. */
+  caption?: ReactNode;
+  /**
+   * Anything more the figure carries, inside the figcaption. In a split it sits
+   * beside two vertical frames on a wide screen, and otherwise behind "How it
+   * was made", so the pair itself always fits one screen.
+   */
   notes?: ReactNode;
-  /** One frame with a line (both sides one aspect), or two frames side by side (the framing changes). */
+  /** One frame with a line, or two frames side by side at one height. */
   layout?: "wipe" | "split";
+  /** A split's quiet clause after each side's label. */
+  sides?: { before: ReactNode; after: ReactNode };
   /** Whether the after video has sound worth offering ("Hear the edit"). */
   sound?: boolean;
   /** The home page only: paper begins halfway down the frame. See globals.css. */
@@ -129,6 +135,8 @@ export function BeforeAfter({
   const [playing, setPlaying] = useState(false);
   const [soundOn, setSoundOn] = useState(false);
   const [position, setPosition] = useState(50);
+  const [shown, setShown] = useState<"before" | "after">("after");
+  const [open, setOpen] = useState(false);
   const dragging = useRef(false);
 
   // Sources only once the figure is close; playback only while it is visible.
@@ -175,9 +183,12 @@ export function BeforeAfter({
     const follow = before.current;
     if (!near || !lead || !follow) return;
     let handle = 0;
-    const tick = () => {
+    const align = () => {
       if (Math.abs(follow.currentTime - lead.currentTime) > 2 / 30) follow.currentTime = lead.currentTime;
       if (lead.paused !== follow.paused) void (lead.paused ? follow.pause() : follow.play().catch(() => {}));
+    };
+    const tick = () => {
+      align();
       handle = lead.requestVideoFrameCallback?.(tick) ?? 0;
     };
     if (lead.requestVideoFrameCallback) handle = lead.requestVideoFrameCallback(tick);
@@ -185,10 +196,15 @@ export function BeforeAfter({
     const onPause = () => setPlaying(false);
     lead.addEventListener("play", onPlay);
     lead.addEventListener("pause", onPause);
+    // A frame callback needs the lead to be drawn. On a phone the split shows
+    // one side at a time, so when the lead is the hidden one, `timeupdate`
+    // (a few times a second, drawn or not) keeps the clock instead.
+    lead.addEventListener("timeupdate", align);
     return () => {
       if (handle) lead.cancelVideoFrameCallback?.(handle);
       lead.removeEventListener("play", onPlay);
       lead.removeEventListener("pause", onPause);
+      lead.removeEventListener("timeupdate", align);
     };
   }, [near]);
 
@@ -266,26 +282,114 @@ export function BeforeAfter({
   );
 
   if (layout === "split") {
-    // Two frames at one height from `sm`: each column's share is its aspect's
-    // width. Stacked on a phone, where a vertical frame caps its own width.
-    const cols = `${ratio(pair.before.aspect)}fr ${ratio(pair.after.aspect)}fr`;
-    const frame = (side: Side, ref: typeof before) => (
-      <div className={`relative overflow-hidden rounded-[12px] bg-app-surface-0 ${FRAME[side.aspect]} sm:max-w-none`}>
-        <Poster side={side} />
-        {video(side, ref)}
+    // Both frames at one height: each column's share of the row is its
+    // aspect's width, so equal heights fall out of the grid. The height is
+    // capped by the window, so the whole pair is on screen at once from a
+    // 700px-tall window up, and the row is never wider than that height
+    // allows. On a phone two 16:9 frames stack and still fit; when either is
+    // vertical they share one cell instead and a toggle picks which is shown,
+    // both playing on the same clock.
+    const rb = ratio(pair.before.aspect);
+    const ra = ratio(pair.after.aspect);
+    // Two vertical frames leave the column's right side free on a wide screen.
+    const beside = rb + ra < 1.5;
+    const toggled = Math.min(rb, ra) < 1;
+    const h = "min(68svh, 560px)";
+    const vars = {
+      "--cols": `${rb}fr ${ra}fr`,
+      "--w-one": `min(100%, calc(${h} * ${Math.max(rb, ra)}))`,
+      "--w-two": `min(100%, calc(${h} * ${rb + ra} + 1rem))`,
+    } as CSSProperties;
+    const notesId = `${label.replace(/[^a-z0-9]+/gi, "-").toLowerCase()}-notes`;
+    const frame = (which: "before" | "after", side: Side, ref: typeof before) => (
+      <div
+        className={`min-w-0 ${
+          toggled
+            ? `col-start-1 row-start-1 sm:col-start-auto sm:row-start-auto ${
+                shown === which ? "" : "max-sm:pointer-events-none max-sm:opacity-0"
+              }`
+            : ""
+        }`}
+      >
+        <p className={`mb-2 items-baseline gap-2 text-sm ${toggled ? "hidden sm:flex" : "flex"}`}>
+          <span className="font-semibold text-ink">{which === "before" ? "Before" : "After"}</span>
+          <span className="truncate text-muted">{sides[which]}</span>
+        </p>
+        <div
+          className={`relative w-full overflow-hidden rounded-[12px] bg-app-surface-0 ${
+            side.aspect === "16:9" ? "aspect-video" : "aspect-[9/16]"
+          }`}
+        >
+          <Poster side={side} />
+          {video(side, ref)}
+        </div>
       </div>
     );
+    const choose = (which: "before" | "after") => (
+      <button
+        type="button"
+        onClick={() => setShown(which)}
+        aria-pressed={shown === which}
+        className="rounded-full px-4 py-1.5 font-medium text-ink-soft transition-colors aria-pressed:bg-ink aria-pressed:text-paper"
+      >
+        {which === "before" ? "Before" : "After"}
+      </button>
+    );
     return (
-      <figure>
-        <div
-          ref={stage}
-          className="grid grid-cols-1 items-start gap-3 sm:grid-cols-[var(--cols)] sm:gap-4"
-          style={{ "--cols": cols } as CSSProperties}
-        >
-          {frame(pair.before, before)}
-          {frame(pair.after, after)}
+      <figure className={beside ? "lg:flex lg:items-start lg:gap-10" : undefined}>
+        <div className={`mx-auto w-(--w-one) shrink-0 sm:w-(--w-two) ${beside ? "lg:mx-0" : ""}`} style={vars}>
+          {toggled ? (
+            <div role="group" aria-label={`${label}: show`} className="mb-3 flex items-center gap-3 text-sm sm:hidden">
+              <span className="inline-flex shrink-0 rounded-full border border-line p-0.5">
+                {choose("before")}
+                {choose("after")}
+              </span>
+              <span className="truncate text-muted">{sides[shown]}</span>
+            </div>
+          ) : null}
+          <div ref={stage} className="grid grid-cols-1 items-end gap-4 sm:grid-cols-(--cols)">
+            {frame("before", pair.before, before)}
+            {frame("after", pair.after, after)}
+          </div>
+          <div className="mt-3 flex flex-wrap items-baseline gap-x-5 gap-y-2 text-sm text-muted">
+            {caption ? <span>{caption}</span> : null}
+            <button type="button" onClick={togglePlay} disabled={!near} className={LINK_BUTTON}>
+              {playing ? "Pause" : "Play"}
+            </button>
+            {sound ? (
+              <button
+                type="button"
+                onClick={toggleSound}
+                disabled={!near}
+                aria-pressed={soundOn}
+                className={LINK_BUTTON}
+              >
+                {soundOn ? "Mute" : "Hear the edit"}
+              </button>
+            ) : null}
+            {notes ? (
+              <button
+                type="button"
+                onClick={() => setOpen(!open)}
+                aria-expanded={open}
+                aria-controls={notesId}
+                className={`${LINK_BUTTON} ml-auto ${beside ? "lg:hidden" : ""}`}
+              >
+                {open ? "Hide how it was made" : "How it was made"}
+              </button>
+            ) : null}
+          </div>
         </div>
-        {figcaption}
+        {notes ? (
+          <figcaption
+            id={notesId}
+            className={`mt-8 min-w-0 text-sm leading-relaxed text-muted ${open ? "" : "hidden"} ${
+              beside ? "lg:mt-0 lg:block lg:flex-1" : ""
+            }`}
+          >
+            {notes}
+          </figcaption>
+        ) : null}
       </figure>
     );
   }
