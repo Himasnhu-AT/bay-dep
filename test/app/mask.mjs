@@ -7,8 +7,9 @@
  * The repo holds no footage of people, so the clip is yours to name (any talking head works).
  * Without MASK_CLIP the probe says CANNOT MEASURE. It runs two scenes on a 16:9 canvas (set with
  * `set_canvas`; the harness puts the project back): MASK_CLIP as given — a vertical selfie is
- * pillarboxed, which is the case that matters — and a 16:9 clip of the same person made from it
- * with ffmpeg (or MASK_CLIP_WIDE), which fills the frame.
+ * pillarboxed, which is the case that matters — a 16:9 clip of the same person made from it
+ * with ffmpeg (or MASK_CLIP_WIDE), which fills the frame, and that 16:9 clip again with the clip
+ * punched in 1.15× by edit_item *after* put_behind_subject, which the cut-out must follow.
  *
  * Per scene, all through the open project (the harness restores it; nothing saves):
  *   1. import and place 3 s of the clip after everything already on the timeline, add a big title
@@ -112,7 +113,7 @@ async function wideClip(source) {
 
 const pc = (n) => `${(n * 100).toFixed(1)}%`
 
-async function scene(label, clipPath, expectPillarbox) {
+async function scene(label, clipPath, expectPillarbox, options = {}) {
   console.log(`\n-- ${label}: ${clipPath}`)
   // -- 1. the clip, a title, and the tool ---------------------------------------------------------
   const setup = await evaluate(`(async () => {
@@ -146,6 +147,12 @@ async function scene(label, clipPath, expectPillarbox) {
   const FRAME = setup.start + OFFSET
   console.log(`      matte: ${JSON.stringify(behind.matte)} in ${setup.seconds.toFixed(1)} s`)
   console.log(`      placed: ${behind.placed}`)
+  if (options.zoomAfter) {
+    // A punch-in on the CLIP after the cut-out exists: the cut-out must follow it (it draws with the
+    // clip's layout), and the checks below measure against the zoomed clip.
+    const zoomed = await evaluate(`__mask.mcp('edit_item', { itemId: ${JSON.stringify(setup.clipId)}, scale: ${options.zoomAfter} })`)
+    check(`${label}: edit_item scale ${options.zoomAfter} on the clip is accepted`, zoomed.ok ? true : zoomed.error, true)
+  }
 
   // -- 2. where the person is, independently: matte over the source frame's rectangle -------------
   const item = await evaluate(`(() => {
@@ -156,6 +163,7 @@ async function scene(label, clipPath, expectPillarbox) {
       fps: tl.fps, W: tl.width, H: tl.height, record: asset.subjectMattes?.[asset.subjectMattes.length - 1] ?? null, source: [asset.width, asset.height] }
   })()`)
   if (!item.record) throw new PreconditionError(`${label}: no matte recorded on the asset`)
+  if (options.zoomAfter) check(`${label}: the clip is zoomed ${options.zoomAfter}×`, item.layout.scale, options.zoomAfter)
   if (item.crop || (item.layout.rotation ?? 0) !== 0) throw new PreconditionError(`${label}: the probe's clip must be uncropped and unrotated`, JSON.stringify({ crop: item.crop, rotation: item.layout.rotation }))
   const frameRect = sourceFrameOnTimeline(item.layout)
   const pillarboxed = frameRect.left > 1 || frameRect.left + frameRect.width < item.W - 1
@@ -325,6 +333,9 @@ await runProbe(async () => {
   const dims = await run(FFPROBE, ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height', '-of', 'csv=p=0', CLIP]).then((r) => r.stdout.trim().split(',').map(Number), () => [0, 0])
   const portrait = dims[1] > dims[0]
   await scene(portrait ? 'vertical clip, pillarboxed in 16:9' : 'the given clip in 16:9', CLIP, portrait)
-  await scene('16:9 clip, filling 16:9', portrait ? await wideClip(CLIP) : CLIP, false)
+  const wide = portrait ? await wideClip(CLIP) : CLIP
+  await scene('16:9 clip, filling 16:9', wide, false)
+  // The cut-out follows its clip's picture: punched in after the fact, the title stays behind the person.
+  await scene('16:9 clip, punched in 1.15× after put_behind_subject', wide, false, { zoomAfter: 1.15 })
   return true
 }, { timeoutMs: Number(process.env.PROBE_TIMEOUT_MS) || 900_000 })

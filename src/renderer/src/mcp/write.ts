@@ -30,6 +30,7 @@ import {
 import { findTool, resolveId } from '@shared/mcp'
 import { describeFont } from '@shared/fonts'
 import { linkedPartners, withLinked } from '@shared/links'
+import { cutoutPartner } from '@shared/behind-subject'
 import { itemRippleNote, planItemRipple } from '@shared/item-ripple'
 import { planSpeed, retimedLength, type SpeedPlan } from '@shared/speed'
 import { asBlendMode, lookWarnings, mergeAdjustments } from './adjustments'
@@ -187,9 +188,25 @@ export function placeAsset(args: Record<string, unknown>): Record<string, unknow
   }
 }
 
+/** edit_item arguments that set a picture field — on a subject cut-out, its clip's (`CUTOUT_PICTURE_FIELDS`). */
+const PICTURE_ARGS = ['left', 'top', 'width', 'height', 'opacity', 'rotation', 'scale', 'crop', 'keyframes', 'grade', 'adjustments', 'fadeInFrames', 'fadeOutFrames'] as const
+
 export function editItem(args: Record<string, unknown>): Record<string, unknown> {
   const { item, track } = resolveItem(String(args.itemId))
   assertUnlocked(track, `editing ${item.id}`)
+  // A subject cut-out draws with its clip's picture (`cutoutAsDrawn`): its framing, crop, keys,
+  // grade and look are the clip's, so an edit of them belongs on the clip.
+  const clip = cutoutPartner(timeline(), item)
+  if (clip) {
+    const picture = PICTURE_ARGS.filter((key) => args[key] !== undefined)
+    if (picture.length > 0) {
+      fail(
+        `${item.id} is the subject cut-out of clip ${clip.id} and draws with that clip's picture, so ${picture.join(', ')} ` +
+          `must be set on the clip: edit_item({ itemId: "${clip.id}", … }). The cut-out follows it — zoom, crop, keyframes and grade included.`,
+        'This is the subject cut-out of the clip under the title. Select that clip to change its framing, crop, keyframes or grade — the cut-out follows it.'
+      )
+    }
+  }
 
   const destination = args.trackId === undefined ? track : resolveTrack(String(args.trackId))
   if (destination.id !== track.id) {

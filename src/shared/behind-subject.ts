@@ -191,3 +191,48 @@ export function planBehindSubject(timeline: Timeline, spec: BehindSubjectSpec, o
     warnings
   }
 }
+
+// ---------------------------------------------------------------------------
+// The cut-out's picture is its clip's: one source of truth, read at draw time
+// ---------------------------------------------------------------------------
+
+/**
+ * The fields that place and colour a picture. A cut-out draws with its clip's values of these —
+ * read when it is drawn, never copied — so a punch-in, a crop, a keyframed zoom or a regrade of the
+ * clip moves the person's cut-out with it. Copying them at creation (the first version) left the
+ * cut-out where the clip *had* been: an `edit_item` zoom on the clip put a second, unzoomed person
+ * over the zoomed one. Mirroring every edit path instead would need every writer of these fields —
+ * edit_item, the inspector, keyframe edits, paste attributes, templates, `apply_script` and the next
+ * one — to remember a partner; reading them from the clip needs none to.
+ */
+export const CUTOUT_PICTURE_FIELDS = ['layout', 'crop', 'keyframes', 'grade', 'adjustments', 'fadeInFrames', 'fadeOutFrames'] as const
+
+/**
+ * The clip a subject cut-out draws its picture from: the item sharing its link that plays the same
+ * file at the same moment (same start, in-point and speed — what move, trim, slip and speed keep in
+ * step across a link) and is not itself masked. Null for an item that is not a cut-out, or whose
+ * clip has been unlinked, deleted or moved apart — it then draws with its own stored fields.
+ */
+export function cutoutPartner(timeline: Timeline, item: Item): Item | null {
+  const mask = subjectMaskOf(item)
+  if (!mask || mask.assetId || !item.linkId) return null
+  for (const track of timeline.tracks) {
+    if (track.kind !== 'video') continue
+    for (const other of track.items) {
+      if (other.id === item.id || other.linkId !== item.linkId || subjectMaskOf(other)) continue
+      if (other.assetId === item.assetId && other.from === item.from && other.sourceStartUs === item.sourceStartUs && other.speed === item.speed) return other
+    }
+  }
+  return null
+}
+
+/** The cut-out as it draws: its own id, time, mask and silence; its clip's picture. */
+export function cutoutAsDrawn(item: Item, partner: Item | null): Item {
+  if (!partner) return item
+  const out: Item = { ...item, layout: partner.layout, fadeInFrames: partner.fadeInFrames, fadeOutFrames: partner.fadeOutFrames }
+  for (const field of ['crop', 'keyframes', 'grade', 'adjustments'] as const) {
+    if (partner[field] === undefined) delete out[field]
+    else (out as unknown as Record<string, unknown>)[field] = partner[field]
+  }
+  return out
+}
