@@ -1,7 +1,7 @@
 import type { CSSProperties } from "react";
 import { DepthFallback } from "@/components/DepthFallback";
 import { Reveal } from "@/components/Reveal";
-import { BeforeAfter } from "@/components/app/BeforeAfter";
+import { BeforeAfter, HOME_PAIR } from "@/components/app/BeforeAfter";
 import { ScrollSequence } from "@/components/app/ScrollSequence";
 import {
   ActionLink,
@@ -128,7 +128,16 @@ export default function Home() {
           </Reveal>
           <Reveal delay={0.1}>
             <div className="mt-10">
-              <BeforeAfter />
+              <BeforeAfter
+                pair={HOME_PAIR}
+                seam
+                caption={
+                  <>
+                    <span className="font-medium text-ink-soft">Fig. 2</span> Left of the line, the four clips as they
+                    came from Pexels, cut to the same frames. Right of it, the edit in Fig. 1.
+                  </>
+                }
+              />
             </div>
           </Reveal>
           <p

@@ -243,6 +243,25 @@ only other place the plate's colours appear (the frame's ground before a poster 
 - **Labels are not laid over the picture.** Which side is which is said in the caption
   under it. "Hear the edit" unmutes the after video; nothing plays sound unasked.
 
+**It is one component with two uses.** The home page passes `HOME_PAIR` and `seam`; `/compare`
+passes one pair per entry in `src/lib/comparisons.ts`. The props: `pair` (each side's AV1 and
+H.264 `.mp4`, its AVIF and WebP poster, and its aspect, `16:9` or `9:16`), `caption` (the line
+beside Play that says which side is which), `notes` (anything more, inside the same
+`figcaption`), `layout`, `sound` (whether to offer "Hear the edit") and `label` (the range
+input's name).
+
+- **`layout="wipe"`** is the frame above, for a pair in one aspect. A `9:16` wipe is capped at
+  78% of the window's height, centred in the column, so its bottom is on screen when its top is.
+- **`layout="split"`** is for an edit that changes the framing (a 16:9 interview cut into a 9:16
+  short). Two frames side by side from `sm`, at one height: each column's share is its aspect's
+  width. Stacked on a phone, the raw footage first. No line to drag, the same two-video clock,
+  the same lazy sources and the same reduced-motion rule.
+
+On `/compare` the figures are on paper, so there is no seam: each is opened by its title
+(`text-section` `h2`), the style's title and the length in `muted`, and closed by its
+`figcaption`, which carries the sides, `StepList` (what ran), `Prompt` (what it was told), a
+sentence on hand retouching and the footage credits. Figures are separated by `Rule`.
+
 The plate and the before-and-after frame have 12px corners and no shadow. The plate's
 window is edged in `app-line-strong` (`#333`), one step lighter than the app's own
 hairline, so it holds its shape on night, which is darker than the app's ground.
@@ -320,10 +339,18 @@ is interactive by nature.
 - **`Command`** is a line you would actually type, set on night with 12px corners in the
   app's monospace, the `$` in the accent. The only night on a paper page. One command
   each; stack them with `space-y-2.5`.
+- **`Prompt`** is the words a person gave the agent, verbatim: a `text-xs` `muted` label ("The
+  prompt, verbatim") over a blockquote in `ink-soft`, behind a 1px `line` rule on its left,
+  line breaks kept. It is a person's sentence, not the machine's, so it stays on paper and is
+  never a `Command`. `/compare`.
+- **`StepList`** is what ran, in order: one `text-sm` line per step, a tool's name in the app's
+  monospace and `accent-ink` (the "feature's tool name" mark above), the rest in `ink-soft`.
+  `/compare`.
 - **`PullQuote`** is the closing statement, set at `text-quote` in `ink`, at most one per
   page.
 - **`AppPlate` / `AgentPanel` / `ScrollSequence`** are the figure, its agent panel and the
-  scroll driver; **`BeforeAfter`** is the comparison under it. Home page only.
+  scroll driver, home page only; **`BeforeAfter`** is the comparison under it, and every
+  figure on `/compare`.
 - **`Reveal`** wraps anything that should arrive when it is scrolled to.
 - **`Rule`** is a standalone 1px line that draws itself in from the left.
 
@@ -518,3 +545,15 @@ Other standing rules:
    page inherits it instead of reinventing it.
 4. Content that repeats or grows goes in `src/lib/`, not inline in the page.
 5. Read [VOICE.md](./VOICE.md) before writing the words.
+
+## Adding a comparison
+
+1. Keep the run's `.bay`, its tool log and the exported file. The raw and the edit must be one
+   length and cut on the same frames.
+2. `scripts/encode-compare.sh <slug> <before.mp4> <after.mp4>` (add `--before-audio` if the raw
+   keeps its sound). It writes `public/compare/<slug>/`, prints each file's size, refuses any
+   over 8 MB and prints `durationSec`. Its header says which encoders it needs.
+3. In `src/lib/comparisons.ts`, fill the entry from the run (the fields are documented at the
+   top of the file) and set `status: "ready"`. Add its footage to `CREDITS.md`.
+4. `pnpm build` refuses a ready entry with the pending prompt, no steps, no length, a wipe across
+   two aspects, a credit missing a field, or a missing media file, and names which.

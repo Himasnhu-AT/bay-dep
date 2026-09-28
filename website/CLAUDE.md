@@ -75,8 +75,9 @@ the `rust-engine-final` tag; do not cite it.)
 ## Layout
 
 ```
-src/app/            routes: /, /agents, /status, /waitlist, /desktop/sign-in, /admin
-                    (the last two are noindex and unlinked)
+src/app/            routes: /, /agents, /status, /compare, /waitlist, /desktop/sign-in,
+                    /admin (the last two are noindex and unlinked)
+src/lib/comparisons.ts  /compare's entries; scripts/encode-compare.sh encodes their media
 src/components/     layout.tsx (the primitives), SiteNav, SiteFooter, Reveal,
                     DepthFallback; access/ holds the sign-in and access pages' clients
 src/lib/product.ts  the name, kind, status, domain, contact, optional download
