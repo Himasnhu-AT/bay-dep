@@ -71,10 +71,6 @@ function Credits({ entry }: { entry: Comparison }) {
 }
 
 function Figure({ entry }: { entry: Comparison }) {
-  const sides =
-    entry.layout === "wipe"
-      ? "Left of the line, the footage as the agent was given it. Right of it, the file the agent exported."
-      : "Left (above, on a phone), the footage as the agent was given it. Right, the file the agent exported.";
   return (
     <section aria-labelledby={`${entry.slug}-title`}>
       <Reveal>
@@ -86,29 +82,25 @@ function Figure({ entry }: { entry: Comparison }) {
         </p>
       </Reveal>
       <Reveal delay={0.08}>
-        <div className="mt-8">
+        <div className="mt-6">
           <BeforeAfter
             pair={comparisonPair(entry)}
-            layout={entry.layout}
+            layout="split"
             sound={entry.afterSound ?? false}
             label={entry.title}
-            caption={sides}
+            sides={{ before: "raw footage", after: "the agent’s export" }}
             notes={
-              <>
-                <div className="mt-8 grid grid-cols-1 gap-10 md:grid-cols-2 md:gap-16">
-                  <div>
-                    <p className="text-xs text-muted">What ran, in order</p>
-                    <div className="mt-2">
-                      <StepList steps={entry.did.map(splitStep)} />
-                    </div>
-                  </div>
-                  <Prompt>{entry.prompt}</Prompt>
+              <div className="max-w-[62ch]">
+                <Prompt>{entry.prompt}</Prompt>
+                <p className="mt-8 text-xs text-muted">What ran, in order</p>
+                <div className="mt-2">
+                  <StepList steps={entry.did.map(splitStep)} />
                 </div>
-                <p className="mt-6 max-w-[80ch] text-sm text-ink-soft">
+                <p className="mt-6 text-sm text-ink-soft">
                   {entry.retouched ?? "Nothing was changed by hand after the agent finished."}
                 </p>
                 <Credits entry={entry} />
-              </>
+              </div>
             }
           />
         </div>
@@ -125,7 +117,7 @@ export default function ComparePage() {
       <PageHeader
         eyebrow="Compare"
         title="What went in, and what the agent made of it."
-        lead={`Each figure is one run of ${product.name}'s agent: the footage it was given on one side, the file it exported on the other, and under them the message it was given, word for word, and the tools it called.`}
+        lead={`Each figure is one run of ${product.name}'s agent: the footage it was given on one side, the file it exported on the other, and with them the message it was given, word for word, and the tools it called.`}
       />
       <Wrap>
         {entries.length === 0 ? (

@@ -27,8 +27,8 @@ import type { Aspect, Pair } from "@/components/app/BeforeAfter";
  * - `aspect`: the edit's frame, `16:9` or `9:16`.
  * - `beforeAspect`: the raw footage's frame, when it differs from `aspect`
  *   (a 16:9 interview cut into a 9:16 short). Defaults to `aspect`.
- * - `layout`: `wipe` (one frame, a line you drag) needs both sides in one
- *   aspect; `split` (side by side) is for an edit that changes the framing.
+ *   The page shows every entry as two labelled frames side by side at one
+ *   height, sized so both fit one screen; there is no per-entry layout.
  * - `durationSec`: the length of both videos. They must be one length and cut
  *   on the same frames, because the page plays them on one clock.
  * - `prompt`: the exact message given to bay's agent, verbatim, typos and all.
@@ -75,7 +75,6 @@ export type Comparison = {
   style: StyleId;
   aspect: Aspect;
   beforeAspect?: Aspect;
-  layout: "wipe" | "split";
   durationSec: number;
   prompt: string;
   did: string[];
@@ -96,7 +95,6 @@ export const comparisons: Comparison[] = [
     title: "A six-minute selfie cut into a vertical short",
     style: "retention-talking-head",
     aspect: "9:16",
-    layout: "wipe",
     durationSec: 46.5,
     prompt: "Turn this into a vertical short of about 45 seconds in the retention talking-head style. James speaks English with a Yorkshire accent, so transcribe it as English. Pick his most interesting 45 seconds, open on the strongest line, and keep his words exactly as he says them. When it's done and checked, export it to /Users/himanshu/Movies/bay-rnd/retention/after.mp4.",
     did: [
@@ -127,7 +125,6 @@ export const comparisons: Comparison[] = [
     title: "A news explainer with lower-thirds",
     style: "news-lower-thirds",
     aspect: "16:9",
-    layout: "wipe",
     durationSec: 0,
     prompt: PENDING,
     did: [],
@@ -139,7 +136,6 @@ export const comparisons: Comparison[] = [
     title: "Eighteen seconds of speech set as kinetic type",
     style: "kinetic-typography",
     aspect: "9:16",
-    layout: "split",
     durationSec: 18.6,
     prompt: "Make a kinetic-typography piece of about 20 seconds from James talking: his voice is the soundtrack, and his words animate on screen exactly as he says them, in the kinetic typography style. Pick one passage that works on its own. Vertical 1080×1920. When it's done and checked, export it to /Users/himanshu/Movies/bay-rnd/kinetic/after.mp4.",
     did: [
@@ -169,7 +165,6 @@ export const comparisons: Comparison[] = [
     title: "Four stock watch clips cut into a minimal brand film",
     style: "luxury-minimal",
     aspect: "16:9",
-    layout: "wipe",
     durationSec: 20,
     prompt: "Cut a luxury, minimal film of about 20 seconds from these four watch clips, in the luxury/minimal style. There's no music, so let the picture carry it. Keep any brand names or logos out of frame. When it's done and checked, export it to /Users/himanshu/Movies/bay-rnd/luxury/after.mp4.",
     did: [
@@ -201,8 +196,6 @@ export function readyProblems(c: Comparison): string[] {
   if (!c.prompt.trim() || c.prompt === PENDING) out.push("prompt is still the pending text");
   if (c.did.length === 0) out.push("did lists no steps");
   if (!(c.durationSec > 0)) out.push("durationSec is not a positive number");
-  if (c.layout === "wipe" && (c.beforeAspect ?? c.aspect) !== c.aspect)
-    out.push("a wipe needs both sides in one aspect; use layout: 'split'");
   for (const credit of c.credits)
     if (!credit.text || !credit.url || !credit.licence) out.push(`a credit is missing text, url or licence (${credit.text || "untitled"})`);
   return out;
