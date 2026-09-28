@@ -8,6 +8,7 @@ import type { EditingStyle } from './types'
  */
 export const style: EditingStyle = {
   id: 'retention-talking-head',
+  preview: 'preview.webm',
   title: 'Retention talking-head short',
   summary:
     'One person to camera in a vertical short: every pause cut, bold word-by-word captions with a coloured spoken word, ' +

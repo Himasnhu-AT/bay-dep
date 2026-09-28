@@ -53,6 +53,13 @@ extraResources:
   # The notice and the written source offer for the above, next to the files they describe.
   - from: NOTICE
     to: NOTICE
+  # The editing styles' preview tiles (src/shared/styles/preview.ts): per style, a muted loop and
+  # its poster, served read-only as bay://style-preview/<id>/<file> from Contents/Resources/styles
+  # (`stylesResourcesDir` in src/main/protocol.ts). Only those two names are copied — the folder's
+  # README stays in the checkout — and main serves nothing else from here either.
+  - from: resources/styles
+    to: styles
+    filter: ['*/preview.webm', '*/poster.webp']
 
 # The database used to need unpacking and no longer does — it is `node:sqlite`, built into the
 # runtime, so there is no native module here to unpack, rebuild, or keep in step with Electron's

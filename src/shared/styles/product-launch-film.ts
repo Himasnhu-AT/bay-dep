@@ -8,6 +8,7 @@ import type { EditingStyle } from './types'
  */
 export const style: EditingStyle = {
   id: 'product-launch-film',
+  preview: 'preview.webm',
   title: 'Product launch film',
   summary:
     'A launch or feature film on the music\'s clock: hard cuts on bar lines, one idea per bar, headlines that rise word by ' +

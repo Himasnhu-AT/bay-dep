@@ -70,7 +70,7 @@ test('six built-in styles, each with a distinct slug id, all passing the same ch
     assert.ok(checked.ok, `${style.id}: ${checked.ok ? '' : checked.errors.join(' ')}`)
     // Round-trips unchanged: the check neither drops nor rewrites anything a built-in says.
     assert.deepEqual(checked.style, style)
-    assert.equal(style.preview, undefined, 'preview is reserved for the agent panel and not set yet')
+    assert.equal(style.preview, 'preview.webm', 'every built-in names its tile loop (resources/styles/<id>/preview.webm)')
   }
 })
 

@@ -139,8 +139,22 @@ export interface EditingStyle {
   sources: StyleSource[]
   /** The style this one was derived from (user styles). */
   basedOn?: string
-  /** Reserved for the agent panel's preview tile: a `bay://` path to a still. Not set yet. */
+  /**
+   * Built-in styles only: the loop the agent panel's tile plays, as a file name inside the
+   * style's own folder of shipped media — `resources/styles/<id>/<preview>` in a checkout,
+   * `Contents/Resources/styles/<id>/` in the app — served read-only as
+   * `bay://style-preview/<id>/<preview>` (`./preview.ts`). The poster beside it is always
+   * `STYLE_PREVIEW_POSTER`. `checkStyle` accepts only `STYLE_PREVIEW_VIDEO`, and a user style may
+   * not carry one: its tile has no media.
+   */
   preview?: string
 }
+
+/** The one loop file name a built-in style's `preview` may name: a 3–5 s muted WebM, before → after. */
+export const STYLE_PREVIEW_VIDEO = 'preview.webm'
+/** The still shown before the loop plays, and instead of it under reduced motion. */
+export const STYLE_PREVIEW_POSTER = 'poster.webp'
+/** Every file `bay://style-preview/<id>/…` serves. Anything else in the folder is refused. */
+export const STYLE_PREVIEW_FILES: readonly string[] = [STYLE_PREVIEW_VIDEO, STYLE_PREVIEW_POSTER]
 
 export type StyleOrigin = 'built-in' | 'user'
