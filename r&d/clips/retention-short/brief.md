@@ -1,0 +1,1 @@
+Turn this into a vertical short of about 45 seconds in the retention talking-head style. James speaks English with a Yorkshire accent, so transcribe it as English. Pick his most interesting 45 seconds, open on the strongest line, and keep his words exactly as he says them. When it's done and checked, export it to /Users/himanshu/Movies/bay-rnd/retention/after.mp4.
