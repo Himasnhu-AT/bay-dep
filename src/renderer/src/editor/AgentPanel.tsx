@@ -370,7 +370,7 @@ export function AgentPanel({ palette }: AgentPanelProps = {}): ReactNode {
       )}
       <ScrollArea className="flex-1">
         {log.length === 0 ? (
-          <Starters onPick={pickStarter} />
+          <Starters onPick={pickStarter} starters={palette} />
         ) : (
           <div className="flex flex-col gap-2 p-2">
             {log.map((entry) => (
@@ -586,10 +586,20 @@ function PaletteRow({ palette, onPick }: { palette: readonly AgentStarter[]; onP
   )
 }
 
-/** The empty conversation: a question and a grid of places to start. */
-function Starters({ onPick }: { onPick: (starter: AgentStarter) => void }): ReactNode {
+/**
+ * The empty conversation: a question and a grid of places to start. The AI layout's palette
+ * (footage actions first, then the skills) replaces the fixed list here too — the empty
+ * conversation is where a one-click action is most wanted.
+ */
+function Starters({
+  onPick,
+  starters = AGENT_STARTERS
+}: {
+  onPick: (starter: AgentStarter) => void
+  starters?: readonly AgentStarter[]
+}): ReactNode {
   const [all, setAll] = useState(false)
-  const shown = all ? AGENT_STARTERS : AGENT_STARTERS.slice(0, STARTERS_SHOWN)
+  const shown = all ? starters : starters.slice(0, STARTERS_SHOWN)
   return (
     <div className="@container flex min-h-full flex-col justify-center px-3 py-6">
       <h3 className="mb-3 text-center text-[14px] font-medium text-balance text-ink-0">
@@ -600,7 +610,7 @@ function Starters({ onPick }: { onPick: (starter: AgentStarter) => void }): Reac
           const Icon = starter.icon
           return (
             <button
-              key={starter.skill}
+              key={starter.id ?? starter.skill}
               type="button"
               onClick={() => onPick(starter)}
               className="t-fast flex min-w-0 items-center gap-2 rounded-lg border border-line bg-surface-2 p-1.5 text-left hover:border-line-hover hover:bg-surface-3"
@@ -626,7 +636,7 @@ function Starters({ onPick }: { onPick: (starter: AgentStarter) => void }): Reac
           )
         })}
       </div>
-      {AGENT_STARTERS.length > STARTERS_SHOWN && (
+      {starters.length > STARTERS_SHOWN && (
         <button
           type="button"
           onClick={() => setAll((value) => !value)}
