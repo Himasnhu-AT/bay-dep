@@ -179,6 +179,12 @@ export function matteFrameIndex(ptsUs: readonly Micros[], sourceUs: Micros): num
 }
 
 // ---------------------------------------------------------------------------
+// Space: where a matte lands on the timeline
+// ---------------------------------------------------------------------------
+
+export { sourceFrameOnTimeline } from './matte-space'
+
+// ---------------------------------------------------------------------------
 // Validation, for tools and the loader
 // ---------------------------------------------------------------------------
 
