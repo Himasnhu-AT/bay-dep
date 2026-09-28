@@ -25,6 +25,7 @@
 
 import type { Asset } from './project'
 import { GLASS_MATERIALS, GLASS_SAFE, isGlassMaterial, parseTintTriple, resolveGlass, type GlassLook, type GlassMaterial } from './glass'
+import { checkScene3d, resolveScene3d, type Scene3dFields, type Scene3dFrame } from './scene3d'
 
 // ---------------------------------------------------------------------------
 // The document
@@ -200,7 +201,18 @@ export interface GlassLayer extends LayerBase {
   bezel?: Animatable<number>
 }
 
-export type Layer = RectLayer | EllipseLayer | PathLayer | TextLayer | GroupLayer | GlassLayer
+/**
+ * A 3D scene drawn into a `w`×`h` box of the 2D scene (`./scene3d`): extruded text, boxes and
+ * planes under lights, seen through a camera the module moves. The box is a layer like any other —
+ * position, opacity, presets and the item's grade apply to what the 3D draws.
+ */
+export interface Scene3dLayer extends LayerBase, Scene3dFields {
+  type: 'scene3d'
+  w: Animatable<Length>
+  h: Animatable<Length>
+}
+
+export type Layer = RectLayer | EllipseLayer | PathLayer | TextLayer | GroupLayer | GlassLayer | Scene3dLayer
 
 export interface BrfDocument {
   brf: 1
@@ -234,7 +246,7 @@ const EASINGS = new Set<string>([
   'outElastic', 'outBounce', 'spring'
 ])
 const PRESETS = new Set<string>(['fade', 'up', 'down', 'left', 'right', 'pop', 'grow', 'wipe', 'blur', 'type'])
-const LAYER_TYPES = ['rect', 'ellipse', 'path', 'text', 'group', 'glass'] as const
+const LAYER_TYPES = ['rect', 'ellipse', 'path', 'text', 'group', 'glass', 'scene3d'] as const
 
 /** Every property each layer type accepts, so a misspelling is named rather than ignored. */
 const COMMON = ['type', 'id', 't', 'x', 'y', 'anchor', 'rotate', 'scale', 'sx', 'sy', 'opacity', 'blur', 'shadow', 'in', 'out']
@@ -245,7 +257,8 @@ const ALLOWED: Record<Layer['type'], Set<string>> = {
   path: new Set([...COMMON, ...STYLE, 'd', 'draw']),
   text: new Set([...COMMON, ...STYLE, 'text', 'font', 'size', 'weight', 'italic', 'align', 'w', 'lineHeight', 'tracking', 'split', 'stagger', 'variations']),
   group: new Set([...COMMON, 'w', 'h', 'clip', 'layers']),
-  glass: new Set([...COMMON, 'w', 'h', 'radius', 'material', 'saturation', 'tint', 'tintOpacity', 'edgeHighlight', 'refraction', 'bezel'])
+  glass: new Set([...COMMON, 'w', 'h', 'radius', 'material', 'saturation', 'tint', 'tintOpacity', 'edgeHighlight', 'refraction', 'bezel']),
+  scene3d: new Set([...COMMON, 'w', 'h', 'camera', 'fog', 'background', 'objects'])
 }
 /** Glass numbers, each held to the range where it still reads as glass (`GLASS_SAFE`). */
 const GLASS_NUMERIC = new Set(['saturation', 'tintOpacity', 'edgeHighlight', 'refraction', 'bezel'])
@@ -413,6 +426,8 @@ function checkLayer(
   }
 
   for (const [key, value] of Object.entries(layer)) {
+    // A scene3d's `background` is its own ("transparent" or a colour), checked with the rest of it.
+    if (kind === 'scene3d' && key === 'background') continue
     if (kind === 'glass' && GLASS_NUMERIC.has(key)) checkAnimatable(value, `${at}.${key}`, 'number', duration, vars, fault)
     if (NUMERIC.has(key)) checkAnimatable(value, `${at}.${key}`, 'number', duration, vars, fault)
     else if (LENGTH.has(key)) {
@@ -432,7 +447,8 @@ function checkLayer(
   }
 
   if (kind === 'glass') checkGlass(layer, at, vars, fault)
-  if ((kind === 'rect' || kind === 'ellipse' || kind === 'glass') && (layer.w === undefined || layer.h === undefined)) {
+  if (kind === 'scene3d') checkScene3d(layer, at, { fault, isColor: isColorLike, suggest, vars })
+  if ((kind === 'rect' || kind === 'ellipse' || kind === 'glass' || kind === 'scene3d') && (layer.w === undefined || layer.h === undefined)) {
     fault(at, `a ${kind} needs "w" and "h"`)
   }
   if (kind === 'rect' || kind === 'ellipse' || kind === 'path') {
@@ -801,6 +817,13 @@ export type DrawOp =
       /** The resolved material; `tint` as `rgba()` with `tintOpacity` folded into its alpha. */
       look: GlassLook
     })
+  | (OpBase & {
+      kind: 'scene3d'
+      w: number
+      h: number
+      /** Everything the 3D renderer needs, every default filled and every var resolved. */
+      scene: Scene3dFrame
+    })
   | { kind: 'clip'; matrix: Matrix; w: number; h: number }
   | { kind: 'unclip' }
 
@@ -1070,6 +1093,18 @@ function emit(
       ops.push({ ...base, kind: 'glass', w, h, radius: sample(layer.radius, t, 0, len('min')), look: { ...look, tint: formatColor([rgba[0], rgba[1], rgba[2], rgba[3] * look.tintOpacity]) } })
       return
     }
+    case 'scene3d':
+      ops.push({
+        ...base,
+        kind: 'scene3d',
+        w,
+        h,
+        scene: resolveScene3d(layer, {
+          color: (value) => sampleColor(value, t, frame) ?? 'rgba(0,0,0,0)',
+          text: (value) => String(resolve(value, frame) ?? '')
+        })
+      })
+      return
     case 'path':
       ops.push({ ...base, kind: 'path', d: layer.d, draw: Math.max(0, Math.min(1, sample(layer.draw, t, 1, num))), ...style(layer) })
       return

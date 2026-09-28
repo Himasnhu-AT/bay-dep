@@ -80,3 +80,37 @@ hyattherate2005@gmail.com naming the bay version you have.
 
 You may rebuild the executables from that source, modify them under the terms of their licences,
 and replace the copies in `Contents/Resources/ffmpeg/` with your own.
+
+## 3D text: three.js, opentype.js and Inter
+
+`<scene3d>` in `.brf` (`src/renderer/src/engine/scene3d.ts`) bundles three pieces of third-party
+code and data into a chunk of the renderer that loads only when a 3D layer is drawn. Nothing is
+fetched from the network; each is built into bay from the pinned npm package.
+
+- **three.js** 0.186.1 — Copyright © 2010-2026 three.js authors, licensed under the MIT License
+  (https://github.com/mrdoob/three.js/blob/dev/LICENSE).
+- **opentype.js** 2.0.0 — Copyright (c) 2020 Frederik De Bleser, licensed under the MIT License
+  (https://github.com/opentypejs/opentype.js/blob/master/LICENSE). Used to read glyph outlines
+  from the built-in face and from fonts a project imports.
+- **Inter** (`@fontsource/inter` 5.3.0, Latin subset, weights 400, 700 and 900, WOFF) —
+  Copyright 2016 The Inter Project Authors (https://github.com/rsms/inter), licensed under the
+  SIL Open Font License, Version 1.1 (https://openfontlicense.org). Carried unmodified as the
+  default face for extruded 3D text; it is not sold on its own. bay's interface already ships
+  Inter's variable build (`@fontsource-variable/inter`) under the same licence.
+
+The MIT License, as it applies to three.js and opentype.js:
+
+  Permission is hereby granted, free of charge, to any person obtaining a copy of this software
+  and associated documentation files (the "Software"), to deal in the Software without
+  restriction, including without limitation the rights to use, copy, modify, merge, publish,
+  distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the
+  Software is furnished to do so, subject to the following conditions:
+
+  The above copyright notice and this permission notice shall be included in all copies or
+  substantial portions of the Software.
+
+  THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING
+  BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+  NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM,
+  DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
