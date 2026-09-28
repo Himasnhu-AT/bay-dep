@@ -17,6 +17,8 @@
 import type { BrfDocument } from '@shared/brf'
 import type { BrfMeta } from '@shared/brf-code'
 import { variationFaces, variationRequests } from './brfFonts'
+import { importedFonts } from './importedFonts'
+import { resolveText3dFont, text3dFontRequests } from './scene3dFonts'
 
 export type BrfWorkerRequest =
   | { id: number; type: 'load'; source: string; fps: number; width: number; height: number }
@@ -140,6 +142,11 @@ export class BrfCodeRuntime {
         }
         if ('error' in face) return { ok: false, error: `text cannot be drawn: ${face.error}` }
         if ('pending' in face) return { ok: false, error: `text cannot be drawn: font "${want.font}" was still loading after ${(TIMEOUT_MS * 3) / 1000}s` }
+      }
+      // 3D text extrudes outlines, which only the built-in face and imported files have.
+      for (const want of text3dFontRequests(reply.scenes)) {
+        const font = resolveText3dFont(want.font, want.weight, importedFonts.files())
+        if ('error' in font) return { ok: false, error: `3D text cannot be drawn: ${font.error}` }
       }
     }
     return loaded

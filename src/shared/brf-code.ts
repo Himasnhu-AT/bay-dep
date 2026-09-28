@@ -15,8 +15,9 @@
  * The shipped lower third is 3663 characters of HTML, CSS and script; as a module (the guide's
  * example, with components and springs) it is 947 — held under a third by `brf-code.test.ts`.
  *
- * Nothing it returns is a DOM: `<scene>`, `<rect>`, `<ellipse>`, `<path>`, `<text>`, `<glass>` and
- * `<group>` resolve to the `.brf` scene format (`./brf`), which the compositor paints directly —
+ * Nothing it returns is a DOM: `<scene>`, `<rect>`, `<ellipse>`, `<path>`, `<text>`, `<glass>`,
+ * `<group>` and `<scene3d>` (with its `<text3d>`, `<box3d>`, `<plane3d>` and `<light3d>`) resolve to
+ * the `.brf` scene format (`./brf`, `./scene3d`) as data, which the compositor paints directly —
  * so the code gets everything a program can do (loops, maths, components, data) and the picture
  * still costs well under a millisecond, with no browser to capture.
  *
@@ -51,7 +52,9 @@ export interface BrfElement {
   children: unknown[]
 }
 
-const PRIMITIVES = new Set(['scene', 'rect', 'ellipse', 'path', 'text', 'group', 'glass'])
+const PRIMITIVES = new Set(['scene', 'rect', 'ellipse', 'path', 'text', 'group', 'glass', 'scene3d'])
+/** What a `<scene3d>` holds, and nothing else does. */
+const PRIMITIVES_3D = new Set(['text3d', 'box3d', 'plane3d', 'light3d'])
 
 /** The JSX factory: `<rect w={4}/>` compiles to `__brf_h('rect', { w: 4 })`. */
 export function h(type: string | Component, props: Record<string, unknown> | null, ...children: unknown[]): BrfElement {
@@ -393,10 +396,13 @@ export type Rendered = { ok: true; doc: BrfDocument } | { ok: false; error: stri
 
 class ResolveError extends Error {}
 
-/** Children to layers, walking components top-down so a `<Sequence>` can shift what they see. */
-function resolve(node: unknown, m: Moment, where: string): Layer[] {
+/**
+ * Children to layers, walking components top-down so a `<Sequence>` can shift what they see.
+ * `in3d`: inside a `<scene3d>`, where only 3D objects belong (and 2D elements do not).
+ */
+function resolve(node: unknown, m: Moment, where: string, in3d = false): Layer[] {
   if (node === null || node === undefined || node === false || node === true || node === '') return []
-  if (Array.isArray(node)) return node.flatMap((child, i) => resolve(child, m, `${where}[${i}]`))
+  if (Array.isArray(node)) return node.flatMap((child, i) => resolve(child, m, `${where}[${i}]`, in3d))
   if (typeof node === 'string' || typeof node === 'number') {
     throw new ResolveError(`${where}: text "${String(node).slice(0, 30)}" must be inside <text>`)
   }
@@ -412,17 +418,35 @@ function resolve(node: unknown, m: Moment, where: string): Layer[] {
     const saved = moment
     moment = inner
     try {
-      return resolve(children, inner, `${where}<Sequence>`)
+      return resolve(children, inner, `${where}<Sequence>`, in3d)
     } finally {
       moment = saved
     }
   }
   if (typeof type === 'function') {
     const name = type.name || 'component'
-    return resolve(type({ ...props, children: children.length <= 1 ? children[0] : children }), m, `${where}<${name}>`)
+    return resolve(type({ ...props, children: children.length <= 1 ? children[0] : children }), m, `${where}<${name}>`, in3d)
+  }
+  if (in3d) {
+    if (!PRIMITIVES_3D.has(type)) {
+      throw new ResolveError(`${where}: <${type}> cannot go inside <scene3d>, which holds text3d, box3d, plane3d and light3d — put 2D elements beside the <scene3d>, not in it`)
+    }
+    const { type: lightType, key: _key, children: _children, ...rest } = props
+    const object: Record<string, unknown> = { type, ...rest }
+    // `<light3d type="point">`: the element's own name is its `type`, so the light's is `kind`.
+    if (type === 'light3d' && lightType !== undefined && rest.kind === undefined) object.kind = lightType
+    if (type === 'text3d') {
+      if (object.text === undefined) object.text = flattenText(children)
+    } else if (children.length > 0) {
+      throw new ResolveError(`${where}: <${type}> takes no children`)
+    }
+    return [object as unknown as Layer]
+  }
+  if (PRIMITIVES_3D.has(type)) {
+    throw new ResolveError(`${where}: <${type}> belongs inside a <scene3d x y w h camera={…}>, which gives it a camera and a box to draw in`)
   }
   if (!PRIMITIVES.has(type)) {
-    throw new ResolveError(`${where}: <${type}> is not a bay element — use scene, rect, ellipse, path, text, group or glass (DOM elements are not drawn)`)
+    throw new ResolveError(`${where}: <${type}> is not a bay element — use scene, rect, ellipse, path, text, group, glass or scene3d (DOM elements are not drawn)`)
   }
   if (type === 'scene') throw new ResolveError(`${where}: <scene> can only be the root`)
   const layer: Record<string, unknown> = { type, ...props }
@@ -430,6 +454,15 @@ function resolve(node: unknown, m: Moment, where: string): Layer[] {
   delete layer.children
   if (type === 'group') {
     layer.layers = resolve(children, m, `${where}<group>`)
+  } else if (type === 'scene3d') {
+    // `width`/`height` read naturally on a 3D viewport; the format's box is `w`/`h` everywhere.
+    for (const [long, short] of [['width', 'w'], ['height', 'h']] as const) {
+      if (layer[long] === undefined) continue
+      if (layer[short] !== undefined) throw new ResolveError(`${where}: <scene3d> has both ${long} and ${short} — give one`)
+      layer[short] = layer[long]
+      delete layer[long]
+    }
+    layer.objects = resolve(children, m, `${where}<scene3d>`, true)
   } else if (type === 'text') {
     if (layer.text === undefined) layer.text = flattenText(children)
   } else if (children.length > 0) {
