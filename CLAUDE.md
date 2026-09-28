@@ -402,7 +402,10 @@ the 1080p PNGs the research first sized. `item.masks` is applied in `#drawSource
 a matte frame not decoded yet is *pending*, a missing one a named placeholder, never an unmasked
 draw. The cut-out is silent (`audioDetached`) and `elementSlots` gives a silent drawing of the same
 moment of the same file the same element — two elements drift up to ~160 ms apart in playback —
-so preroll and `awaitSources` share it too. `test/app/mask.mjs` needs `MASK_CLIP` (a clip with a
+so preroll and `awaitSources` share it too. The cut-out draws with its clip's layout, crop, keys, fades,
+grade and adjustments, read at draw time (`cutoutPartner`/`cutoutAsDrawn`), so a punch-in on the clip
+moves the cut-out; picture edits aimed at the cut-out go to the clip (store) or are refused naming it
+(`edit_item`). `test/app/mask.mjs` needs `MASK_CLIP` (a clip with a
 person; the repo has none). MODNet is a documented seam (`MatteEngine`), not built.
 
 **An export that wrote a wrong frame says so; it never finishes as a plain `done`.** The exporter

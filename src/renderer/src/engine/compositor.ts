@@ -30,6 +30,7 @@ import {
 } from '@shared/project'
 import { animatedItemAt } from '@shared/keyframes'
 import { matteRecordAt, MAX_MASK_FEATHER, subjectMaskOf } from '@shared/matte'
+import { cutoutAsDrawn, cutoutPartner } from '@shared/behind-subject'
 import { subjectMattes, type MatteImage } from './subjectMatte'
 import { MaskScratch, maskedPicture, matteRect } from './subjectMask'
 import { MediaPool, isDrawable, type MediaEntry } from './mediaPool'
@@ -242,6 +243,8 @@ export class Compositor {
   readonly #maskScratch = new MaskScratch()
   /** The project of the frame being drawn — where a graded clip's LUT asset is looked up. */
   #project: Project | null = null
+  /** The timeline of the frame being drawn — where a subject cut-out finds the clip it draws its picture from. */
+  #timeline: Timeline | null = null
 
   constructor(pool: MediaPool, compositions?: CompositionPool) {
     this.#compositions = compositions ?? null
@@ -275,6 +278,7 @@ export class Compositor {
     // project has and the document does not. A no-op when the font set has not changed.
     importedFonts.sync(project.assets)
     this.#project = project
+    this.#timeline = timeline
 
     const width = Math.max(1, finite(timeline.width, 1))
     const height = Math.max(1, finite(timeline.height, 1))
@@ -625,6 +629,10 @@ export class Compositor {
     // Keyframes resolve here, once, into the layout every draw below reads — so a transition's
     // two sides, text, .brf, compositions and placeholders all animate through one sampler, and
     // an item with no keys is passed through as the same object.
+    // A subject cut-out draws with its clip's layout, crop, keys, grade and look, read now — so a
+    // punch-in or crop of the clip moves the cut-out with it (`cutoutAsDrawn`). Before keys resolve,
+    // so the clip's keyframes animate the cut-out through the same sampler.
+    if (this.#timeline && item.masks) item = cutoutAsDrawn(item, cutoutPartner(this.#timeline, item))
     item = animatedItemAt(item, frame)
     const asset = findAsset(project, item.assetId)
     if (!asset || asset.error) {

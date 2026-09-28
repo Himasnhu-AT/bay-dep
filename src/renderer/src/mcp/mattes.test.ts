@@ -11,6 +11,7 @@ import type { Asset, Item, Project } from '@shared/project'
 import type { SubjectMatteRequest, SubjectMatteResult } from '@shared/matte'
 import { emptyProject, useEditor } from '@/store/editor'
 import { executeToolCall } from './index'
+import { cutoutAsDrawn, cutoutPartner } from '@shared/behind-subject'
 
 const asked: SubjectMatteRequest[] = []
 const found = (request: SubjectMatteRequest): SubjectMatteResult => ({
@@ -144,4 +145,40 @@ test('asked twice, the cut-out is reused rather than stacked', async () => {
   assert.equal((second.value as { cutoutItemId: string }).cutoutItemId, (first.value as { cutoutItemId: string }).cutoutItemId)
   const masked = useEditor.getState().project.timelines[0]!.tracks.flatMap((t) => t.items).filter((i) => i.masks)
   assert.equal(masked.length, 1)
+})
+
+test('after put_behind_subject, punch in on the clip: accepted, and the cut-out draws with the zoom', async () => {
+  const made = await run({ textItemId: 'words', videoItemId: 'clip' })
+  assert.ok(made.ok)
+  const cutId = (made.value as { cutoutItemId: string }).cutoutItemId
+  const zoom = await executeToolCall({ id: 'z', tool: 'edit_item', args: { itemId: 'clip', scale: 1.15 } })
+  assert.ok(zoom.ok, zoom.ok ? '' : zoom.error)
+  const tl = useEditor.getState().project.timelines[0]!
+  const cut = tl.tracks.flatMap((t) => t.items).find((i) => i.id === cutId)!
+  assert.equal(cutoutAsDrawn(cut, cutoutPartner(tl, cut)).layout.scale, 1.15, 'the cut-out draws at the clip\'s zoom')
+})
+
+test('a picture edit aimed at the cut-out is refused naming the clip; a non-picture edit is not (positive control)', async () => {
+  const made = await run({ textItemId: 'words', videoItemId: 'clip' })
+  assert.ok(made.ok)
+  const cutId = (made.value as { cutoutItemId: string }).cutoutItemId
+  const refused = await executeToolCall({ id: 'r', tool: 'edit_item', args: { itemId: cutId, scale: 1.3, crop: { left: 0.1 } } })
+  assert.equal(refused.ok, false)
+  if (!refused.ok) assert.match(refused.error, /subject cut-out of clip clip .*scale, crop must be set on the clip: edit_item\(\{ itemId: "clip"/)
+  const masksEdit = await executeToolCall({ id: 'm', tool: 'edit_item', args: { itemId: cutId, volume: 0 } })
+  assert.ok(masksEdit.ok, masksEdit.ok ? '' : masksEdit.error)
+})
+
+test('the inspector path: a layout or keyframe edit of the cut-out lands on the clip, which the cut-out follows', async () => {
+  const made = await run({ textItemId: 'words', videoItemId: 'clip' })
+  assert.ok(made.ok)
+  const cutId = (made.value as { cutoutItemId: string }).cutoutItemId
+  const past = useEditor.getState().past.length
+  useEditor.getState().patchLayout(cutId, { scale: 1.4 })
+  useEditor.getState().setKeyframe(cutId, 'left', 10, 40)
+  const tl = useEditor.getState().project.timelines[0]!
+  const clip = tl.tracks.flatMap((t) => t.items).find((i) => i.id === 'clip')!
+  assert.equal(clip.layout.scale, 1.4)
+  assert.equal(clip.keyframes?.left?.[0]?.value, 40)
+  assert.equal(useEditor.getState().past.length, past + 2, 'each is one ordinary edit')
 })

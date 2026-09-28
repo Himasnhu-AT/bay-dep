@@ -22,7 +22,9 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Asset, Item, Project, Timeline, Track } from '@shared/project'
 import { sourceFrameOnTimeline, type SubjectMatte, type SubjectMatteIndex } from '@shared/matte'
+import { cutoutPartner } from '@shared/behind-subject'
 import { cropDestRect } from '@shared/project'
+import { animatedItemAt } from '@shared/keyframes'
 
 // -- a software 2D canvas ------------------------------------------------------------------------
 
@@ -504,6 +506,8 @@ async function placedCase(opts: {
   box: { left: number; top: number; width: number; height: number; scale?: number }
   crop?: Item['crop']
   isPerson: (u: number, v: number) => boolean
+  /** An edit made to the clip after the cut-out was made from it (a punch-in, a crop, keys). */
+  afterwards?: (clip: Item) => void
 }): Promise<{ wrong: string[]; overPerson: number; beside: number }> {
   const source = SoftCanvas.solid(opts.sw, opts.sh, (x, y) => (opts.isPerson((x + 0.5) / opts.sw, (y + 0.5) / opts.sh) ? [...PERSON] : [...BACKDROP]))
   const mattePixels = SoftCanvas.solid(opts.mw, opts.mh, (x, y) => [255, 255, 255, opts.isPerson((x + 0.5) / opts.mw, (y + 0.5) / opts.mh) ? 255 : 0])
@@ -513,7 +517,9 @@ async function placedCase(opts: {
   const layout = { ...opts.box, opacity: 1, rotation: 0 }
   const clip = item('base', 'ast_clip', 'v1', { layout, ...(opts.crop ? { crop: opts.crop } : {}) })
   const title = item('title', 'ast_title', 'v2', { layout: { left: 0, top: 0, width: opts.cw, height: opts.ch, opacity: 1, rotation: 0 } })
-  const copy: Item = { ...clip, id: 'cutout', trackId: 'v3', audioDetached: true, masks: [{ kind: 'subject' }] }
+  const copy: Item = { ...structuredClone(clip), id: 'cutout', trackId: 'v3', audioDetached: true, masks: [{ kind: 'subject' }], linkId: 'lnk_pair' }
+  clip.linkId = 'lnk_pair'
+  opts.afterwards?.(clip)
   const timeline: Timeline = { id: 'tl', name: 'tl', fps: FPS, width: opts.cw, height: opts.ch, background: '#000000', tracks: [track('v1', [clip]), track('v2', [title]), track('v3', [copy])], transitions: [] }
   const project: Project = { id: 'p', name: 'p', version: 1, assets: [asset, titleAsset], timelines: [timeline], activeTimelineId: 'tl', createdAt: 0, updatedAt: 0 }
   const pool = new CountingPool()
@@ -526,12 +532,15 @@ async function placedCase(opts: {
     if (stats.pending === 0) break
     await subjectMattes.settle(1000)
   }
-  const frame = sourceFrameOnTimeline(layout)
-  const kept = opts.crop ? cropDestRect(opts.crop, opts.box) : { dx: opts.box.left, dy: opts.box.top, dw: opts.box.width, dh: opts.box.height }
+  // Predicted from the clip as it is drawn now — after any later edit, keys resolved at the frame.
+  const drawn = animatedItemAt(clip, 45)
+  const box = drawn.layout
+  const frame = sourceFrameOnTimeline(box)
+  const kept = drawn.crop ? cropDestRect(drawn.crop, box) : { dx: box.left, dy: box.top, dw: box.width, dh: box.height }
   // The crop is drawn zoomed about the box's centre too.
-  const zoom = opts.box.scale ?? 1
-  const bcx = opts.box.left + opts.box.width / 2
-  const bcy = opts.box.top + opts.box.height / 2
+  const zoom = box.scale ?? 1
+  const bcx = box.left + box.width / 2
+  const bcy = box.top + box.height / 2
   const keptZ = { dx: bcx + (kept.dx - bcx) * zoom, dy: bcy + (kept.dy - bcy) * zoom, dw: kept.dw * zoom, dh: kept.dh * zoom }
   // Nearest-neighbour sampling can go either way within a sample of the person's edge; those
   // pixels (and the kept rect's own edge) are left out, everything else must be exact.
@@ -595,4 +604,43 @@ test('a cropped and zoomed portrait clip: the matte stays on the person, not on 
 test('sourceFrameOnTimeline: the whole source frame is the layout box, zoomed about its centre', () => {
   assert.deepEqual(sourceFrameOnTimeline({ left: 22, top: 0, width: 20, height: 36 }), { left: 22, top: 0, width: 20, height: 36, rotation: 0 })
   assert.deepEqual(sourceFrameOnTimeline({ left: 0, top: 0, width: 10, height: 20, scale: 2 }), { left: -5, top: -10, width: 20, height: 40, rotation: 0 })
+})
+
+
+// -- the cut-out follows its clip's picture after the fact -----------------------------------------
+
+const pillarbox = { cw: 64, ch: 36, sw: 18, sh: 32, mw: 6, mh: 8, box: { left: 22, top: 0, width: 20.25, height: 36 }, isPerson: upperMiddle }
+
+test('a punch-in on the clip after put_behind_subject: the cut-out zooms with it', async () => {
+  // 1.6 rather than the probe's 1.15: at this test's 64×36 a 15% zoom moves the person's edge by
+  // about a pixel, inside the seam the comparison leaves out, and could not tell follow from not.
+  const result = await placedCase({ ...pillarbox, afterwards: (clip) => { clip.layout = { ...clip.layout, scale: 1.6 } } })
+  assert.ok(result.overPerson > 40, JSON.stringify(result).slice(0, 200))
+  assert.deepEqual(result.wrong.slice(0, 5), [], `${result.wrong.length} pixels wrong`)
+})
+
+test('a keyframed zoom on the clip afterwards: the cut-out animates with it', async () => {
+  const result = await placedCase({
+    ...pillarbox,
+    afterwards: (clip) => { clip.keyframes = { scale: [{ frame: 0, value: 1 }, { frame: 90, value: 2 }], left: [{ frame: 0, value: 22 }, { frame: 90, value: 10 }] } }
+  })
+  assert.ok(result.overPerson > 40, JSON.stringify(result).slice(0, 200))
+  assert.deepEqual(result.wrong.slice(0, 5), [], `${result.wrong.length} pixels wrong`)
+})
+
+test('a crop on the clip afterwards: the cut-out is cropped with it', async () => {
+  const result = await placedCase({ ...pillarbox, afterwards: (clip) => { clip.crop = { left: 0.4, right: 0, top: 0, bottom: 0.3 } } })
+  assert.ok(result.overPerson > 20, JSON.stringify(result).slice(0, 200))
+  assert.deepEqual(result.wrong.slice(0, 5), [], `${result.wrong.length} pixels wrong`)
+})
+
+test('an unlinked copy draws its own picture: the follow is by link, not by look-alike', () => {
+  const clip = item('c', 'ast_clip', 'v1', { linkId: 'l' })
+  const cut = item('k', 'ast_clip', 'v3', { linkId: 'l', audioDetached: true, masks: [{ kind: 'subject' }] })
+  const timeline: Timeline = { id: 'tl', name: 'tl', fps: FPS, width: W, height: H, background: '#000', tracks: [track('v1', [clip]), track('v3', [cut])], transitions: [] }
+  assert.equal(cutoutPartner(timeline, cut)?.id, 'c')
+  const unlinked = { ...cut, linkId: undefined }
+  assert.equal(cutoutPartner(timeline, unlinked), null)
+  assert.equal(cutoutPartner(timeline, { ...cut, sourceStartUs: 1 }), null, 'another moment of the file is not its clip')
+  assert.equal(cutoutPartner(timeline, clip), null, 'the clip itself is not a cut-out')
 })

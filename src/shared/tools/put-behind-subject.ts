@@ -16,7 +16,10 @@ export const tool: ToolSpec = {
     'clip plays (Apple Vision, on this Mac; ~11 ms per frame the first time, cached after), then ' +
     'arranges, in one undo step: the clip; above it the title (moved up if it was under the clip); ' +
     'above that a linked, silent copy of the clip cut out to the person. The copy is drawn from the ' +
-    'same decoded frame as the clip, so they cannot drift apart, and moves, trims and splits with it.\n' +
+    'same decoded frame as the clip, so they cannot drift apart, and moves, trims and splits with it. ' +
+    'It also draws with the clip\'s own zoom (scale), position, crop, keyframes, fades and grade, read live — so punch in, ' +
+    'reframe or regrade the CLIP afterwards with edit_item and the cut-out follows; there is nothing to redo. Picture ' +
+    'edits aimed at the cut-out itself are refused with the clip\'s id.\n' +
     'Make the title first (large — the effect reads only when the person covers part of the letters; ' +
     'aim for a third to a half of the letter height overlapped), place it over the clip, then call ' +
     'this. Afterwards look at a frame where the head crosses the words with preview_frame. Refused, ' +
