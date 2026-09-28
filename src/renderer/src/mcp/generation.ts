@@ -265,8 +265,20 @@ async function track(args: Record<string, unknown>, context?: CallContext): Prom
     },
     { seconds, pollMs: GENERATION_POLL_MS, context }
   )
-  // A job main forgot mid-wait is answered as it was last seen; the next call says it is gone.
-  if (latest) job = latest
+  // Main forgot the job while this call waited. Answering from the last look would say "still
+  // working" about a job that no longer exists, and the agent would wait on it for good.
+  if (latest === null) {
+    const recent = (await bridge.generation.jobs()).slice(0, 10).map((j) => `${j.id} (${j.kind}, ${j.status})`)
+    fail(
+      `Generation job "${id}" is gone: it was ${job.status} when this call began waiting, and after ` +
+        `${outcome.waited}s main no longer had it, so nothing was imported. Main keeps a bounded list of ` +
+        `jobs and drops the oldest finished ones as new jobs start, so it most likely finished and was pruned; ` +
+        `whether its file landed is unknown. ` +
+        (recent.length > 0 ? `Recent jobs: ${recent.join(', ')}. ` : '') +
+        'Check those before starting a new paid generation.'
+    )
+  }
+  job = latest
   const waited = { waited: outcome.waited }
 
   if (job.status === 'queued' || job.status === 'running') {

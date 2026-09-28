@@ -23,7 +23,14 @@ import type { Asset, Item, Project } from '@shared/project'
 import { emptyProject, useEditor } from '@/store/editor'
 import { agentActingDepth } from '@/store/agent-turns'
 import { cancelToolCall, executeToolCall } from './index'
-import { recordJobForTest } from './exports'
+import { forgetJobsForTest, recordJobForTest } from './exports'
+
+// A reload keeps sessionStorage and loses module state; this stands in for the storage.
+const session = new Map<string, string>()
+;(globalThis as { sessionStorage?: unknown }).sessionStorage = {
+  getItem: (key: string) => session.get(key) ?? null,
+  setItem: (key: string, value: string) => void session.set(key, value)
+}
 
 let emit: ((update: ExportProgress) => void) | null = null
 let nextExport = 0
@@ -211,4 +218,36 @@ test('track_generation waits for main’s job to land, then imports it', { timeo
   const running = await call('track_generation', { jobId: 'gen-2', waitSeconds: 0.3 })
   assert.equal(running.value.status, 'running')
   assert.match(String(running.value.next), /Call track_generation again with jobId "gen-2" and waitSeconds/)
+})
+
+test('track_export after a reload says the export was lost to it; an id never started here is still unknown', { timeout: 10_000 }, async () => {
+  recordJobForTest('job-reloaded', RUNNING)
+  forgetJobsForTest()
+  const lost = await executeToolCall({ id: 'lost', tool: 'track_export', args: { jobId: 'job-reloaded', waitSeconds: 0 } })
+  assert.equal(lost.ok, false)
+  assert.match(lost.ok ? '' : lost.error, /Export "job-reloaded" was lost when the editor reloaded/)
+  assert.match(lost.ok ? '' : lost.error, /Start it again with export_timeline/)
+  const never = await executeToolCall({ id: 'never', tool: 'track_export', args: { jobId: 'job-never', waitSeconds: 0 } })
+  assert.equal(never.ok, false)
+  assert.match(never.ok ? '' : never.error, /No export job "job-never" in this session/)
+})
+
+test('a generation main forgets during the wait is reported gone, not still working', { timeout: 10_000 }, async () => {
+  const job: GenerationJob = {
+    id: 'gen-gone', provider: 'openai', model: 'gpt-image-1', kind: 'image', status: 'running',
+    request: { provider: 'openai', model: 'gpt-image-1', kind: 'image', prompt: 'x' } as GenerationJob['request'],
+    createdAt: Date.now(), updatedAt: Date.now()
+  }
+  const other = { ...job, id: 'gen-other', status: 'done' as const }
+  genJobs = [job, other]
+  setTimeout(() => {
+    genJobs = [other]
+  }, 300)
+  const result = await executeToolCall({ id: 'gone', tool: 'track_generation', args: { jobId: 'gen-gone', waitSeconds: 10 } })
+  assert.equal(result.ok, false, 'a job that no longer exists must not come back as a running one')
+  const error = result.ok ? '' : result.error
+  assert.match(error, /Generation job "gen-gone" is gone/)
+  assert.match(error, /nothing was imported/)
+  assert.match(error, /Recent jobs: gen-other \(image, done\)/)
+  assert.doesNotMatch(error, /Still working/)
 })

@@ -39,6 +39,31 @@ interface Job {
 }
 
 const jobs = new Map<string, Job>()
+
+/**
+ * The export jobs this window started, kept in `sessionStorage` because that survives a reload
+ * while the job map above does not. An export is rendered by this page, so a reload ends it; this
+ * is how `track_export` tells "lost to a reload" from "never started here".
+ */
+const STARTED_KEY = 'bay.mcp.exportsStarted'
+
+function startedBefore(): string[] {
+  try {
+    const raw = sessionStorage.getItem(STARTED_KEY)
+    const list: unknown = raw ? JSON.parse(raw) : []
+    return Array.isArray(list) ? list.filter((id): id is string => typeof id === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+function rememberStarted(jobId: string): void {
+  try {
+    sessionStorage.setItem(STARTED_KEY, JSON.stringify([...startedBefore(), jobId].slice(-50)))
+  } catch {
+    // No storage (a test, a locked-down profile): a lost export then reads as unknown.
+  }
+}
 let subscribed = false
 
 /** Audio-only containers have no pictures to push; main muxes those from the project alone. */
@@ -148,6 +173,7 @@ export async function exportTimeline(
     exporter: null
   }
   jobs.set(job.jobId, record)
+  rememberStarted(job.jobId)
 
   if (!AUDIO_ONLY.includes(format)) {
     const exporter = new FrameExporter({
@@ -248,6 +274,12 @@ export async function trackExport(args: Record<string, unknown>, context?: CallC
   const jobId = String(args.jobId)
   const job = jobs.get(jobId)
   if (!job) {
+    if (startedBefore().includes(jobId)) {
+      fail(
+        `Export "${jobId}" was lost when the editor reloaded: exports are rendered by the editor page, ` +
+          'so the reload ended it and it will not finish. Start it again with export_timeline.'
+      )
+    }
     const known = [...jobs.keys()]
     fail(
       `No export job "${jobId}" in this session.` +
@@ -380,6 +412,11 @@ export function doneFindings(progress: ExportProgress, incomplete: IncompleteFra
   return out.sort((a, b) => (a.severity === b.severity ? 0 : a.severity === 'blocking' ? -1 : 1))
 }
 
+/** Test seam: the page reloading — the job map is gone, `sessionStorage` is not. */
+export function forgetJobsForTest(): void {
+  jobs.clear()
+}
+
 /**
  * Test seam: a job as `export_timeline` would record it, with no encoder behind it. Returns the
  * setter main's progress events would call.
@@ -398,6 +435,7 @@ export function recordJobForTest(jobId: string, progress: Omit<ExportProgress, '
     exporter: null
   }
   jobs.set(jobId, job)
+  rememberStarted(jobId)
   return (next) => {
     job.progress = { ...next, jobId }
   }
