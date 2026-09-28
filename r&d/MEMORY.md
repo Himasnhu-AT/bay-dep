@@ -99,6 +99,8 @@ and **Open questions**. Keep entries short, and link to files instead of copying
 
 ## Decisions
 
+- 2026-09-28: **The owner: do not publish the Attest (RedAssay) film** anywhere: not on the website, not as a style preview shipped in bay. Its footage stays internal. The product-launch-film style needs other, publishable footage for its preview; until then it shows the neutral tile.
+
 - 2026-09-27: **Focus is the launch film** (the owner). The target raw footage for future clips is **unedited vertical selfie talking-head video** (like the owner's reference Reel), not conference talks.
 - 2026-09-27: **Attest v3 look = perry's system.** Cuts on bar lines only; masked word rise [.165,.84,.44,1] with the whip exit [.72,0,.18,1]; one spring (420/32); text in a left column, product on the right; red rationed to one word. The footage bakes the right framing and a black left scrim.
 

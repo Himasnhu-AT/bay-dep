@@ -139,18 +139,6 @@ export const comparisons: Comparison[] = [
     did: [],
     credits: [],
   },
-  {
-    slug: "launch-film",
-    status: "pending",
-    title: "A product launch film",
-    style: "product-launch-film",
-    aspect: "16:9",
-    layout: "wipe",
-    durationSec: 0,
-    prompt: PENDING,
-    did: [],
-    credits: [],
-  },
 ];
 
 /**
