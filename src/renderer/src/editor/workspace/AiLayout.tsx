@@ -27,7 +27,7 @@ import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/componen
 import { runCommand, shortcutOf } from '@/lib/commands'
 import { useTimelineTool } from '@/lib/timelineTool'
 import { useEditor, WORKSPACE_PAGES, type AiPanel, type WorkspacePage } from '@/store/editor'
-import { AGENT_STARTERS, type AgentStarter } from '@/editor/agentStarters'
+import { footagePalette } from '@/editor/agentStarters'
 import { Inspector } from '@/editor/Inspector'
 import { MediaPool } from '@/editor/library/MediaPool'
 import { Slot } from './hosted'
@@ -37,11 +37,11 @@ import { PAGES } from './PageBar'
 import { pageContent } from './pageContent'
 
 /**
- * The one-click tools near the chat, handed to the hosted AgentPanel while this layout shows it.
- * Today every bay skill (the agent's own starters); the hook for "smart mode", which will choose
- * a palette from the footage (a podcast, a talking head…) — replace this with that choice.
+ * The one-click tools near the chat, handed to the hosted AgentPanel while this layout shows it:
+ * "smart mode" — the actions for the kind of footage in the project (`@shared/footage-mode`),
+ * then every bay skill's starter.
  */
-export const AI_TOOL_PALETTE: readonly AgentStarter[] = AGENT_STARTERS
+export const aiToolPalette = footagePalette
 
 export interface AiLayoutProps {
   drawers: LayoutRegions['drawers']

@@ -5,8 +5,9 @@
 import { brfAssetFields, brfCodeAssetFields } from '@shared/brf'
 import { activeTimeline, assetTrackKind, placementLayout, normaliseCrop, isCropped, NO_CROP, defaultLayout, defaultTextStyle, findAsset, findItem, findTrack, framesToUs, itemEnd, itemsOverlap, usToFrames, type Item, type TrackKind } from '@shared/project'
 import { rippleDelete, type RippleDeleteResult } from '@shared/ripple'
+import { splitItemAt } from '@shared/split'
 import { applyRelinks } from '@shared/relink'
-import { shiftKeyframes, sliceKeyframes, withKeyframe } from '@shared/keyframes'
+import { shiftKeyframes, withKeyframe } from '@shared/keyframes'
 import { applyTrimPlan, planTrim, type TrimPlan } from '@shared/trim'
 import { detachAudio, linkedPartners, reattachAudio, unlinkItems, withLinked } from '@shared/links'
 import { describeDuplicate, duplicateClips, type DuplicateResult } from '@shared/clipboard'
@@ -31,6 +32,7 @@ type Actions = Pick<
   | 'splitAt'
   | 'deleteSelected'
   | 'rippleDelete'
+  | 'rippleDeleteRanges'
   | 'setCrop'
   | 'setCompositionVariable'
   | 'duplicateSelected'
@@ -375,25 +377,8 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
             if (targets && !targets.includes(item.id)) continue
             // A cut exactly on an edge is not a cut — it would make a zero-length clip.
             if (at <= item.from || at >= itemEnd(item)) continue
-            const leftDuration = at - item.from
-            const rightDuration = item.durationInFrames - leftDuration
-            const right: Item = {
-              ...item,
-              id: newId('itm'),
-              from: at,
-              durationInFrames: rightDuration,
-              sourceStartUs:
-                item.sourceStartUs + Math.round(framesToUs(leftDuration, tl.fps) * item.speed),
-              layout: { ...item.layout },
-              fadeInFrames: 0,
-              // Each half keeps the keys that shape it, so the pair draws exactly what the whole did.
-              keyframes: sliceKeyframes(item.keyframes, leftDuration, item.durationInFrames)
-            }
-            if (!right.keyframes) delete right.keyframes
-            if (item.keyframes) item.keyframes = sliceKeyframes(item.keyframes, 0, leftDuration)
-            item.durationInFrames = leftDuration
-            item.fadeOutFrames = Math.min(item.fadeOutFrames, leftDuration)
-            right.fadeOutFrames = Math.min(right.fadeOutFrames, rightDuration)
+            const right = splitItemAt(item, at, tl.fps, newId('itm'), tl.transitions)
+            if (!right) continue
             additions.push(right)
             created.push(right.id)
           }
@@ -471,6 +456,39 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
         )
       }
       return removed
+    },
+
+    rippleDeleteRanges(ranges) {
+      const state = get()
+      const timeline = activeTimeline(state.project)
+      if (!timeline || ranges.length === 0) return null
+      const ordered = [...ranges].sort((a, b) => b.fromFrame - a.fromFrame)
+      const total: RippleDeleteResult = {
+        removedFrames: 0,
+        removedItemIds: [],
+        trimmedItemIds: [],
+        createdItemIds: [],
+        removedTransitionIds: [],
+        desyncedTrackIds: []
+      }
+      const add = (into: string[], ids: readonly string[]): void => {
+        for (const id of ids) if (!into.includes(id)) into.push(id)
+      }
+      // One `editTimeline`, so one undo step: undoing half the silences would leave a cut nobody
+      // asked for. Last-first, so each earlier range's frames are untouched by the later ones.
+      editTimeline((tl) => {
+        for (const range of ordered) {
+          const result = rippleDelete(tl, range.fromFrame, range.toFrame, () => newId('itm'))
+          total.removedFrames += result.removedFrames
+          add(total.removedItemIds, result.removedItemIds)
+          add(total.trimmedItemIds, result.trimmedItemIds)
+          add(total.createdItemIds, result.createdItemIds)
+          add(total.removedTransitionIds, result.removedTransitionIds)
+          add(total.desyncedTrackIds, result.desyncedTrackIds)
+        }
+      })
+      if (total.removedFrames > 0) set({ selection: [] })
+      return total
     },
 
     setCrop(itemId, edge, fraction) {

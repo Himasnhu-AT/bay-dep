@@ -9,6 +9,7 @@
 
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type {
+  AudioSpan,
   BayApi,
   ExportFormat,
   ExportFrame,
@@ -78,6 +79,10 @@ const api: BayApi = {
       ipcRenderer.invoke(IPC.mediaWaveform, assetId, path, buckets) as Promise<number[]>,
     beats: (path: string, options?: { beatsPerBar?: number }) => ipcRenderer.invoke(IPC.mediaBeats, path, options),
     cuts: (path: string, options?: { threshold?: number }) => ipcRenderer.invoke(IPC.mediaCuts, path, options),
+    levels: (path: string, span: AudioSpan, windowUs: number) => ipcRenderer.invoke(IPC.mediaLevels, path, span, windowUs),
+    silences: (path: string, span: AudioSpan, thresholdDb: number, minSilenceSec: number) =>
+      ipcRenderer.invoke(IPC.mediaSilences, path, span, thresholdDb, minSilenceSec),
+    loudness: (path: string, span: AudioSpan) => ipcRenderer.invoke(IPC.mediaLoudness, path, span),
     revealInFolder: (path: string) =>
       ipcRenderer.invoke(IPC.mediaReveal, path) as Promise<void>,
     stat: (paths: string[]) => ipcRenderer.invoke(IPC.mediaStat, paths) as Promise<(number | null)[]>,

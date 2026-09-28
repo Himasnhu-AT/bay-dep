@@ -227,6 +227,26 @@ export const BAY_SKILLS: readonly BaySkill[] = [
     ].join('\n')
   },
   {
+    slug: 'podcast',
+    title: 'Podcast Edit',
+    description: 'Use when the user wants a podcast or multi-person interview edited — several cameras and mics synced, the picture cut to whoever is speaking, pauses removed, voices balanced, subtitles and short clips.',
+    body: [
+      'Edit a podcast recorded with a camera and a mic per person (and maybe a wide shot).',
+      '',
+      '1. Read the timeline with read_project. Find each speaker\'s camera clip and mic clip, and any wide shot; the track and clip names usually say whose is whose. If it is unclear which mic belongs to which camera, ask once. detect_footage_mode confirms the footage is a podcast when you are not sure.',
+      '2. Sync: unless the clips are already lined up (one clock, or the user says so), call sync_angles with every camera and mic clip, a mic first as the reference. If it refuses a clip for low confidence, tell the user which and continue without it.',
+      '3. Cut the picture: switch_speakers with one angle per speaker ({ videoItemId, micItemId }) and wideItemId if there is a wide. Run it with validateOnly: true first and read screenTime: a speaker on screen far less than they talk, or a refusal naming a mic that "never talks", means a wrong mic or a mic that needs thresholdDb. For a calmer cut use minShotSec 1.5–2. Then run it for real. Each angle stays on its track with the off pieces disabled, so a shot can be put back with set_item_enabled and linked: false (without it, every piece of that angle comes back on).',
+      '4. Remove pauses: remove_silences with itemIds set to every speaker\'s mic clip, so only moments where nobody talks are cut. Say how much time it saved. Do this after the switch — both cut every track together, so the angles stay in sync.',
+      '5. Balance: level_voices with the mic clips (target -16 LUFS by default). Report any clip it could not raise far enough.',
+      '6. If asked: add_subtitles on a mic clip for word-by-word subtitles (see the captions skill), and find_highlights then mark_highlights for short clips (see the highlights skill).',
+      '7. Check two or three cuts with preview_frame, and report each step with its numbers: offsets, shots and screen time, seconds removed, loudness before and after.',
+      '',
+      'If there is only one mic for everyone, switch_speakers cannot tell who is talking; say so and offer remove_silences, level_voices and subtitles instead.',
+      '',
+      PROPOSE
+    ].join('\n')
+  },
+  {
     slug: 'dub',
     title: 'Translate & Dub',
     description: 'Use when the user wants a video translated and dubbed into another language — a voiced translation of the speech, placed in sync over the original.',

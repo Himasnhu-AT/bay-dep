@@ -188,9 +188,35 @@ function importedAsset(path: string): ImportedAsset {
   }
 }
 
+/**
+ * Main's audio measurements for the speech tools. Each of those tools reads two curves per call,
+ * so alternate calls answer as two different people: at 50 ms (switch_speakers) the first talks
+ * for the first second and the second from 1.1 s; at 10 ms (sync_angles) the second hears the
+ * first's speech-like bursts one second later.
+ */
+let levelCalls = 0
+function burstLevel(t: number): number {
+  const cell = Math.floor(t / 0.25)
+  const hash = Math.sin(cell * 12.9898) * 43758.5453
+  return hash - Math.floor(hash) > 0.55 ? -20 - ((cell * 7) % 9) : -60
+}
+function stubLevels(_path: string, span: { startUs: number; durationUs: number }, windowUs: number): { ok: true; value: number[] } {
+  const second = levelCalls++ % 2 === 1
+  const n = Math.floor(span.durationUs / windowUs)
+  const at = (k: number): number => (span.startUs + k * windowUs) / 1_000_000
+  if (windowUs === 50_000) {
+    return { ok: true, value: Array.from({ length: n }, (_, k) => ((second ? at(k) >= 1.1 : at(k) < 1) ? -20 : -60)) }
+  }
+  return { ok: true, value: Array.from({ length: n }, (_, k) => burstLevel(second ? at(k) + 1 : at(k))) }
+}
+
 ;(globalThis as { window?: unknown }).window = {
   bay: {
     media: {
+      levels: async (path: string, span: { startUs: number; durationUs: number }, windowUs: number) => stubLevels(path, span, windowUs),
+      // Two pauses in any clip: 0.5–1.5 s and 2.5–3.5 s into what it plays.
+      silences: async () => ({ ok: true, value: [{ startSec: 0.5, endSec: 1.5 }, { startSec: 2.5, endSec: 3.5 }] }),
+      loudness: async () => ({ ok: true, value: { integratedLufs: -22, truePeakDb: -6 } }),
       importPaths: async (paths: string[]) => paths.map(importedAsset),
       // import_url's download is main's; here it has already landed.
       importUrl: async () => ({ ok: true, path: '/downloads/one/talk [abc].mp4', ytDlp: '/opt/homebrew/bin/yt-dlp' })
@@ -256,6 +282,25 @@ const TOOL_CASES: Record<string, ToolCase[]> = {
     { delta: 1, args: (f) => ({ itemIds: [f.a, f.c], ripple: true }) }
   ],
   remove_range: [{ delta: 1, args: () => ({ fromFrame: 10, toFrame: 20 }) }],
+  // Two pauses removed, each a ripple across every track: one step.
+  remove_silences: [{ delta: 1, args: (f) => ({ itemId: f.d }) }],
+  set_item_enabled: [{ delta: 1, args: (f) => ({ itemIds: [f.a, f.c, f.d], enabled: false }) }],
+  // Detaching both angles' sound, then razoring and disabling both: one step.
+  switch_speakers: [
+    { delta: 1, args: (f) => ({ angles: [{ videoItemId: f.a }, { videoItemId: f.c }], thresholdDb: -40, minShotSec: 0.2 }) }
+  ],
+  level_voices: [{ delta: 1, args: (f) => ({ itemIds: [f.d, f.c] }) }],
+  sync_angles: [
+    {
+      delta: 1,
+      // Long enough (20 s) to sync by sound; V2 and A1 hold nothing else.
+      before: (f) => {
+        state().patchItem(f.c, { durationInFrames: 600 })
+        state().patchItem(f.d, { durationInFrames: 600 })
+      },
+      args: (f) => ({ itemIds: [f.d, f.c] })
+    }
+  ],
   detach_audio: [
     // Two clips at once, with a transition between them: new items on an audio track (a new one,
     // since A1 is occupied), both pictures marked, and the transition copied — one step.
@@ -763,6 +808,27 @@ const STORE_CASES: Record<string, StoreCase> = {
   },
   openSpan: { delta: 1, run: () => { state().openSpan(15, 10, 'insert') } },
   // The still and the insert across every track, one step (`@shared/freeze-frame`).
+  setItemsEnabled: { delta: 1, run: (f) => { state().setItemsEnabled([f.a, f.c, f.d], false) } },
+  // Two angles razored and disabled: one step.
+  applyAngleSwitch: {
+    delta: 1,
+    run: (f) => {
+      state().applyAngleSwitch([f.a, f.c], [
+        { angle: 0, fromFrame: 0, toFrame: 30 },
+        { angle: 1, fromFrame: 30, toFrame: 60 }
+      ])
+    }
+  },
+  // Two ranges, each rippling every track: one step.
+  rippleDeleteRanges: {
+    delta: 1,
+    run: () => {
+      state().rippleDeleteRanges([
+        { fromFrame: 10, toFrame: 20 },
+        { fromFrame: 40, toFrame: 50 }
+      ])
+    }
+  },
   insertFreezeFrame: {
     delta: 1,
     run: (f) => {

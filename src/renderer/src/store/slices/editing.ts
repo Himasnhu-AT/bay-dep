@@ -13,6 +13,7 @@ import { applySpeedPlan, planSpeed } from '@shared/speed'
 import { insertTime, liftRange, type OpenSpanResult } from '@shared/insert-edit'
 import { applyFreezeFrame, freezeRefusal, type FreezeResult } from '@shared/freeze-frame'
 import { applyTrackMoves, checkTrackMoves } from '@shared/track-move'
+import { applyAngleSwitch } from '@shared/speaker-switch'
 import { makeTrack, newId, nextTrackName } from '../factory'
 import type { EditorActions } from '../types'
 import type { StoreKit } from '../kit'
@@ -24,6 +25,8 @@ type Actions = Pick<
   | 'paste'
   | 'pasteAttributes'
   | 'toggleDisabled'
+  | 'setItemsEnabled'
+  | 'applyAngleSwitch'
   | 'nudgeSelection'
   | 'moveItemsToTracks'
   | 'closeGapAt'
@@ -146,6 +149,31 @@ export function editingSlice({ set, get, edit, editTimeline, currentTimeline }: 
           else delete found.item.disabled
         }
       })
+    },
+
+    setItemsEnabled(itemIds, enabled) {
+      const changed: string[] = []
+      editTimeline((tl) => {
+        for (const id of itemIds) {
+          const found = findItem(tl, id)
+          if (!found || found.track.locked) continue
+          if (enabled === !found.item.disabled) continue
+          if (enabled) delete found.item.disabled
+          else found.item.disabled = true
+          changed.push(id)
+        }
+      })
+      return changed
+    },
+
+    applyAngleSwitch(itemIds, segments) {
+      const holder: { value: { createdItemIds: string[]; disabledItemIds: string[] } } = {
+        value: { createdItemIds: [], disabledItemIds: [] }
+      }
+      editTimeline((tl) => {
+        holder.value = applyAngleSwitch(tl, itemIds, segments, () => newId('itm'))
+      })
+      return holder.value
     },
 
     nudgeSelection(delta) {

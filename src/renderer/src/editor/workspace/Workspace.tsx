@@ -23,7 +23,7 @@
  * survive a switch.
  */
 
-import { useCallback, type ReactNode } from 'react'
+import { useCallback, useMemo, type ReactNode } from 'react'
 import { useDefaultLayout } from 'react-resizable-panels'
 import { ErrorBoundary } from '@/components'
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable'
@@ -32,7 +32,7 @@ import { StatusBar } from '@/editor/StatusBar'
 import { Timeline } from '@/editor/Timeline'
 import { TopBar } from '@/editor/TopBar'
 import { useEditor } from '@/store/editor'
-import { AI_TOOL_PALETTE, AiLayout } from './AiLayout'
+import { aiToolPalette, AiLayout } from './AiLayout'
 import { Hosted, HostProvider, Slot, useHost } from './hosted'
 import { layoutStorage } from './layoutStorage'
 import { PageBar } from './PageBar'
@@ -57,6 +57,9 @@ export function Workspace({ onHome, onExport, saving }: WorkspaceProps): ReactNo
   const layoutMode = useEditor((state) => state.layoutMode)
   const aiPanels = useEditor((state) => state.aiPanels)
   const regions = layoutRegions(layoutMode, aiPanels)
+  // Smart mode: the palette follows the footage. Assets change on import, not per frame.
+  const assets = useEditor((state) => state.project.assets)
+  const palette = useMemo(() => aiToolPalette(assets), [assets])
 
   const dockLayout = useDefaultLayout({ id: 'bay.layout.dock', storage: layoutStorage })
   const agentDocked = useEditor((state) => state.agentDocked)
@@ -117,7 +120,7 @@ export function Workspace({ onHome, onExport, saving }: WorkspaceProps): ReactNo
           is the AI layout's; the dock keeps the starters grid only. */}
       <Hosted name="agent">
         <ErrorBoundary region="the agent panel">
-          <AgentPanel palette={regions.agent === 'primary' ? AI_TOOL_PALETTE : undefined} />
+          <AgentPanel palette={regions.agent === 'primary' ? palette : undefined} />
         </ErrorBoundary>
       </Hosted>
       <Hosted name="timeline">

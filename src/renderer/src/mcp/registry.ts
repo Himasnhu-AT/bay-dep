@@ -12,6 +12,7 @@ import { handlers as dubHandlers } from './dub'
 import { handlers as exportsHandlers } from './exports'
 import { handlers as feedbackHandlers } from './feedback'
 import { handlers as footageHandlers } from './footage'
+import { handlers as footageModeHandlers } from './footageMode'
 import { handlers as frameGridHandlers } from './frameGrid'
 import { handlers as generationHandlers } from './generation'
 import { handlers as highlightsHandlers } from './highlights'
@@ -23,6 +24,7 @@ import { handlers as promptKitsHandlers } from './promptKits'
 import { handlers as proposalsHandlers } from './proposals'
 import { handlers as readHandlers } from './read'
 import { handlers as scriptHandlers } from './script'
+import { handlers as speechHandlers } from './speech'
 import { handlers as stylesHandlers } from './styles'
 import { handlers as subtitlesHandlers } from './subtitles'
 import { handlers as templatesHandlers } from './templates'
@@ -44,6 +46,7 @@ export const HANDLER_GROUPS: Record<string, Handlers> = {
   'exports': exportsHandlers,
   'feedback': feedbackHandlers,
   'footage': footageHandlers,
+  'footageMode': footageModeHandlers,
   'frameGrid': frameGridHandlers,
   'generation': generationHandlers,
   'highlights': highlightsHandlers,
@@ -55,6 +58,7 @@ export const HANDLER_GROUPS: Record<string, Handlers> = {
   'proposals': proposalsHandlers,
   'read': readHandlers,
   'script': scriptHandlers,
+  'speech': speechHandlers,
   'styles': stylesHandlers,
   'subtitles': subtitlesHandlers,
   'templates': templatesHandlers,
@@ -77,6 +81,7 @@ export const HANDLERS: Handlers = {
   ...exportsHandlers,
   ...feedbackHandlers,
   ...footageHandlers,
+  ...footageModeHandlers,
   ...frameGridHandlers,
   ...generationHandlers,
   ...highlightsHandlers,
@@ -88,6 +93,7 @@ export const HANDLERS: Handlers = {
   ...proposalsHandlers,
   ...readHandlers,
   ...scriptHandlers,
+  ...speechHandlers,
   ...stylesHandlers,
   ...subtitlesHandlers,
   ...templatesHandlers,
