@@ -1,8 +1,8 @@
 <!--
 Migrated from the HyperFrames project (https://github.com/heygen-com/hyperframes),
 packages/../skills/hyperframes-core/references/variables-and-media.md, which is licensed Apache-2.0.
-Carried into bay unmodified except for this notice, because bay renders HyperFrames
-compositions and an agent writing one needs the same contract the renderer enforces.
+Adapted for bay: examples use a plain-JavaScript timeline rather than GSAP from a CDN,
+because a composition may load nothing from the network and bay ships no animation library.
 -->
 
 # Variables and Media
@@ -71,7 +71,7 @@ document.getElementById("title").textContent = title;
 
 **`<video>`/`<audio>` work at any nesting depth, including inside a sub-composition `<template>` or a wrapper `<div>`.** The runtime discovers media with a flat `document.querySelectorAll("video, audio")`, resolves each element's host composition via `element.closest("[data-composition-id]")`, and rebases its local `data-start` by the accumulated absolute start of every ancestor composition (`packages/core/src/runtime/{media,startResolver}.ts`). So a scene-specific clip can live in its scene's sub-comp with scene-local `data-start`, and it seeks/decodes correctly. If a panel renders blank after a render, that is a real bug: capture a per-frame `snapshot` and treat it as render-blocking.
 
-The one real constraint is about **timelines, not media placement**: a sub-composition timeline **cannot reach or animate host elements** — neither `document.querySelector("#host-id")` nor a gsap selector string (`tl.to("#host-id", …)`) resolves across the boundary; a sub-comp timeline only drives its own subtree. So if a media element lives at the host root, **its per-scene motion (scale/opacity/morph/tilt/breathing) must be authored on the MAIN timeline in `index.html`, at GLOBAL time** (scene-local time + the scene slot's `data-start`). Keeping the media inside the scene sub-comp instead lets that sub-comp's own timeline animate it with scene-local time. For 3D tilt without a perspective parent, use gsap `transformPerspective` on the element. See `composition-patterns.md` archetype B.
+The one real constraint is about **timelines, not media placement**: a sub-composition timeline **cannot reach or animate host elements** — neither `document.querySelector("#host-id")` nor any other selector resolves across the boundary; a sub-comp timeline only drives its own subtree. So if a media element lives at the host root, **its per-scene motion (scale/opacity/morph/tilt/breathing) must be authored on the MAIN timeline in `index.html`, at GLOBAL time** (scene-local time + the scene slot's `data-start`). Keeping the media inside the scene sub-comp instead lets that sub-comp's own timeline animate it with scene-local time. For 3D tilt without a perspective parent, put `perspective()` first in the element's own transform: `perspective(1200px) rotateY(12deg)`. See `composition-patterns.md` archetype B.
 
 Video elements must be muted and inline. Audio must be a separate `<audio>` element, even when it uses the same source file.
 
@@ -107,7 +107,7 @@ Video elements must be muted and inline. Audio must be a separate `<audio>` elem
 - **Never** add `crossorigin` to `<video>`/`<audio>`. `lint` rejects it unconditionally (`media_crossorigin_breaks_preview`, error) because a media host without `Access-Control-Allow-Origin` then fails silently in preview while renders still work, hiding the bug. There is no suppression, so this holds even for the canvas/WebGL/WebAudio readback case.
 - **Every `<audio>` needs an `id`.** The mixer selects `audio[id][src]`, so an id-less `<audio>` is never mixed and the render is **silent**. `lint` catches it as `media_missing_id`.
 - Audio always lives on a separate `<audio>` element — even if its source file is the same as a `<video>`. The `<video>` is muted; the `<audio>` carries sound.
-- For volume fades/ducking, animate `volume` on the timeline (`tl.to("#bgm", { volume: 0, duration: 1 }, "outro")`) rather than swapping `data-volume`. The runtime probes the timeline's volume keyframes and applies them identically in preview and render; `data-volume` is the static baseline for elements no tween touches. A tween's values REPLACE that baseline rather than scaling it, so on a clip whose gain is not `1` you scale the tween's targets instead (`{ volume: 1.95 }`, not `{ volume: 1 }`) — `lint` warns with `audio_volume_tween_overrides_gain` when the two disagree.
+- For volume fades/ducking, fade the **clip** on bay's timeline (its fade-in/out or volume), not the page. bay mixes each sound at its static `data-volume` and never reads volume set from script — see "Sound in bay" in the contract.
 
 For media duration: `<video>` and `<audio>` can omit `data-duration` if the media's intrinsic length is known and you want the full clip. Otherwise provide `data-duration` explicitly.
 

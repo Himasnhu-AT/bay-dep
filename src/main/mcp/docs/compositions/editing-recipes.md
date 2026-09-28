@@ -1,8 +1,8 @@
 <!--
 Migrated from the HyperFrames project (https://github.com/heygen-com/hyperframes),
 packages/../skills/hyperframes-core/references/creator-editing-recipes.md, which is licensed Apache-2.0.
-Carried into bay unmodified except for this notice, because bay renders HyperFrames
-compositions and an agent writing one needs the same contract the renderer enforces.
+Adapted for bay: examples use a plain-JavaScript timeline rather than GSAP from a CDN,
+because a composition may load nothing from the network and bay ships no animation library.
 -->
 
 # Creator Editing Recipes
@@ -238,21 +238,31 @@ Timeline math: duration is authored timeline time. Source math: consumed source 
 
 ## Zoom / punch
 
+The motion recipes below are lines inside the composition's `time(t)` (see `minimal-composition.md`), using these helpers — define them once per composition:
+
 ```js
-tl.to("#clip .inner", { scale: 1.35, xPercent: -8, duration: 0.18 }, 1);
+const clamp = (v) => Math.min(1, Math.max(0, v));
+const easeOut = (p) => 1 - Math.pow(1 - p, 3);
+// 0 before a, 1 after b, eased in between (pass (p) => p for linear).
+const progress = (t, a, b, ease = easeOut) => ease(clamp((t - a) / (b - a)));
+const mix = (from, to, p) => from + (to - from) * p;
+const inner = document.querySelector("#clip .inner");
 ```
 
-Timeline math: tween positions are composition seconds. Source math: unchanged; the core clip still selects source time. Audio follows: unchanged unless separately edited. Owner: `/hyperframes-keyframes`. Limit: target the inner wrapper, not the timed clip element.
+```js
+// inside time(t): punch in over 1.00–1.18s
+const p = progress(t, 1, 1.18);
+inner.style.transform = `translateX(${mix(0, -8, p)}%) scale(${mix(1, 1.35, p)})`;
+```
+
+Timeline math: `t` is composition seconds. Source math: unchanged; the core clip still selects source time. Audio follows: unchanged unless separately edited. Owner: `/hyperframes-keyframes`. Limit: target the inner wrapper, not the timed clip element.
 
 ## Pan / Ken Burns
 
 ```js
-tl.fromTo(
-  "#clip .inner",
-  { scale: 1.05, xPercent: 0 },
-  { scale: 1.2, xPercent: -12, duration: 4, ease: "none" },
-  0,
-);
+// inside time(t): linear drift over 0–4s
+const p = progress(t, 0, 4, (q) => q);
+inner.style.transform = `translateX(${mix(0, -12, p)}%) scale(${mix(1.05, 1.2, p)})`;
 ```
 
 Timeline math: move spans four authored seconds. Source math: unchanged. Audio follows: matching clip timing remains separate. Owner: `/hyperframes-keyframes`. Limit: authored geometry, not automatic face tracking.
@@ -260,7 +270,10 @@ Timeline math: move spans four authored seconds. Source math: unchanged. Audio f
 ## Crop / reframe
 
 ```js
-tl.to("#clip .inner", { clipPath: "inset(8% 12% 6% 10%)", xPercent: -4, duration: 1 }, 2);
+// inside time(t): crop in over 2–3s
+const p = progress(t, 2, 3);
+inner.style.clipPath = `inset(${mix(0, 8, p)}% ${mix(0, 12, p)}% ${mix(0, 6, p)}% ${mix(0, 10, p)}%)`;
+inner.style.transform = `translateX(${mix(0, -4, p)}%)`;
 ```
 
 Timeline math: crop interpolates over `[2,3]`. Source math: unchanged. Audio follows: no automatic change. Owner: `/hyperframes-keyframes`. Limit: inner wrapper only, not temporal trim.
@@ -268,12 +281,10 @@ Timeline math: crop interpolates over `[2,3]`. Source math: unchanged. Audio fol
 ## Clip-path wipe / reveal / mask / split-screen
 
 ```js
-tl.fromTo(
-  "#next .inner",
-  { clipPath: "polygon(0 0,0 0,0 100%,0 100%)" },
-  { clipPath: "polygon(0 0,100% 0,100% 100%,0 100%)", duration: 0.5 },
-  2,
-);
+// inside time(t): wipe the next shot in from the left over 2–2.5s
+const next = document.querySelector("#next .inner");
+const x = mix(0, 100, progress(t, 2, 2.5));
+next.style.clipPath = `polygon(0 0,${x}% 0,${x}% 100%,0 100%)`;
 ```
 
 Timeline math: overlap placed clips for the 0.5s handoff. Source math: each clip keeps its own range. Audio follows: place matching audio on its own tracks. Owner: `/hyperframes-keyframes` + `/hyperframes-animation`. Limit: visual mask/polygon/split-screen only; source cuts stay `/hyperframes-core`.
@@ -320,12 +331,14 @@ Timeline math: overlap placed clips for the 0.5s handoff. Source math: each clip
   data-automation='{"version":1,"lanes":[{"target":"volume","points":[{"t":0,"v":0},{"t":0.5,"v":1},{"t":3,"v":1}]}]}'
 ></audio>
 <script>
-  const tl = gsap.timeline({ paused: true });
-  tl.set("#b-visual", { autoAlpha: 0 }, 0)
-    .to("#a-visual", { autoAlpha: 0, duration: 0.5 }, 2.5)
-    .to("#b-visual", { autoAlpha: 1, duration: 0.5 }, 2.5);
-  window.__timelines = window.__timelines || {};
-  window.__timelines.main = tl;
+  const aVisual = document.getElementById("a-visual");
+  const bVisual = document.getElementById("b-visual");
+  function time(t) {
+    const p = Math.min(1, Math.max(0, (t - 2.5) / 0.5)); // 2.5–3s
+    aVisual.style.opacity = 1 - p;
+    bVisual.style.opacity = p;
+  }
+  window.__timelines.main = { time, duration: () => 5.5 };
 </script>
 ```
 

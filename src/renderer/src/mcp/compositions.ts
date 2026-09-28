@@ -10,7 +10,7 @@
  * agent that has to discover these by rendering and squinting will not discover them at all.
  */
 
-import { fatalFaults, type CompositionFault } from '@shared/composition'
+import { fatalFaults, faultsOnWrite, type CompositionFault } from '@shared/composition'
 import { bay } from '@/lib/bay'
 import { fail, type Handlers } from './helpers'
 import { store } from './helpers'
@@ -47,7 +47,11 @@ export async function writeComposition(
   // Frames of the old document are cached in the preview; they are not this document.
   store().markCompositionChanged(path)
 
-  const { info, faults } = await api.composition.inspect(path)
+  // A remote script is fatal here and only a warning on read (`faultsOnWrite` says why): the
+  // author is the caller, and a script the sandbox blocks makes a still frame, not a clip.
+  const inspected = await api.composition.inspect(path)
+  const info = inspected.info
+  const faults = faultsOnWrite(inspected.faults)
   const fatal = fatalFaults(faults)
 
   // Written either way — an agent fixing a composition needs the broken file on disk to edit,

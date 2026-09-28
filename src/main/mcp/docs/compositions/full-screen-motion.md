@@ -1,8 +1,8 @@
 <!--
 Migrated from the HyperFrames project (https://github.com/heygen-com/hyperframes),
 packages/../skills/hyperframes-core/references/full-screen-motion.md, which is licensed Apache-2.0.
-Carried into bay unmodified except for this notice, because bay renders HyperFrames
-compositions and an agent writing one needs the same contract the renderer enforces.
+Adapted for bay: examples use a plain-JavaScript timeline rather than GSAP from a CDN,
+because a composition may load nothing from the network and bay ships no animation library.
 -->
 
 # Full-Screen Motion Pattern
@@ -19,7 +19,7 @@ Stacking opaque scene divs means every scene change has to repaint the entire fr
 <style>
   /* The runtime auto-positions root children that carry data-start. The shared
      background deliberately has none, so it gets NO automatic layout and must
-     size itself, or #bg is 0px tall and the tween paints nothing. */
+     size itself, or #bg is 0px tall and the timeline paints nothing. */
   #bg.full-bleed {
     position: absolute;
     inset: 0;
@@ -55,17 +55,26 @@ Stacking opaque scene divs means every scene change has to repaint the entire fr
 </div>
 
 <script>
-  window.__timelines = window.__timelines || {};
-  const tl = gsap.timeline({ paused: true });
+  const clamp = (v) => Math.min(1, Math.max(0, v));
+  const sineInOut = (p) => 0.5 - Math.cos(Math.PI * p) / 2;
+  const easeOut = (p) => 1 - Math.pow(1 - p, 3);
+  const mixRgb = (a, b, p) => `rgb(${a.map((v, i) => Math.round(v + (b[i] - v) * p)).join(",")})`;
 
-  // Drive the shared background from the seekable timeline.
-  tl.to("#bg", { backgroundColor: "#0a1530", duration: 6, ease: "sine.inOut" }, 0);
-  tl.to("#bg", { backgroundColor: "#1a0a30", duration: 14, ease: "sine.inOut" }, 6);
+  const bg = document.getElementById("bg");
+  const heading = document.querySelector("#scene1 h1");
+  function time(t) {
+    // Drive the shared background from t: black → navy over 0–6s, navy → violet over 6–20s.
+    bg.style.backgroundColor =
+      t < 6
+        ? mixRgb([0, 0, 0], [10, 21, 48], sineInOut(clamp(t / 6)))
+        : mixRgb([10, 21, 48], [26, 10, 48], sineInOut(clamp((t - 6) / 14)));
 
-  // Scene-local animations stay transparent on top.
-  tl.from("#scene1 h1", { y: 48, opacity: 0, duration: 0.6 }, 0.2);
-
-  window.__timelines["main"] = tl;
+    // Scene-local animations stay transparent on top.
+    const p = easeOut(clamp((t - 0.2) / 0.6));
+    heading.style.opacity = p;
+    heading.style.transform = `translateY(${(1 - p) * 48}px)`;
+  }
+  window.__timelines["main"] = { time, duration: () => 20 };
 </script>
 ```
 

@@ -1,8 +1,8 @@
 /**
  * HyperFrames compositions as a source of pictures.
  *
- * A composition is an HTML file that declares its own timing and exposes a **paused** GSAP
- * timeline at `window.__timelines[<data-composition-id>]`. Seeking it is `timeline.time(t)`,
+ * A composition is an HTML file that declares its own timing and exposes a timeline — any
+ * object with `time(seconds)` and `duration()` — at `window.__timelines[<data-composition-id>]`. Seeking it is `timeline.time(t)`,
  * and the picture that results is a function of `t` alone. That last property is the whole
  * reason this can be a clip at all, and it is measured rather than assumed — 90 captures
  * across forward, reverse and shuffled orderings produced identical pixels for identical
@@ -164,6 +164,7 @@ export type CompositionFaultCode =
   | 'bad-duration'
   | 'no-size'
   | 'remote-resource'
+  | 'remote-script'
   | 'outside-folder'
   | 'wrapped-in-template'
   | 'bad-variables'
@@ -277,8 +278,33 @@ export function readComposition(html: string, compositionPath?: string): {
 
   // bay's CSP permits no remote origin, so a composition that fetches its libraries or fonts
   // renders without them and looks merely wrong. Cheaper to say so here.
+  // A remote *script* is its own code, because it is worse than a missing font: whatever the page
+  // builds its timeline with never arrives, so the clip is a still frame. `write_composition`
+  // refuses it (`faultsOnWrite`); here, where a file already on disk is read, it stays a warning
+  // so a project that already holds one still opens.
+  const scriptTags = [...html.matchAll(/<script\b[^>]*>/gi)].map((m) => ({
+    start: m.index,
+    end: m.index + m[0].length
+  }))
   for (const remote of html.matchAll(/(?:src|href)\s*=\s*["'](https?:)?\/\/[^"']+["']/gi)) {
     if (audioTags.some((tag) => remote.index >= tag.start && remote.index < tag.end)) continue
+    if (scriptTags.some((tag) => remote.index >= tag.start && remote.index < tag.end)) {
+      const line = lineOf(remote.index)
+      faults.push({
+        code: 'remote-script',
+        message:
+          `Line ${line} loads a script over the network (${truncate(remote[0])}). A composition ` +
+          `may load only files in its own folder, so this script never runs and anything built ` +
+          `with it (a GSAP timeline, say: "gsap is not defined") is missing — the clip renders ` +
+          `as a still frame. bay ships no animation library. Delete the tag and register a plain ` +
+          `timeline instead: window.__timelines["<id>"] = { time(t) { /* set styles from t */ }, ` +
+          `duration: () => <seconds> } (bay://guide/composition/minimal). Or copy a library ` +
+          `you are licensed to use next to the composition and load it by relative path.`,
+        line,
+        fatal: false
+      })
+      continue
+    }
     faults.push({
       code: 'remote-resource',
       message:
@@ -735,6 +761,21 @@ function truncate(text: string, max = 70): string {
 /** The fatal faults, which are the ones that stop a composition being placed at all. */
 export function fatalFaults(faults: readonly CompositionFault[]): CompositionFault[] {
   return faults.filter((fault) => fault.fatal)
+}
+
+/**
+ * The faults as `write_composition` weighs them: a remote script is fatal there.
+ *
+ * Fatal on write and a warning on read, deliberately. At write time the author is the caller and
+ * can fix it in the next call, the file is on disk to edit, and there is no configuration in which
+ * the script runs — the sandbox cancels the request, the CSP forbids it, and nothing warns on the
+ * page. Accepting it means placing a clip that is a still frame and reporting success. On read the
+ * file may be an existing project's, whose owner is not the one calling: refusing it there would
+ * stop a project that opened yesterday from opening today. A remote font or stylesheet stays a
+ * warning on both sides, because the page still renders, only with a substituted face.
+ */
+export function faultsOnWrite(faults: readonly CompositionFault[]): CompositionFault[] {
+  return faults.map((fault) => (fault.code === 'remote-script' ? { ...fault, fatal: true } : fault))
 }
 
 /** A composition's authored duration as bay counts source time. */

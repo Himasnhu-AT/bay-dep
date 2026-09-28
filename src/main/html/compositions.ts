@@ -1,7 +1,7 @@
 /**
  * HyperFrames compositions, rendered by seeking an offscreen page.
  *
- * A composition is an HTML file whose animation hangs off one **paused** GSAP timeline at
+ * A composition is an HTML file whose animation hangs off one timeline (any object with `time(seconds)` and `duration()`) at
  * `window.__timelines[<id>]`. Seeking it is `timeline.time(seconds)` and the resulting picture
  * depends on nothing but that number — measured, not assumed: 90 captures of a real composition
  * across forward, reverse and shuffled orderings gave identical pixels for identical times.
