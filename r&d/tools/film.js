@@ -51,7 +51,11 @@
     const a = { ...pos }
     const t0 = performance.now()
     return new Promise((done) => {
-      const step = (now) => {
+      // performance.now, not rAF's timestamp: under render-frames' virtual clock rAF fires about
+      // three times per frame and its timestamp advances 16.7 ms each time, so a move timed from
+      // it ran ~3× fast (measured 2026-09-28); performance.now follows the clock frames are taken on.
+      const step = () => {
+        const now = performance.now()
         const t = Math.min(1, (now - t0) / ms)
         const k = easeInOut(t)
         const g = goal()
