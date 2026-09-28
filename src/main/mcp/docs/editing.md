@@ -325,10 +325,10 @@ as they do on video.
 
 ## Exporting
 
-`export_timeline` renders the timeline to a file and returns a job id at once (or, with
-`wait: true`, waits up to 120 s for it). Then call `track_export` with `waitSeconds: 120`: it
-answers the moment the export finishes, and if it is still rendering, call it again the same way —
-never back to back, since every answer lands in your context. Check that result before
+`export_timeline` renders the timeline to a file and returns when the export has finished (up to
+30 minutes), with the final result: stage, output path, `complete`, `findings` and the delivered
+loudness. `wait: false` returns the job id at once instead; `track_export { jobId }` then waits
+for the same result. Check that result before
 telling the user it is done. `complete: false` means some frames of the file are wrong: written
 before a graphic on them (a `.brf`, a composition) had rendered, or with a clip whose grade could
 not be applied. The `warning` names the frames and what is wrong on them, and

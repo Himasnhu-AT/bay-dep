@@ -6,11 +6,10 @@ export const order = 358
 export const tool: ToolSpec = {
   name: 'track_dub',
   description:
-    'Status of a dub apply_dub started. It waits while lines generate — up to ' +
-    'waitSeconds (default 30, at most 120), starting queued lines as job slots free up — and ' +
-    'returns the moment the dub is placed; still generating, it says how many lines are done, ' +
-    'running, queued and failed. Pass waitSeconds: 120 rather than calling it repeatedly, and call ' +
-    'again the same way while it is still generating, never in a tight loop. When every line has landed it imports them and places them at their cues ' +
+    'Status of a dub apply_dub started. It waits while the lines generate ' +
+    '(up to 30 minutes), starting queued lines as job slots free up, and answers once the dub is ' +
+    'placed; waitSeconds sets a shorter upper bound, and 0 reads how many lines are done, running, ' +
+    'queued and failed at once. When every line has landed it imports them and places them at their cues ' +
     'on the "Dub (<language>)" audio track, fitted to their slots, and ducks or mutes the original — ' +
     'all one undo step — and returns what was placed, lines sped up (with warnings past the ' +
     'accepted tempo), lines refused as too long (with the cut to make), failed lines, and the ' +

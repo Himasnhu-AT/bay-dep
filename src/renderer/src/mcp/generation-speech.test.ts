@@ -109,7 +109,7 @@ test('validateOnly prices and sizes the read and starts nothing; the same call w
   assert.equal(started[0]!.prompt, TEXT)
   assert.equal(started[0]!.voice, 'coral')
   assert.equal(started[0]!.style, 'warm')
-  assert.match(String(value(real).next), /track_generation \{ jobId: "job-1", waitSeconds: 120 \}/)
+  assert.match(String(value(real).next), /Call track_generation \{ jobId: "job-1" \} before your final answer — it waits/)
   assert.equal(useEditor.getState().past.length, pastBefore, 'starting a job is not an edit')
 })
 
@@ -138,7 +138,7 @@ test('with no key the call is refused with where to set it, and a dry run report
 test('track_generation: a landed voiceover is imported and placed on an audio track at the frame, in one undo step', async () => {
   await call('generate_speech', { model: 'gpt-4o-mini-tts', text: 'Welcome to the launch.' })
   const running = await call('track_generation', { jobId: 'job-1', waitSeconds: 0 })
-  assert.match(String(value(running).next), /Call track_generation again with jobId "job-1" and waitSeconds/)
+  assert.match(String(value(running).next), /^Still running after 0s\. Call track_generation \{ jobId: "job-1" \} to keep waiting/)
   assert.equal(imported.length, 0)
 
   Object.assign(jobs[0]!, { status: 'done', outputPath: '/data/generated/welcome-abc.mp3', findings: [] })

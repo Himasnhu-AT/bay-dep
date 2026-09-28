@@ -12,7 +12,7 @@
  *
  * When a job lands, the file is imported through the ordinary import path (`media.importPaths`,
  * as `import_media` does), so it is an asset like any other, admitted to `bay://` by main, and
- * deduplicated by path — polling a finished job again returns the same asset. Adding it and
+ * deduplicated by path — tracking a finished job again returns the same asset. Adding it and
  * placing it are one `transact`: one undo step.
  */
 
@@ -31,7 +31,6 @@ import { estimateSpeech, type SpeechEstimate, type SpeechPace } from '@shared/sp
 import { bay } from '@/lib/bay'
 import { ToolError, fail, project, resolveAsset, store, usToFramesAtTimeline, type CallContext, type Handlers } from './helpers'
 import { stillWorking, waitSecondsOf, waitUntil } from './wait'
-import { WAIT_MAX_SECONDS } from '@shared/tools/fields'
 import { placeAsset } from './write'
 
 function api(): NonNullable<ReturnType<typeof bay>> {
@@ -92,7 +91,7 @@ async function generate(kind: GenerationKind, args: Record<string, unknown>): Pr
   const started = await api().generation.start(request)
   if (!started.ok) fail(started.error)
   // A submission refused at once (a bad key, a prompt the provider will not take) is already
-  // failed here; telling the agent to poll it would only delay the error it needs now.
+  // failed here; sending the agent to track it would only delay the error it needs now.
   if (started.job.status === 'failed') {
     fail(`${label} refused the request: ${started.job.error ?? 'no reason was given'}. Nothing was imported.`)
   }
@@ -101,8 +100,8 @@ async function generate(kind: GenerationKind, args: Record<string, unknown>): Pr
     ...sessionSpend(started.spending),
     defaultsApplied,
     next:
-      `Call track_generation { jobId: "${started.job.id}", waitSeconds: ${WAIT_MAX_SECONDS} } — it waits and returns ` +
-      'the moment the job is done or failed; call it again the same way if it is still running, before your final answer.'
+      `Call track_generation { jobId: "${started.job.id}" } before your final answer — it waits until the job is ` +
+      'done or failed and then imports the result.'
   }
 }
 
@@ -175,8 +174,8 @@ async function speak(args: Record<string, unknown>): Promise<Record<string, unkn
     estimatedSpeech: estimated,
     defaultsApplied,
     next:
-      `Call track_generation { jobId: "${started.job.id}", waitSeconds: ${WAIT_MAX_SECONDS} } — it waits and returns ` +
-      'the moment the job is done or failed; call it again the same way if it is still running, before your final answer.'
+      `Call track_generation { jobId: "${started.job.id}" } before your final answer — it waits until the job is ` +
+      'done or failed and then imports the result.'
   }
 }
 
@@ -236,7 +235,7 @@ function summarise(job: GenerationJob): Record<string, unknown> {
 }
 
 /** How often a waiting `track_generation` asks main: an IPC round trip each, and jobs take seconds to minutes. */
-const GENERATION_POLL_MS = 2000
+const GENERATION_CHECK_MS = 2000
 
 async function track(args: Record<string, unknown>, context?: CallContext): Promise<Record<string, unknown>> {
   const bridge = api()
@@ -263,7 +262,7 @@ async function track(args: Record<string, unknown>, context?: CallContext): Prom
       latest = await bridge.generation.job(id)
       return !running(latest)
     },
-    { seconds, pollMs: GENERATION_POLL_MS, context }
+    { seconds, everyMs: GENERATION_CHECK_MS, context }
   )
   // Main forgot the job while this call waited. Answering from the last look would say "still
   // working" about a job that no longer exists, and the agent would wait on it for good.
@@ -282,7 +281,7 @@ async function track(args: Record<string, unknown>, context?: CallContext): Prom
   const waited = { waited: outcome.waited }
 
   if (job.status === 'queued' || job.status === 'running') {
-    return { ...summarise(job), ...waited, next: stillWorking('track_generation', `jobId "${id}"`, outcome) }
+    return { ...summarise(job), ...waited, next: stillWorking(`track_generation { jobId: "${id}" }`, job.status === 'queued' ? 'queued' : 'running', outcome) }
   }
   if (job.status === 'failed') {
     return {
@@ -323,7 +322,7 @@ async function track(args: Record<string, unknown>, context?: CallContext): Prom
     hasAudio: imported.hasAudio,
     hasVideo: imported.hasVideo
   }
-  // Polling a finished job again is normal (the agent re-checks before its final answer); with
+  // Tracking a finished job again is normal (the agent re-checks before its final answer); with
   // `place: true` it must not lay a second copy of the clip. Placed means on any timeline.
   const current = project()
   const known = current.assets.find((a) => a.id === imported.id || (a.path !== null && a.path === imported.path))

@@ -34,7 +34,7 @@ export const style: EditingStyle = {
     '10. Layout: text left from about 10% of the width with the product right, or a centred statement near 57% of the height, or a title in the top 15% with the product below [perry].',
     '11. Something is alive in every frame: one small motion per scene on the beat (a decay of exp(−10·(t mod beat))), and during holds a blink, a bob or a slow drift [perry].',
     '12. Sound on every visible action if the user supplied effects: a click on the frame each press happens (find it with frame_grid), a soft impact on reveals, 10–20 dB under the music (rule of thumb). The music ends on the last frame.',
-    '13. Check with preview_frame at each cut, mid-entrance, at rest and 0.1 s before the next cut, then frame_grid over the whole film. If asked to export: export_timeline mp4, quality "best", loudness "streaming", then track_export until complete.'
+    '13. Check with preview_frame at each cut, mid-entrance, at rest and 0.1 s before the next cut, then frame_grid over the whole film. If asked to export: export_timeline mp4, quality "best", loudness "streaming" — it returns when the export is finished; check `complete`.'
   ].join('\n'),
   params: {
     canvas: 'landscape-1080',

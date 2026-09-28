@@ -259,7 +259,7 @@ export const BAY_SKILLS: readonly BaySkill[] = [
       '3. Translate every cue yourself, reading the three cues before and after it for context but translating only its own words. Keep the meaning, add no facts, drop fillers and stutters, and write numbers as they are said.',
       '4. Check each line that looks long with estimate_speech (language, targetSeconds = its slot). Rewrite any that run over as a shorter, natural spoken line that keeps the core meaning and adds no new facts. A small overrun is fine: bay speeds a line up a little to fit.',
       '5. Call apply_dub with validateOnly: true, the planId and all your lines. If it refuses lines as too long, shorten exactly those by the characters it names and try again. When it passes, tell the user the total estimated cost and the number of lines, and wait for their go-ahead. If it says the budget or a missing key blocks it, tell them what to change in Preferences › AI providers.',
-      '6. On their go-ahead, call apply_dub without validateOnly, then track_dub with the dubId and waitSeconds: 120 (again the same way while it is generating) until it says placed. Report any warnings (lines sped up past the natural range), refused or failed lines; offer to redo those with apply_dub partial: true.',
+      '6. On their go-ahead, call apply_dub without validateOnly, then track_dub with the dubId, which waits until the dub is placed. Report any warnings (lines sped up past the natural range), refused or failed lines; offer to redo those with apply_dub partial: true.',
       '7. Look at the dubbed stretch with frame_grid, and say plainly that you cannot hear the audio, so the user should listen. If they want translated subtitles too, pass track_dub\'s captionCues to add_captions.',
       '',
       PROPOSE
@@ -318,7 +318,7 @@ export const BAY_SKILLS: readonly BaySkill[] = [
       '   For one hero moment (the hook or the payoff), extruded 3D type the camera flies through is available: <scene3d> with <text3d> in the same .brf (bay://guide/brf, "Fly through a 3D title"). Use it once, not in every scene.',
       '8. Close on the product name and one line, over the product still moving (dimmed), with one call to action if the user gave one.',
       '9. Review like an editor, twice: preview_frame at the start, middle and end of every shot, then frame_grid over the whole timeline. Look for text on busy picture, collisions, black flashes, a cursor you cannot find, a beat with nothing moving. Fix, run frame_grid again, and list what you changed in each pass.',
-      '10. If asked to export: export_timeline (mp4, quality best, loudness streaming), track_export with waitSeconds: 120 until it is complete (never back to back), and report beat by beat what is on screen plus anything you could not do as asked.',
+      '10. If asked to export: export_timeline (mp4, quality best, loudness streaming), which returns when the export is finished; check `complete` and `findings`, and report beat by beat what is on screen plus anything you could not do as asked.',
       '',
       GOLDEN,
       '',

@@ -77,7 +77,8 @@ function finishMastered(jobId: string, target: { integratedLufs: number; truePea
   })
 }
 
-const ARGS = { outputPath: '/tmp/news.wav', format: 'wav' }
+// `wait: false`: these cases finish the job themselves after the call returns.
+const ARGS = { outputPath: '/tmp/news.wav', format: 'wav', wait: false }
 
 test('a mastered export is remembered, and the next export without loudness masters to it and says so', async () => {
   const { first, second } = load()

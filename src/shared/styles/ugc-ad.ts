@@ -35,7 +35,7 @@ export const style: EditingStyle = {
     '10. Call to action: spoken, plus add_template { templateId: "end-card" } with the offer and the action, for at least 2 s.',
     '11. Hook variants: bay has no tool to duplicate a project, so build them one at a time — export the cut with hook A, replace the hook segment with hook B\'s take (remove_range the old hook, place_asset the new one at frame 0), export again, and so on. Keep everything after the hook identical and name the files "hook A", "hook B"… Tell the user each variant\'s length.',
     '12. Music, if any: a light bed on its own track, edit_item on the MUSIC clip volume about 0.05 (≈ −26 dB, rule of thumb) with duck { keyTrackId: the voice track\'s id }.',
-    '13. Review with frame_grid, then if asked export_timeline mp4 with loudness "streaming" (−14 LUFS) and track_export until complete.'
+    '13. Review with frame_grid, then if asked export_timeline mp4 with loudness "streaming" (−14 LUFS) — it returns when the export is finished; check `complete`.'
   ].join('\n'),
   params: {
     canvas: 'vertical-1080',
