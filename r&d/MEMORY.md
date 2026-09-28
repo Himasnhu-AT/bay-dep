@@ -27,11 +27,16 @@ and **Open questions**. Keep entries short, and link to files instead of copying
 
 ## In progress
 
-- [ ] podclip audit → `research/podclip.md` (podcast editing, subtitles, clips; licence; smart-mode signals). Research agent, 2026-09-28. Then fact-check it; then design the smart podcast editor (modes by footage type, one-click tool buttons).
-- [ ] Informative raw clips (facts suited to motion graphics) → `sources/informative-clips.md`. Research agent.
-- [ ] Workspace layout modes: "Resolve" (current) vs "AI" (chat + preview + media only; the rest behind buttons). Engineer in a worktree.
-- [ ] `/compare` no-scroll UX (before/after both visible in one viewport, labelled, caption moved aside). Engineer in a worktree.
-- [ ] News explainer: the NASA re-download (verified parts), then a bay job.
+(2026-09-28)
+- [x] podclip audit → `research/podclip.md` + audit §8 (usable with corrections: refuse single-camera switching; don't compare search_footage scores; onset-to-cut 0.30 s; early cut 0.10 s).
+- [x] three.js research → `research/threejs.md` + audit §9. It confirmed the `.brf` worker could reach the GPU; fixed in 734dccf (OffscreenCanvas removed, mutation-proven).
+- [x] Layout modes "Resolve" | "AI" (⌘⇧A, top-bar switch), merged 39d3be0 after review fixes (e2ce94a). Verified in the app: one viewer canvas across switches, the timeline drawer, Escape, the draft surviving a switch, the viewer drawing (mean RGB 73.6 at 3 s).
+- [ ] Podcast tools (set_item_enabled, remove_silences, switch_speakers, level_voices, sync_angles, detect_footage_mode, `podcast` skill, @shared/footage-mode). Branch `worktree-agent-a2ad3d827cca8c94a`. Review fixes in progress: re-check the timeline after analysis, the J/L stand-in for switched sound, detach refusals, and palette buttons in the AI layout.
+- [ ] 3D text `<scene3d>/<text3d>` in `.brf` (three + opentype.js + Inter, rendered by the engine; the worker stays GPU-free). Branch `worktree-agent-a6a5b05b656fa532b`. Review fixes in progress: probe glyphs in write_brf, unit geometry + scale, forceContextLoss. The in-app probe is `test/app/scene3d.mjs`.
+- [ ] Masking (text behind the subject): masking-researcher → `research/masking.md`, then the auditor. Model licences: MODNet, BiRefNet, BEN2, MediaPipe and SAM2/EdgeTAM are OK; RVM, RMBG and MatAnyone are excluded.
+- [ ] Informative raw clips → `sources/informative-clips.md` (agent running).
+- [ ] News explainer: NASA SOTS truncated at 110 s clean (`~/Movies/bay-rnd/news/raw/kelsey-young-sots-110s.mp4`; the roll-in download failed). The brief was rewritten to use motion graphics instead of roll-ins. bay job running, recording to `~/Movies/bay-rnd/news/bay-run.mp4`.
+- [ ] GSAP-from-CDN in the composition guide (audit §9): blocked by the sandbox; fix the guide.
 
 - [~] talk-to-short (clip 1): **paused by owner** 2026-09-27, mid-edit. The project "raylib talk to short" is saved in bay with 12 segments (48.8 s); the speaker layer is not built yet.
 - [x] perry film study → `research/perry-film-motion.md`.
@@ -181,3 +186,4 @@ and **Open questions**. Keep entries short, and link to files instead of copying
     checklist + the φ brief block.
   - Candidate feature work surfaced: a silence detector using auto-editor's defaults; reframing/speaker
     tracking.
+- **2026-09-28** (coordinator): OffscreenCanvas lockdown fix; AI layout merged and verified in the app; podcast and 3D branches reviewed (no blockers; fixes sent back); news job started.
