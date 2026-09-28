@@ -2,8 +2,8 @@ import type { ReactNode } from 'react'
 import { AlertTriangle } from 'lucide-react'
 import type { Item, Project, Timeline } from '@shared/project'
 import { resolveAudioOffsets, MAX_DUCK_DB } from '@shared/audio-gain'
-import { asSentences, audioNoteForPerson, commonValue, dbToGain, formatDb, formatPan, gainToDb, MAX_VOLUME_DB, VOLUME_DB_FLOOR } from '@shared/inspector'
-import { Field, NumberField, Section, SectionReset, Select, SliderField, Switch } from '@/components'
+import { asSentences, audioNoteForPerson, commonValue, dbToGain, formatDb, formatPan, gainToDb, MAX_VOLUME_DB, spokenPan, VOLUME_DB_FLOOR } from '@shared/inspector'
+import { Field, Knob, NumberField, Section, SectionReset, Select, SliderField, Switch } from '@/components'
 import { useEditor } from '@/store/editor'
 import { editItems } from './inspectorEdit'
 import { Keyed } from './KeyframeControls'
@@ -100,11 +100,10 @@ export function AudioSection({
           gesture={LIVE}
         />
       </Keyed>
-      {/* Static, not keyed. Double-click the caption, track or readout to centre. */}
-      <div className="mt-1.5">
-        <SliderField
-          label="Pan"
-          ariaLabel="Pan, left to right. Double-click to centre"
+      {/* A knob, as on a mixer's channel strip. Static, not keyed. Double-click to centre. */}
+      <Field label="Pan" className="mt-1.5">
+        <Knob
+          label="Pan, left to right"
           min={-1}
           max={1}
           step={0.01}
@@ -112,11 +111,14 @@ export function AudioSection({
           value={pan.value ?? 0}
           mixed={pan.mixed}
           format={formatPan}
+          valueText={spokenPan}
           onCommit={(next) => editItems(ids, () => ({ pan: next }))}
           defaultValue={0}
           gesture={LIVE}
+          size={24}
+          readout="side"
         />
-      </div>
+      </Field>
 
       <h4
         className="mt-3 mb-1.5 text-[11px] font-medium text-ink-1"

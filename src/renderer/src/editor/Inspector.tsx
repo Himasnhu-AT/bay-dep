@@ -23,6 +23,7 @@ import {
   type Layout
 } from '@shared/project'
 import {
+  AngleDial,
   Field,
   NumberField,
   Panel,
@@ -622,8 +623,20 @@ export function Inspector(): ReactNode {
               onCommit={(next) => applyLayout({ height: Math.max(1, next) })} min={1} suffix="px" gesture={LIVE} />
           </Keyed>
           <Keyed diamond={pictureDiamond('rotation')}>
-            <NumberField row label="Rotation" value={rotation.value} mixed={rotation.mixed}
-              onCommit={(next) => applyLayout({ rotation: next })} precision={1} suffix="°" defaultValue={0} gesture={LIVE} />
+            <div className="flex items-center gap-1.5">
+              <NumberField row className="min-w-0 flex-1" label="Rotation" value={rotation.value} mixed={rotation.mixed}
+                onCommit={(next) => applyLayout({ rotation: next })} precision={1} suffix="°" defaultValue={0} gesture={LIVE} />
+              {/* A dial beside the number, as After Effects draws its angle controls: the number
+                  keeps revolutions (720° is two turns), the dial shows where the clip points. */}
+              <AngleDial
+                label="Rotation dial"
+                value={rotation.value}
+                mixed={rotation.mixed}
+                onCommit={(next) => applyLayout({ rotation: next })}
+                defaultValue={0}
+                gesture={LIVE}
+              />
+            </div>
           </Keyed>
           {/* A zoom about the centre, like Rotation: it enlarges a title rather than reflowing
               it, and it is what a push-in keys. */}

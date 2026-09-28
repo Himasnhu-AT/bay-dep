@@ -1,7 +1,7 @@
 import { useMemo, type ReactNode } from 'react'
 import { Headphones, VolumeX } from 'lucide-react'
-import { dbToGain, formatDb, formatPan, gainToDb, MAX_VOLUME_DB, VOLUME_DB_FLOOR } from '@shared/inspector'
-import { Slider } from '@/components'
+import { dbToGain, formatDb, formatPan, gainToDb, MAX_VOLUME_DB, spokenPan, VOLUME_DB_FLOOR } from '@shared/inspector'
+import { Fader, Knob } from '@/components'
 import { cn } from '@/lib/cn'
 import { selectTimeline, useEditor } from '@/store/editor'
 import { useExportSession } from '../export-session'
@@ -19,9 +19,9 @@ export interface MixerProps {
  * and a live meter of the track's signal — and a Master strip with the mix's stereo meter, a dB
  * scale and the last render's measured loudness.
  *
- * There are no faders or pan knobs: a track has no volume or pan in the project model, only its
- * clips do (the Audio panel beside this sets the selected clip's). Adding track faders is a
- * `.bay` field, which this page does not add.
+ * Each strip has a pan knob and a vertical dB fader beside its meter, as a console lays them out:
+ * `track.pan` and `track.volume`, applied after each clip's own (the Audio panel beside this sets
+ * the selected clip's).
  */
 export function Mixer({ className }: MixerProps): ReactNode {
   const project = useEditor((state) => state.project)
@@ -75,10 +75,15 @@ function ChannelStrip({ channel }: { channel: MixerChannel }): ReactNode {
           {track.name}
         </span>
       </div>
-      <div className="flex min-h-0 flex-1 flex-col items-center">
-        <AudioMeter orientation="vertical" trackId={track.id} label={`${track.name} level`} readout />
+      <TrackPan trackId={track.id} name={track.name} pan={track.pan ?? 0} />
+      {/* The meter and the fader side by side, as on a console: the level you set beside the
+          level you get. */}
+      <div className="flex min-h-0 flex-1 items-stretch justify-center gap-1.5">
+        <div className="flex min-h-0 flex-col items-center">
+          <AudioMeter orientation="vertical" trackId={track.id} label={`${track.name} level`} readout />
+        </div>
+        <TrackFader trackId={track.id} name={track.name} volume={track.volume ?? 1} />
       </div>
-      <TrackFader trackId={track.id} name={track.name} volume={track.volume ?? 1} pan={track.pan ?? 0} />
       <div className="grid grid-cols-2 gap-1">
         <button
           type="button"
@@ -113,40 +118,47 @@ function ChannelStrip({ channel }: { channel: MixerChannel }): ReactNode {
 }
 
 /**
- * The track's fader and pan: `track.volume` and `track.pan`, applied after each clip's own by the
- * one gain function preview and export share (`itemAudioGainAt`, `routedPanGains`). Each commits
- * once at the end of a drag, so a move is one undo step; double-click puts it back to 0 dB/centre.
+ * The track's fader: `track.volume`, applied after each clip's own by the one gain function
+ * preview and export share (`itemAudioGainAt`). Vertical and in dB with a log taper, unity marked
+ * (`Fader`). A drag lands live and is one undo step; double-click puts it back to 0 dB.
  */
-function TrackFader({ trackId, name, volume, pan }: { trackId: string; name: string; volume: number; pan: number }): ReactNode {
+function TrackFader({ trackId, name, volume }: { trackId: string; name: string; volume: number }): ReactNode {
   const patchTrack = useEditor((state) => state.patchTrack)
-  const db = gainToDb(volume)
-  const shownDb = Number.isFinite(db) ? Math.max(VOLUME_DB_FLOOR, db) : VOLUME_DB_FLOOR
   return (
-    <div className="flex flex-col gap-1">
-      <div title="Track volume. Double-click for 0 dB.">
-        <div className="flex items-baseline justify-between text-[9px] text-ink-2">
-          <span>Vol</span>
-          <span className="font-mono text-ink-1 tabular-nums">{formatDb(shownDb)}</span>
-        </div>
-        <Slider
-          label={`${name} volume in decibels`}
-          min={VOLUME_DB_FLOOR}
-          max={Number(MAX_VOLUME_DB.toFixed(2))}
-          step={0.5}
-          origin={0}
-          value={shownDb}
-          onCommit={(next) => patchTrack(trackId, { volume: dbToGain(next) })}
-          defaultValue={0}
-          gesture={LIVE}
-        />
-      </div>
-      <div title="Track pan. Double-click to centre.">
-        <div className="flex items-baseline justify-between text-[9px] text-ink-2">
-          <span>Pan</span>
-          <span className="font-mono text-ink-1 tabular-nums">{formatPan(pan)}</span>
-        </div>
-        <Slider label={`${name} pan, left to right`} min={-1} max={1} step={0.01} bipolar value={pan} onCommit={(next) => patchTrack(trackId, { pan: next })} defaultValue={0} gesture={LIVE} />
-      </div>
+    <Fader
+      label={`${name} volume`}
+      value={gainToDb(volume)}
+      floorDb={VOLUME_DB_FLOOR}
+      maxDb={MAX_VOLUME_DB}
+      format={formatDb}
+      marks={false}
+      className="w-7"
+      // Unity is stored as absence, so a mixer left at 0 dB saves unchanged.
+      onCommit={(db) => patchTrack(trackId, { volume: dbToGain(db) })}
+      gesture={LIVE}
+    />
+  )
+}
+
+/** The track's pan knob: `track.pan`, composed with each clip's pan per channel (`routedPanGains`). */
+function TrackPan({ trackId, name, pan }: { trackId: string; name: string; pan: number }): ReactNode {
+  const patchTrack = useEditor((state) => state.patchTrack)
+  return (
+    <div className="flex items-center justify-center">
+      <Knob
+        label={`${name} pan`}
+        value={pan}
+        min={-1}
+        max={1}
+        step={0.01}
+        origin={0}
+        defaultValue={0}
+        format={formatPan}
+        valueText={spokenPan}
+        onCommit={(next) => patchTrack(trackId, { pan: next })}
+        gesture={LIVE}
+        size={26}
+      />
     </div>
   )
 }

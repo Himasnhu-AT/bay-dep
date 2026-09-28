@@ -5,5 +5,7 @@
  */
 export { NumberField, type NumberFieldProps } from './NumberField'
 export { Slider, SliderField, centredRange, type SliderFieldProps, type SliderProps } from './Slider'
+export { Fader, type FaderProps } from './Fader'
+export { AngleDial, Knob, type AngleDialProps, type KnobProps } from './Knob'
 export { type Gesture } from './gesture'
 export { MODIFIER_SCALE, modifierScale, type Modifiers } from './values'
