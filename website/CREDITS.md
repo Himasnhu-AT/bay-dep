@@ -51,6 +51,12 @@ the entry's `credits`, which the page prints under the figure.
 The person on camera keeps his personality and publicity rights; the page presents the clip as
 material the agent was given and implies no endorsement.
 
+### kinetic-type
+
+The same Wikitongues clip as retention-short (CC0 1.0); the page uses 2:34.4–2:53.0, with its sound.
+The first export came out at −26.9 LUFS because the prompt didn't ask for mastering; the agent
+re-exported it, unchanged, mastered to −14 LUFS, when asked in a follow-up message.
+
 ### luxury-minimal
 
 | Title | Author | Page | File downloaded | Licence |
