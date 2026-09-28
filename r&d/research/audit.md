@@ -23,6 +23,8 @@ Either way it cannot go into a skill as a cited fact now.
 |---|---|---|
 | `editing-styles.md` | **Usable with corrections** | The measured core holds up: Tubefilter, PandaStudio MKBHD/DOAC/Fireship, ShotBook, ANFX, Guo, Calliope and TikTok's 6 s/90% all check out. But **12 quotes or numbers are not in the source they cite**, **3 claims are wrong**, and several bay-capability statements are wrong in both directions. Every draft skill names real tools. Six parameter or usage errors would make the agent's calls fail or do the wrong thing. |
 | `hypit.md` | **Trustworthy, one stale claim** | The licence is quoted accurately, and every file path and line I checked (12) is right. Stats are within a day's drift. There are two errors: "skills stay user-invoked" is stale, and bay has 14 skills, not 15. One omission matters: licence clause 1a (no multi-tenant or SaaS use). Its licence conclusion is correct and conservative. |
+| `podclip.md` | **Usable with corrections** (§8) | All algorithm numbers and file:line refs check out, and both claimed defects reproduce. The doc missed that its leading-cut defect defeats podclip's one-state refusal, so its Safety and one-mic claims are wrong. The smart-mode table compares SigLIP scores across searches, which `search_footage` says is invalid. |
+| `threejs.md` | **Trustworthy, small corrections** (§9) | Route A reproduced with real three r186 under bay's own sandbox filter. The worker-GPU claim is confirmed and broader than stated: WebGL2 shaders, `readPixels` and the unmasked GPU name all work after lockdown. **Priority fix now, not with 3D.** The r160 → r161 date is wrong and the bundle estimate is low. |
 | `style-clips.md` | **Trustworthy** (§7) | 11 licences checked on the live source: 8 Commons files (API `extmetadata` + wikitext) and 3 Mixkit pages. All match, including which reviews are pending and which passed. Three speech clips range-fetched and re-measured: streams, levels, pause counts and whisper openings all reproduce. One soft spot: the Mixkit **music** licence could not be confirmed, because the cited page redirects. Its self-reported gaps are accurate. |
 
 Counts across both documents: **WRONG 10**: 3 web claims (arXiv count, Netflix cps, the "deceptively simple" attribution), 6 bay
@@ -316,3 +318,289 @@ the same publicity-rights caution applies to the #1 hero.
 - **Not yet**: CSS-Podcast and Intel (review pending) and Mixkit music (licence page unconfirmed).
   BY-SA picks only if the edited preview is also released BY-SA.
 
+
+---
+
+## 8. podclip.md
+
+Checked 28 Sep 2026 against `treydoe1/podclip-public-release` at **`bfb3371`**. The source files
+were fetched raw at that commit into the session scratchpad (`podclip-raw/`). A full clone of the
+51 MB repo was started in a unique `/tmp` dir and removed after the raw fetch. I ran podclip's
+`decideEdits` in my own harness (`repro.js`, `repro2.js`). The harness slices the function out of
+`panel.js` with the same boundary markers as podclip's own test and asserts both markers are found.
+
+**Verdict: usable with corrections.** Every algorithm number and every file:line I checked is
+right. Both claimed defects reproduce. Two claims are refuted, and the first matters more than the
+doc realises: its §4.2 "redundant leading cut" defect **disables podclip's own one-state refusal**,
+so the §2 "Safety" claim and §4.4's account of one-mic podcasts are both wrong. The bay-side claims
+are all correct. The smart-mode signal table overstates two signals.
+
+Counts for this doc: **WRONG 2** · **UNSOURCED 0** · PARTIAL 3 · VERIFIED ~30.
+
+### 8.1 Licence and repo facts
+
+| Claim | Status | Evidence |
+|---|---|---|
+| MIT, "Copyright (c) 2026 Podclip contributors" | **VERIFIED** | `LICENSE`, 21 lines, standard MIT text. GitHub API `license: MIT`. |
+| Copying is allowed with the notice; recommend reimplementing | **VERIFIED** as a reading of MIT | MIT permits copy/modify/sublicense/sell, provided the notice goes "in all copies or substantial portions". The doc's handling is correct. |
+| Created 2026-07-16, 13 stars, 5 forks, 0 open issues, 7 commits, last commit 2026-07-22 | **VERIFIED** | API: `created_at 2026-07-16T23:13:47Z`, 13 / 5 / 0, 7 commits, head `bfb3371` at `2026-07-22T03:50:16Z`. The doc's "(2026-07-21)" for `bfb3371` is the same instant in a US time zone. Repo size 51,366 KB. |
+| No network use | **VERIFIED** (grep) | No `http`, `fetch`, `XMLHttpRequest` or socket use in `client/*.js`/`host/host.jsx`. |
+
+### 8.2 Algorithm numbers (file:line at `bfb3371`)
+
+| Number | Status | Source |
+|---|---|---|
+| 50 ms RMS windows (20/s) | **VERIFIED** | `client/analyzer.js:25` `SAMPLE_MS = 50`. `:214` samples per window. `:220-221` `astats=metadata=1:reset=1` + `ametadata … RMS_level`. `panel.js:397` repeats `SAMPLE_MS = 50`. |
+| `-inf` → −120 dB; channel fallback when peak ≤ −100 dB | **VERIFIED** | `analyzer.js:288-289` and `:255` (`maxDb(samples) <= -100` → re-read channel 0). Also falls back when the channel index ≥ channel count (`:253`). |
+| −50 dB threshold (slider −70…−10) | **VERIFIED** | `client/index.html:101` `min="-70" max="-10" value="-50"`. Per-mic override at `panel.js:519-521`. |
+| 0.35 s attack | **VERIFIED** | `index.html:91` `ignoreShort … value="0.35"`. `panel.js:491` → `Math.round(0.35×20)` = **7** samples. |
+| 0.45 s release, fixed | **VERIFIED** | `panel.js:492` `Math.round(0.45 * samplesPerSec)` = 9 samples. |
+| 6 dB dominance, fixed | **VERIFIED** | `panel.js:481` `bestDb - secondDb >= 6`. |
+| 0.12 s early cut (`leadIn`) | **PARTIAL** | The default is 0.12 (`index.html:96`), but `panel.js:494` rounds it to whole 50 ms samples: `Math.round(2.4)` = **2 samples = 0.10 s**. The slider value is never applied exactly. |
+| 0.75 s min shot, fixed | **VERIFIED** | `panel.js:493` (15 samples). Used at `:573` (no cut sooner) and `:582`/`:623-639` (`smoothEvents`). |
+| 0.10 s `delayCuts` | **VERIFIED** | `index.html:86`, `panel.js:490`, `:572`. |
+| "Effective latency ≈ 0.33 s after onset" | **PARTIAL** | **Measured 0.30 s.** Speech starting at 0.50 s produced a cut at **0.80 s** (`repro.js`). The latch fires on the 7th hot sample (onset + 6), the delay adds 2 and the lead-in subtracts 2 → onset + 6 samples. |
+| `pickCamera` rules: exact set → smallest superset → loudest single → hold | **VERIFIED** | `panel.js:423-442`, fallback `:550-554`, hold `:543-547`. |
+| Line ranges cited: `decideEdits` 396-640, `dominantSet` 461-487, latch 514-538, debounce 565-579, prepend 588-590, segments 592-617, `smoothEvents` 623-639 | **VERIFIED** | Exact. |
+| `host.jsx`: active-sequence check 236-238, swallowed razor error 262-268, midpoint toggle 273-285, hand-built HH:MM:SS:FF 297-309 | **VERIFIED** | Exact. The timecode builder uses `Math.round(fps)` with no drop-frame handling, which supports the doc's (untested) drop-frame concern. |
+| Clip speed ignored | **VERIFIED** (read) | No `speed` anywhere in `analyzer.js`/`host.jsx`. |
+
+### 8.3 The two claimed defects
+
+**(1) `wideFreq` low/medium/high are identical: REPRODUCED.** `allowMulti` is computed at `:541`
+and never read inside `pickCamera` (`:423-442`), and `wideFreq` is otherwise compared only with
+`"off"` (`:545`; the only other uses are UI, `:71`, `:135`). On a 12 s two-speaker curve with a 2 s
+equal-level overlap and a V3 wide tagged A1+A2, the serialised output of `low`, `medium` and `high`
+was **byte-identical** (`low==medium true, medium==high true`). Positive control: `off` differed
+(`off==medium false`), so the harness can see a setting change.
+
+**(2) No-op leading razor: REPRODUCED**, with a consequence the doc missed. Same run, V1 segments
+`[0,0.8]ON [0.8,5.3]ON …`: a boundary at 0.8 s between two enabled segments of the same camera.
+The prepend at `:588-590` fires whenever the first cut is past sample 0, and it always is, because
+the latch needs 7 samples. **Consequence:** the refusal at `panel.js:763` is `eventCount <= 1`, and
+the prepend makes every non-silent run at least 2 events. In `repro2.js`:
+
+| Input | eventCount | Cameras actually used | Panel refuses? |
+|---|---|---|---|
+| Only A1 speaks, from 1 s | 2 | V1 only | **no** |
+| Only A1 speaks, from 0 s | 2 | V1 only | **no** |
+| Silence on both mics (control) | 1 | V1 | yes |
+
+So the "refuses to write when analysis finds only one camera state" safety (§2) holds only for
+total silence. A dead or mis-thresholded second mic, or one mixed track on every lane, **passes
+the guard**. With one mixed track, both lanes are identical, dominance is 0 dB and the set is
+{A1,A2}, so the wide is chosen: one state, still written. podclip then duplicates the sequence and
+razors it with no visible change.
+
+### 8.4 Claims about bay
+
+| Claim | Status | Evidence |
+|---|---|---|
+| `Item.disabled` exists, with podclip's meaning, via `playableTimeline` | **VERIFIED** | `src/shared/project.ts:537-542` (field + doc) and `:951-975` (`playableTimeline`). |
+| The store toggles it; **no agent tool sets it** | **VERIFIED** | `src/renderer/src/store/slices/editing.ts:136-148`. No `disabled` in any `src/shared/tools/*.ts` or `src/renderer/src/mcp/*.ts`. |
+| `afftdn`, `arnndn`, `silencedetect` required by the build and pinned by the capability test | **VERIFIED** | `script/build-ffmpeg.sh:67` `REQUIRED_FILTERS`, `src/main/ffmpeg/capabilities.test.ts:201`. The vendored binary lists all three (`vendor/ffmpeg/darwin-arm64/ffmpeg -filters`). `vendor/ffmpeg/README.md:58`: "`arnndn` is compiled in but needs a model file… none is shipped". |
+| "No code uses any of them" | **VERIFIED** | `git grep` finds them only in the build script, the capability test's list and docs. |
+| "`acompressor` is not in the required list yet" | **VERIFIED**, with an addition | It is not in `REQUIRED_FILTERS`, but the vendored binary **does include it** (`.. acompressor`), as it does `astats`. A compressor needs a required-list entry, not a rebuild. |
+| `waveform.ts` decodes mono s16le at 8 kHz | **VERIFIED** | `src/main/media/waveform.ts:4-6, 19, 79` |
+| `src/main/vision/` is SigLIP only; no face detector anywhere | **VERIFIED** | `vision/` holds encoder/indexer/sampler/tokenizer/worker. No face/detector code in `src/`. One frame per 2 s: `src/shared/visual-search.ts:123`. |
+| Tool list (59 files incl. `read_style`, `search_styles`, `write_style`), 15 skills incl. `style-from-reference`, 6 styles | **VERIFIED** (today's tree) | This supersedes §2's "14 skills", which was true on 27 Sep before `style-from-reference` landed. |
+| `docs/research/editor-features.md` #7 silence/filler, #8 scene detection, #10 noise | **VERIFIED** | Lines 57, 58, 60. |
+| `Asset.channels` at `project.ts:56-59` | **VERIFIED** | Also returned by `browse_assets` when recorded. |
+| whisper.cpp `-di` / `-tdrz` | Correctly labelled **unverified** | bay passes neither today (no match in `src/main`). |
+
+### 8.5 Are the smart-mode signals computable today?
+
+| Signal (§6.2) | Computable now? | Note |
+|---|---|---|
+| Aspect, resolution, duration | **Yes**: in-app from `Asset`, and via `browse_assets` | — |
+| fps | **In-app yes, agent no** | `Asset.fps` exists (`project.ts:52`), but `browse_assets`/`inspect_item` do not return it (see §2). The doc cites `probe.ts → Asset.width/height/durationUs` and does not mention fps's path. |
+| Audio channels | **Yes** | `browse_assets.channels`, only when import recorded it. |
+| Speech ratio | **Yes**: `transcribe` cues | Cost is as stated. |
+| Concurrent sources by equal duration | **Yes** | Durations are in `browse_assets`. |
+| Mic energy overlap | **No, needs new code** | Correctly marked **new** (`media/levels.ts`). |
+| Cut rate | **Yes**: `detect_cuts` | — |
+| Music vs speech | **Yes** | `detect_beats` returns `confidence` (`src/renderer/src/mcp/beats.ts:89`). |
+| Screen-recording look via SigLIP; "two people" > "one person" | **WRONG as specified** | `search_footage`'s own contract says **"Scores are only comparable within one search"** (`src/shared/tools/search-footage.ts:14`). Comparing the scores of two separate queries, or thresholding a "UI score", is exactly what that forbids. Needs an in-app classifier that scores several prompts against the same embeddings in one pass (the embeddings exist). That is new code, not a current tool. |
+| Face count | **No** | Correctly marked none. |
+
+Probe-only classes (multicam podcast by matching durations, B-roll pile) are computable today. The
+one-mic podcast, talking-head-vs-podcast and screen-recording classes depend on the SigLIP
+comparison above, so they need new code.
+
+### 8.6 Required corrections to podclip.md
+
+1. **§2 Safety and §4.4:** podclip does **not** reliably refuse a one-state result. The
+   leading-cut prepend makes `eventCount ≥ 2` for any non-silent input, so a single-speaker or
+   single-mixed-track run is duplicated and written. Promote §4.2 from "a razor that changes
+   nothing" to "defeats the refusal guard", and give bay's `switch_speakers` a test for it: refuse
+   when **distinct cameras used** is 1, not when the event count is 1.
+2. **§6.2 smart mode:** replace the cross-query SigLIP comparisons with "score N prompts against the
+   same frame embeddings in one pass (new code)". `search_footage` scores are not comparable across
+   searches. Mark fps as in-app only.
+3. **§3.2:** lead-in is effectively **0.10 s** (rounded to 50 ms samples), and the measured
+   onset-to-cut latency is **0.30 s**, not ≈0.33 s. bay's version should work in frames, not
+   rounded 50 ms samples.
+4. Minor: `acompressor` and `astats` are already in the vendored binary. Only the required-list
+   entry and capability pin are missing.
+
+### 8.7 Safe to implement from podclip.md
+
+- `disabled` on `edit_item` (S). The field and its semantics are already in bay.
+- `find_silences`/`remove_silences` on `silencedetect` plus transcript gaps. The filter is shipped
+  and unused.
+- `switch_speakers` as specified in §6.1: latch/bleed/tag-set/debounce/min-shot, reimplemented in
+  frames, with the two reproduced defects **and** the refusal-guard fix above built in. The idea
+  is MIT; if any line is copied, carry the notice.
+- Smart mode's probe-only classes (multicam podcast, B-roll pile).
+
+---
+
+## 9. threejs.md
+
+Checked 28 Sep 2026. Probes ran in **bare Electron 44.4.3** (the same binary bay uses) from the
+session scratchpad (`brf-gpu-probe/`, `routeA-probe/`), each with a fresh `mktemp -d
+/tmp/audit-*-XXXXXX` user-data dir that was removed afterwards. The running bay instance was not
+touched. bay's real lockdown (`src/shared/brf-lockdown.ts`) and composition request filter
+(`src/main/html/sandbox.ts`) were loaded by type-stripping the source files, not re-typed.
+
+**Verdict: trustworthy, with small corrections.** Route A's three measured claims reproduce, and
+this time with a real three.js (r186) rather than a raw triangle. The worker-GPU claim is **real
+and broader than the doc says** (§9.2). One version fact is wrong (r160 → **r161**), and the bundle
+estimate is low for current three.js. Every bay code reference checked is correct.
+
+Counts for this doc: **WRONG 1** · **UNSOURCED 0** · PARTIAL 3 · VERIFIED ~20. Plus **1 priority
+security finding** (confirmed and extended) and 1 side finding in bay's own guide.
+
+### 9.1 Route A (three.js inside HTML compositions): reproduced
+
+Window configured exactly as `compositions.ts:309-345`: `show:false, transparent, backgroundColor
+'#00000000', frame:false, offscreen:false, sandbox:true, contextIsolation:false`, its own
+partition, with bay's `decideCompositionRequest` installed on `onBeforeRequest` and permissions
+denied. The page loaded three r186 through an import map
+(`{"three":"./three.module.min.js"}` → `./three.core.js`), drew a 0.5×0.5 red plane at `x = t` in
+an ortho camera over a transparent clear, with a 100×100 green DOM box on top, and registered
+`window.__timelines.probe.time(t)`.
+
+| Claim | Status | Measured (640×360 capture, resized like `compositions.ts:476`) |
+|---|---|---|
+| Module scripts + import maps load inside the composition sandbox | **VERIFIED** | `moduleLoaded: true`, `THREE.REVISION` "186". The filter blocked only the two control URLs. |
+| `capturePage` keeps WebGL output | **VERIFIED** | 14,396 red pixels vs 14,400 expected (160×90) at both t. |
+| Transparency is preserved | **VERIFIED** | 204,804 of 230,400 pixels had alpha 0. The green DOM box kept all 10,000 pixels. |
+| Frames follow `t` | **VERIFIED** | t=−0.6: left probe `[255,0,0,255]`, right `[0,0,0,0]`. t=+0.6: swapped. |
+| The sandbox still blocks the network and outside files (positive control) | **VERIFIED** | `fetch('https://example.com')` and `fetch('file:///etc/hosts')` were both refused, and both appear in the filter's blocked list. |
+| "Seek + capture 10–23 ms" | Not re-measured | Main-process side only, as the doc says. |
+
+I did not use bay's preload or `seekScript` (`scripts.ts:71-79`, which waits two rAFs). I called
+`time(t)` directly, which is the harder case. The code paths cited (`compositions.ts:309-345`,
+`:460-480`, `MAX_WINDOWS = 8` at `:73`, the always-resize at `:467-476`) are correct.
+
+### 9.2 PRIORITY: the `.brf` worker can still reach the GPU
+
+**Confirmed, and wider than stated.** `OffscreenCanvas` is not in `REMOVED_GLOBALS`
+(`brf-lockdown.ts:35-66`). I ran the real `lockdown()` in a real Chromium worker, and a
+second, un-locked worker as a positive control that the probe can see each API:
+
+| After `lockdown()` | Result |
+|---|---|
+| `fetch`, `navigator` (global **and** prototype) | `undefined`. The lockdown works for what it lists. |
+| `OffscreenCanvas` | **function** |
+| `new OffscreenCanvas(256,256).getContext('webgl2')` | **a live WebGL2 context** |
+| `WEBGL_debug_renderer_info` | **`"ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Pro…)"`**, vendor "Google Inc. (Apple)", `MAX_TEXTURE_SIZE` 16384 |
+| Compile and link a GLSL ES 3.0 program, draw, `readPixels` | **ran**: pixel `[255,0,0,255]` |
+| `getContext('webgpu')` | returns a context object. **Not usable** without a `GPUDevice`, and `navigator` (so `navigator.gpu`) is gone. Untested beyond that. |
+| `WebAssembly`, `createImageBitmap`, `performance.now`, `crypto.subtle` | present (WebAssembly deliberately so: `test/app/brf-sandbox.mjs:136-145`) |
+
+Nothing in the worker needs it: `OffscreenCanvas`, `getContext` and `measureText` appear nowhere in
+`brfWorkerCore.ts`, `brf-code.ts` or `brf.ts`. The compositor's own `OffscreenCanvas` use
+(`engine/brf.ts:398-433`) is in the renderer, not the worker.
+
+**Is it a security issue?** It matters because a `.brf` is untrusted input: CLAUDE.md treats a
+`.bay` as possibly "someone else's", and an agent reading injected text can write one.
+
+- **Data exfiltration: low.** The GPU is not a way out. Every network door is removed and main's
+  `offline.ts` stands behind them. The worker has its own GL context and cannot sample the
+  compositor's textures or video frames. What it gains is a hardware fingerprint, and the only
+  place that can go is the module's own scene output: pixels in the preview or in an exported file
+  someone may share.
+- **Denial of service: the real risk (untested here, deliberately).** A module can allocate
+  textures up to 16384² or submit a pathological shader. That work runs in the **renderer's shared
+  GPU process**, the same one that holds the compositor's grade context (`engine/grade.ts`, "a
+  page at ~16 live contexts"). The 3 s `TIMEOUT_MS` terminates a worker that does not *answer*.
+  It does not recall GPU work already submitted, and a module can answer promptly while leaving
+  the GPU loaded on every chunk it renders. A GPU watchdog reset loses every WebGL context in the
+  editor, grade included, which is the "context loss that takes grade down too" risk the doc
+  assigns to route B. I did not run a GPU hang on this machine, because a GPU reset on macOS can
+  take other apps' rendering with it.
+- **Fingerprinting: low to medium.** The unmasked renderer string plus timing is a stable device
+  identifier. It is only useful combined with an output channel (above).
+
+**The fix, and what it removes:** add `'OffscreenCanvas'` to `REMOVED_GLOBALS`. That one entry
+removes, from user code, every way to create a canvas in a worker, and with it: WebGL and WebGL2
+contexts (shaders, `readPixels`, the renderer string), the WebGPU canvas context, and 2D canvas
+(`measureText`, which the worker does not use). Context interfaces
+(`WebGL2RenderingContext`, `GPUCanvasContext`) are not constructible without a canvas, so they
+need no entry. The lockdown loop already walks the prototype chain, so a single entry covers it.
+Tests:
+
+1. `brf-lockdown.test.ts`: `OffscreenCanvas` is `undefined` on the global and its prototype chain.
+2. `test/app/brf-sandbox.mjs`: a module that tries `new OffscreenCanvas(1,1).getContext('webgl2')`
+   is refused.
+3. Positive control, paired with 2: an ordinary `.brf` still renders.
+
+The doc proposes this only "when 3D lands". **It should land now, independently of any 3D
+work.** It is a one-line change with a measured exposure, and it is the `FontFace` pattern
+(`brf-lockdown.ts:56-59`) again: a platform API nobody listed.
+
+### 9.3 Licence and bundle facts
+
+| Claim | Status | Evidence |
+|---|---|---|
+| three.js MIT | **VERIFIED** | npm `three@0.186.1` `license: MIT`; LICENSE "Copyright © 2010-2026 three.js authors". |
+| opentype.js MIT | **VERIFIED** | npm `opentype.js@2.0.0` `license: MIT`. Its WOFF2 and `VariationManager` claims were not checked. |
+| troika-three-text: `blob:`/eval'd worker and a CDN default font | **PARTIAL** | The troika docs confirm both: "Default: The Roboto font loaded from Google Fonts CDN", and a restrictive CSP "blocks how troika-three-text creates its web worker". But they also give `configureTextBuilder({ useWorker: false })`, and the font is a parameter, so it is not unfit as a matter of fact. MIT (`troika-three-text@0.52.5`). |
+| "r160 removed `build/three.js` and `three.min.js`" | **WRONG** | jsDelivr's file lists: **r160 still ships** `three.js`, `three.min.js` and `three.cjs`. **r161** is the first without them. |
+| Ship `three.module.min.js` as the route A vendor file | **PARTIAL** | Current three (r186) no longer ships *any* minified build in npm. `build/three.module.js` (662,772 B) imports `./three.core.js` (1,458,113 B). A vendor folder needs **two** files, minified by bay's build. The file I loaded was jsDelivr's on-the-fly minification. |
+| WebGLRenderer bundle "600–700 KB minified" | **PARTIAL** (low) | `three.module.min.js` 392,831 B + `three.core.min.js` 415,816 B = **~809 KB minified** (~195 KB gzip) for the full build. A tree-shaken `WebGLRenderer` import through Vite will be smaller, but that is unmeasured. Either way it goes in a lazy chunk, as the doc says. |
+| three.js `WebGLRenderer` accepts `OffscreenCanvas` | Not re-checked | Plausible (docs cited). Route B's slice will prove or disprove it. |
+
+### 9.4 Claims about bay's code
+
+| Claim | Status | Evidence |
+|---|---|---|
+| `CHUNK_SECONDS = 0.5`, `TIMEOUT_MS = 3000`, one worker per module, terminated | **VERIFIED** | `engine/brfCode.ts:44, 46, 80, 200` |
+| `.brf` painted to an `OffscreenCanvas` surface, then through `#drawSource` | **VERIFIED** | `engine/brf.ts:397-433` (`BrfSurfaces`), `compositor.ts:606-647` (`#drawSource` at `:370`, the brf call at `:647`) |
+| `GradeContext`: one `OffscreenCanvas`, `premultipliedAlpha`, `preserveDrawingBuffer`, `webglcontextlost`, ~16-context note, samplers fixed "for the life of the context" | **VERIFIED** | `engine/grade.ts:24, 257-296`. "Life of the context" is at `:296` (the doc says `:293`, close). `MAX_EDGE = 4096` at `:76`. |
+| Composition windows, 8 max, transparent, always resized | **VERIFIED** | §9.1 |
+| Renderer CSP: `script-src 'self'`, `connect-src 'self' bay:`, no `worker-src` | **VERIFIED** | `src/renderer/index.html:13` |
+| Fonts are content-addressed assets (`media/font-file.ts`) | **VERIFIED** | The file exists. The pipeline is as in CLAUDE.md. |
+| No three.js in `package.json`; no bundled font in `resources/` | **VERIFIED** | `resources/` holds only `styles/`. No three/opentype/troika in `package.json`. |
+| The contract warns a CDN tag "renders as a still frame"; the guide says to vendor | **VERIFIED** | `src/main/mcp/docs/editing.md:314`, `src/shared/composition.ts:287` |
+
+**Side finding (not in threejs.md):** bay's own composition guide contradicts that rule. Its
+example code loads GSAP from a CDN,
+`<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js">`
+(`src/main/mcp/docs/compositions/minimal-composition.md:19`, `composition-patterns.md:53`). §9.1
+measured that the composition sandbox cancels exactly that request, so an agent copying the
+example gets a still frame. The examples should use a vendored `./gsap.min.js`.
+
+### 9.5 Required corrections to threejs.md
+
+1. **Promote the lockdown fix out of the 3D plan:** remove `OffscreenCanvas` from the `.brf` worker
+   now (§9.2), with the three tests above. Describe the exposure accurately: WebGL2 with shader
+   execution and `readPixels`, plus the unmasked GPU string, not only "can reach the GPU".
+2. `build/three.js` / `three.min.js` were removed in **r161**, not r160. Current three ships
+   `three.module.js` + `three.core.js`, unminified, so route A's vendor folder is two files that
+   bay minifies.
+3. Bundle: the full WebGLRenderer build is ~809 KB minified / ~195 KB gzip. Keep the estimate
+   only for a measured tree-shaken chunk.
+4. troika: "does not fit as it stands" → "needs `useWorker: false` and an explicit font. Still
+   second choice to opentype outlines for extruded text."
+
+### 9.6 Safe to implement from threejs.md
+
+- The `OffscreenCanvas` removal (now), which is a security fix and independent of 3D.
+- Route A documentation plus a vendored three folder. It is measured to work under bay's real
+  sandbox rules, and it adds no new attack surface: any composition can already use WebGL.
+- Route B's design (a data-only `<scene3d>` in the worker, one long-lived renderer context in the
+  engine, caps checked before geometry, `pending` and context-loss handling), as a design to be
+  proven by its own parity probe. Its performance figures are estimates and are labelled as such.
