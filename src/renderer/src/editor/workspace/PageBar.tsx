@@ -5,7 +5,7 @@ import { cn } from '@/lib/cn'
 import { runCommand, shortcutOf, type CommandId } from '@/lib/commands'
 import { useEditor, WORKSPACE_PAGES, type WorkspacePage } from '@/store/editor'
 
-const PAGES: Record<WorkspacePage, { label: string; icon: ReactNode; command: CommandId; detail: string }> = {
+export const PAGES: Record<WorkspacePage, { label: string; icon: ReactNode; command: CommandId; detail: string }> = {
   media: {
     label: 'Media',
     icon: <Images className="size-[18px]" />,

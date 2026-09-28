@@ -84,7 +84,16 @@ import { cn } from '@/lib/cn'
  * it names the ids to use or the range that is occupied — and the whole point of writing that
  * is that somebody reads it.
  */
-export function AgentPanel(): ReactNode {
+export interface AgentPanelProps {
+  /**
+   * One-click starters shown as a row above the composer once a conversation is under way (the
+   * empty conversation already shows them as a grid). The AI layout passes its tool palette here;
+   * the dock passes nothing. A starter fills the composer, it never sends.
+   */
+  palette?: readonly AgentStarter[]
+}
+
+export function AgentPanel({ palette }: AgentPanelProps = {}): ReactNode {
   const log = useEditor((state) => state.agentLog)
   const running = useEditor((state) => state.agentRunning)
   const logUserMessage = useEditor((state) => state.logUserMessage)
@@ -381,6 +390,8 @@ export function AgentPanel(): ReactNode {
         <p className="border-t border-line px-2 py-1.5 text-[11px] leading-relaxed text-ink-2">{manyPictures}</p>
       )}
 
+      {palette && palette.length > 0 && log.length > 0 && <PaletteRow palette={palette} onPick={pickStarter} />}
+
       <Composer
         running={running}
         sending={sending}
@@ -546,6 +557,28 @@ function UserEntry({ entry }: { entry: Extract<AgentEntry, { kind: 'user' }> }):
           )
         )}
       </p>}
+    </div>
+  )
+}
+
+/** The tool palette mid-conversation: one scrolling row of starters above the composer. */
+function PaletteRow({ palette, onPick }: { palette: readonly AgentStarter[]; onPick: (starter: AgentStarter) => void }): ReactNode {
+  return (
+    <div role="group" aria-label="Quick actions" className="flex gap-1 overflow-x-auto border-t border-line px-2 py-1.5">
+      {palette.map((starter) => {
+        const Icon = starter.icon
+        return (
+          <button
+            key={starter.skill}
+            type="button"
+            onClick={() => onPick(starter)}
+            className="t-fast flex shrink-0 items-center gap-1 rounded-full border border-line bg-surface-2 py-0.5 pr-2 pl-1 text-[11px] font-medium text-ink-1 hover:border-line-hover hover:bg-surface-3 hover:text-ink-0"
+          >
+            <Icon aria-hidden="true" className="size-3.5" />
+            {starter.title}
+          </button>
+        )
+      })}
     </div>
   )
 }

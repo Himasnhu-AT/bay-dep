@@ -31,6 +31,7 @@ function workerRealm(): Realm {
          return 'compiled'
        },
        FontFace: function () {},
+       OffscreenCanvas: function () { this.getContext = () => ({ getParameter: () => 'the GPU' }) },
        fonts: { add() { return 'queued a font request' } },
        webkitRequestFileSystem() { return 'a filesystem' }
      }
@@ -62,6 +63,7 @@ test('the positive control: before the lock, every door is open', () => {
   assert.equal(run(realm, 'setTimeout("x = 1", 0)'), 'compiled')
   assert.equal(run(realm, 'Object.getPrototypeOf(globalThis).setInterval("x = 1", 0)'), 'compiled')
   assert.equal(run(realm, 'typeof FontFace + typeof fonts + typeof webkitRequestFileSystem'), 'functionobjectfunction')
+  assert.equal(run(realm, 'new OffscreenCanvas(1, 1).getContext("webgl2").getParameter(0)'), 'the GPU')
 })
 
 test('after the lock the network and code loading are gone, on the global and its prototype', () => {
@@ -149,6 +151,14 @@ test('fonts and the sandboxed filesystem are gone after the lock', () => {
   for (const name of ['FontFace', 'fonts', 'webkitRequestFileSystem']) {
     assert.equal(run(realm, `typeof ${name}`), 'undefined', name)
   }
+})
+
+test('the GPU is gone after the lock, on the global and its prototype', () => {
+  const realm = workerRealm()
+  lockdown(realm.g)
+  assert.equal(run(realm, 'typeof OffscreenCanvas'), 'undefined')
+  assert.equal(run(realm, 'typeof Object.getPrototypeOf(globalThis).OffscreenCanvas'), 'undefined')
+  assert.match(attempt(realm, 'new OffscreenCanvas(1, 1).getContext("webgl2")'), /^threw: /)
 })
 
 test('only a trusted message reaches the host handler: a dispatched MessageEvent is ignored', () => {

@@ -57,6 +57,11 @@ export const REMOVED_GLOBALS = [
   // door like any other; `.brf` text names families the editor already has.
   'FontFace',
   'fonts',
+  // Audited in a real worker after lockdown, 2026-09-28: `new OffscreenCanvas(…).getContext('webgl2')`
+  // ran shaders, read pixels back and named the exact GPU (WEBGL_debug_renderer_info). Nothing
+  // leaves through it, but it fingerprints the machine and can exhaust the GPU the editor's grade
+  // context shares. A module's scene is JSON painted by the compositor; the worker draws nothing.
+  'OffscreenCanvas',
   // The old sandboxed-filesystem API is exposed in Chromium workers: storage that outlives the
   // module, so a render could depend on what an earlier one wrote.
   'webkitRequestFileSystem',

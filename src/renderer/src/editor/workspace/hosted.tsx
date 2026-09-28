@@ -1,5 +1,5 @@
 /**
- * Regions that outlive a page switch: the viewer and the timeline.
+ * Regions that outlive a page switch: the viewer, the timeline and the agent panel.
  *
  * Every page shows the programme viewer, and most show the timeline, but each page lays them out
  * in its own panel groups — so a page switch unmounts one set of groups and mounts another. If
@@ -18,6 +18,11 @@
  * The one thing a move does lose is scroll: Chromium drops the offsets of the scrollers inside a
  * moved subtree, so the timeline came back from another page scrolled to the start. Each node
  * remembers them (`ScrollMemory`) and its slot puts them back after the move.
+ *
+ * The agent panel is hosted for its own state rather than an engine: its draft, pending
+ * attachments and in-flight send guard live in the component, and a remount (a switch between the
+ * Resolve dock and the AI layout, or undocking) dropped all three — a double send became possible
+ * and a refused attachment's message landed on an unmounted panel. Parked, it stays mounted.
  */
 
 import {
@@ -33,7 +38,7 @@ import { createPortal } from 'react-dom'
 import { cn } from '@/lib/cn'
 import { ScrollMemory } from './scrollMemory'
 
-export type HostedName = 'viewer' | 'timeline'
+export type HostedName = 'viewer' | 'timeline' | 'agent'
 
 interface Host {
   nodes: Record<HostedName, HTMLDivElement>
@@ -60,8 +65,16 @@ export function useHost(): Host {
   // One object for the workspace's life: slots depend on it, and a new one each render would
   // re-run every slot's move.
   const [host] = useState<Host>(() => {
-    const scrolls = { viewer: new ScrollMemory<Element>(), timeline: new ScrollMemory<Element>() }
-    const nodes = { viewer: makeNode('viewer', scrolls.viewer), timeline: makeNode('timeline', scrolls.timeline) }
+    const scrolls = {
+      viewer: new ScrollMemory<Element>(),
+      timeline: new ScrollMemory<Element>(),
+      agent: new ScrollMemory<Element>()
+    }
+    const nodes = {
+      viewer: makeNode('viewer', scrolls.viewer),
+      timeline: makeNode('timeline', scrolls.timeline),
+      agent: makeNode('agent', scrolls.agent)
+    }
     return { nodes, scrolls, parking }
   })
   return host

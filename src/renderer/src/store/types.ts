@@ -91,6 +91,21 @@ export type WorkspacePage = 'media' | 'edit' | 'color' | 'audio' | 'deliver'
 
 export const WORKSPACE_PAGES: readonly WorkspacePage[] = ['media', 'edit', 'color', 'audio', 'deliver']
 
+/**
+ * The window's layout mode: `resolve` is the page layout above (library, inspector, timeline, the
+ * page bar, the agent as a dock); `ai` puts the agent at the centre with only the viewer and the
+ * media pool beside it, and opens everything else on demand (`AiPanel`). Like a page, a mode is
+ * a layout over the one project and never changes what an edit does. Remembered per machine
+ * (`bay.workspace.layoutMode`); see `store/layoutMode.ts` for the default and how to flip it.
+ */
+export type LayoutMode = 'resolve' | 'ai'
+
+/**
+ * What the AI layout opens on demand. `inspector` and `pages` share the right-hand drawer, so at
+ * most one of them is open; the timeline drawer runs along the bottom, independently.
+ */
+export type AiPanel = 'timeline' | 'inspector' | 'pages'
+
 /** The inspector's tabs, in Resolve's order. `timeline` is what shows with nothing selected. */
 export type InspectorTab = 'video' | 'title' | 'audio' | 'effects' | 'transition' | 'color' | 'file' | 'timeline'
 
@@ -109,6 +124,10 @@ export interface EditorState {
   panel: PanelId
   /** Which workspace page is showing. Remembered per machine (`bay.workspace.page`). */
   page: WorkspacePage
+  /** Resolve's pages or the agent-first AI layout. Remembered per machine (`bay.workspace.layoutMode`). */
+  layoutMode: LayoutMode
+  /** Which on-demand panels the AI layout has open. Not remembered: AI mode opens on its three regions. */
+  aiPanels: Record<AiPanel, boolean>
   /** The inspector tab last chosen; the inspector falls back when it does not apply. */
   inspectorTab: InspectorTab
   /** The library slot's tab. */
@@ -576,6 +595,13 @@ export interface EditorActions {
   zoomBy(factor: number): void
   setPanel(panel: PanelId): void
   setPage(page: WorkspacePage): void
+  /** Switch layout mode (remembered). Entering either mode starts with the AI drawers closed. */
+  setLayoutMode(mode: LayoutMode): void
+  toggleLayoutMode(): void
+  /** Open or close one AI-layout panel; opening `inspector` closes `pages` and vice versa. */
+  setAiPanel(panel: AiPanel, open: boolean): void
+  toggleAiPanel(panel: AiPanel): void
+  closeAiPanels(): void
   setInspectorTab(tab: InspectorTab): void
   setLibraryTab(tab: LibraryTab): void
   setAgentDocked(docked: boolean): void
