@@ -9,7 +9,7 @@
  */
 
 import type { Asset, Project } from './project'
-import type { AgentEntry, AgentEvent, AgentProvider, AgentProviderStatus } from './agent'
+import type { AgentEntry, AgentEvent, AgentProvider, AgentProviderStatus, AgentTuning } from './agent'
 import type { AgentAttachmentInput } from './agent-attachments'
 import type { TranscriptSegment } from './transcribe'
 import type { BeatGrid } from './beats'
@@ -648,8 +648,18 @@ export interface BayApi {
      * Returns the runtime id, or a reason it could not start. `provider` is the Settings choice
      * (Claude when omitted); `BAY_AGENT_RUNTIME` in main's environment overrides it. Starting
      * with a provider other than the running conversation's replaces that conversation.
+     * `tuning` is Preferences › Agent's effort, model and longest turn; main parses it.
      */
-    start(options?: { provider?: AgentProvider }): Promise<{ ok: true; id: string } | { ok: false; error: string }>
+    start(options?: {
+      provider?: AgentProvider
+      tuning?: AgentTuning
+    }): Promise<{ ok: true; id: string } | { ok: false; error: string }>
+    /**
+     * Preferences › Agent's effort, model or longest turn changed. The running conversation takes
+     * it from its next turn (the CLI's process is replaced then, resuming the session); a turn in
+     * progress keeps what it started with.
+     */
+    configure(tuning: AgentTuning): Promise<void>
     /** Which providers' CLIs this machine has, and what each still needs before it can start. */
     providers(): Promise<AgentProviderStatus[]>
     /**
@@ -878,6 +888,7 @@ export const IPC = {
 
   /** renderer -> main: start, drive and stop the in-app agent. */
   agentStart: 'agent:start',
+  agentConfigure: 'agent:configure',
   agentProviders: 'agent:providers',
   agentSend: 'agent:send',
   agentStop: 'agent:stop',

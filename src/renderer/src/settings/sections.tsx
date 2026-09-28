@@ -13,8 +13,16 @@ import {
 } from '@/store/editing-prefs'
 import { AboutUpdates, useUpdate } from '@/update/UpdateBanner'
 import type { CanvasFit } from '@shared/project'
-import { AGENT_PROVIDERS, type AgentProviderStatus } from '@shared/agent'
+import {
+  AGENT_EFFORTS,
+  AGENT_PROVIDERS,
+  CLAUDE_MODEL_CHOICES,
+  parseTurnLimit,
+  TURN_LIMITS,
+  type AgentProviderStatus
+} from '@shared/agent'
 import { PROVIDER_LABELS, useAgentProvider } from '@/lib/agentProvider'
+import { CLAUDE_MODEL_LABELS, EFFORT_LABELS, TURN_LIMIT_LABELS, useAgentTuning } from '@/lib/agentTuning'
 import { bay } from '@/lib/bay'
 import { ShortcutsSheet } from '@/editor/ShortcutsDialog'
 import { StorageRepairButton, useStorageStatus } from '@/editor/StorageRepair'
@@ -387,6 +395,12 @@ export function AgentSection(): ReactNode {
   const setAgentApproval = useEditor((state) => state.setAgentApproval)
   const provider = useAgentProvider((state) => state.provider)
   const setProvider = useAgentProvider((state) => state.setProvider)
+  const effort = useAgentTuning((state) => state.effort)
+  const setEffort = useAgentTuning((state) => state.setEffort)
+  const claudeModel = useAgentTuning((state) => state.model)
+  const setClaudeModel = useAgentTuning((state) => state.setModel)
+  const turnMinutes = useAgentTuning((state) => state.turnMinutes)
+  const setTurnMinutes = useAgentTuning((state) => state.setTurnMinutes)
   const { answer: statuses } = useAsked(() => bay()?.agent.providers())
   const { answer: firstSocket, asked: socketAsked } = useAsked(() => bay()?.app.mcpReady())
   // The switch answers with the new status; until it is used, the first ask stands.
@@ -414,6 +428,40 @@ export function AgentSection(): ReactNode {
             // remembered for when it has it.
             options={AGENT_PROVIDERS.map((value) => ({ value, label: PROVIDER_LABELS[value] }))}
             onChange={setProvider}
+          />
+        </Row>
+        {provider === 'claude' && (
+          <>
+            <Row
+              label="Reasoning effort"
+              hint="How hard Claude thinks each turn. Higher is slower and uses more of your plan; long creative work wants High or more. Applies from the next message."
+            >
+              <SegmentedControl
+                label="Reasoning effort"
+                value={effort}
+                options={AGENT_EFFORTS.map((value) => ({ value, label: EFFORT_LABELS[value] }))}
+                onChange={setEffort}
+              />
+            </Row>
+            <Row label="Claude model" hint="Default leaves the choice to Claude Code. Applies from the next message.">
+              <SegmentedControl
+                label="Claude model"
+                value={claudeModel}
+                options={CLAUDE_MODEL_CHOICES.map((value) => ({ value, label: CLAUDE_MODEL_LABELS[value] }))}
+                onChange={setClaudeModel}
+              />
+            </Row>
+          </>
+        )}
+        <Row
+          label="Longest agent turn"
+          hint="A turn still running after this is stopped. Writing and checking a long motion-graphics piece can take over an hour."
+        >
+          <SegmentedControl
+            label="Longest agent turn"
+            value={String(turnMinutes)}
+            options={TURN_LIMITS.map((value) => ({ value: String(value), label: TURN_LIMIT_LABELS[value] }))}
+            onChange={(value) => setTurnMinutes(parseTurnLimit(value))}
           />
         </Row>
         <SwitchRow

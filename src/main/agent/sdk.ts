@@ -47,12 +47,12 @@ import { randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import type { Options, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-agent-sdk'
-import type { AgentEvent } from '@shared/agent'
+import { parseAgentTuning, type AgentEvent, type AgentTuning } from '@shared/agent'
 import {
   allowedToolNames,
   bayMcpServer,
   BUILT_IN_TOOLS,
-  TURN_TIMEOUT_MS,
+  turnTimeoutFor,
   type CliOptions,
   childEnv,
   userContent,
@@ -102,7 +102,12 @@ export function sdkOptions(
   options: SdkOptions,
   turn: { resume: string | null; abortController: AbortController }
 ): Options {
+  const tuning = parseAgentTuning(options.tuning)
   return {
+    // The SDK's own `effort` option, the same levels as the CLI's `--effort` (sdk.d.ts
+    // `EffortLevel`); read per `query()`, so a change applies from the next turn.
+    effort: tuning.effort,
+    ...(tuning.model === 'default' ? {} : { model: tuning.model }),
     cwd: options.cwd,
     systemPrompt: options.systemPrompt,
     mcpServers: { bay: { type: 'stdio', ...bayMcpServer(options) } },
@@ -210,9 +215,16 @@ export class SdkAgentRuntime implements HostedAgentRuntime {
   }
 
   readonly #options: SdkOptions
+  #tuning: AgentTuning
 
   constructor(options: SdkOptions) {
     this.#options = options
+    this.#tuning = parseAgentTuning(options.tuning)
+  }
+
+  /** Preferences › Agent changed. Every turn is its own `query()`, so the next one has it. */
+  configure(tuning: AgentTuning): void {
+    this.#tuning = parseAgentTuning(tuning)
   }
 
   onEvent(listener: (event: AgentEvent) => void): () => void {
@@ -250,7 +262,7 @@ export class SdkAgentRuntime implements HostedAgentRuntime {
     this.#abort = abort
     this.#emit({ type: 'started', runId })
 
-    const timeout = this.#options.turnTimeoutMs ?? TURN_TIMEOUT_MS
+    const timeout = this.#options.turnTimeoutMs ?? turnTimeoutFor(this.#tuning.turnMinutes)
     this.#timer = setTimeout(() => {
       this.#fail(runId, `The turn ran past ${Math.round(timeout / 60000)} minutes and was stopped.`)
       abort.abort()
@@ -278,7 +290,7 @@ export class SdkAgentRuntime implements HostedAgentRuntime {
       const stream = newStreamState()
       const messages = query({
         prompt: typeof prompt === 'string' ? prompt : promptWithContent(prompt),
-        options: sdkOptions(this.#options, { resume: this.#sessionId, abortController: abort })
+        options: sdkOptions({ ...this.#options, tuning: this.#tuning }, { resume: this.#sessionId, abortController: abort })
       })
       for await (const message of messages) {
         // A settled turn drains silently. Not `break`: after a successful result the SDK may

@@ -41,6 +41,7 @@ import { AGENT_STARTERS, STARTERS_SHOWN, type AgentStarter } from './agentStarte
 import { GeneratePanel } from './ai/GeneratePanel'
 import { bay } from '@/lib/bay'
 import { PROVIDER_LABELS, useAgentProvider } from '@/lib/agentProvider'
+import { currentAgentTuning } from '@/lib/agentTuning'
 import { revertImpact, selectFps, useEditor } from '@/store/editor'
 import { composeMessage, pinLabel, type Pin } from '@shared/pins'
 import { insertSkill, skillSegments } from '@shared/skills'
@@ -257,7 +258,10 @@ export function AgentPanel({ palette }: AgentPanelProps = {}): ReactNode {
         // start" rather than as a model that ignored the message.
         start: async () => {
           if (useEditor.getState().agentSessionActive) return { ok: true }
-          const started = await api.agent.start({ provider: useAgentProvider.getState().provider })
+          const started = await api.agent.start({
+            provider: useAgentProvider.getState().provider,
+            tuning: currentAgentTuning()
+          })
           if (started.ok) startAgentSession()
           return started.ok ? { ok: true } : started
         },

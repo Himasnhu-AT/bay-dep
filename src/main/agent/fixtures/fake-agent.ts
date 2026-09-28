@@ -21,7 +21,7 @@ function startMcp(dir) {
   // Detached: its own process group, as Codex starts bay's proxy. stdin ignored, so only a
   // signal can end it — which is what the test is about.
   const mcp = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { detached: true, stdio: 'ignore' })
-  writeFileSync(join(dir, 'pids-' + process.pid + '.json'), JSON.stringify({ agent: process.pid, mcp: mcp.pid }))
+  writeFileSync(join(dir, 'pids-' + process.pid + '.json'), JSON.stringify({ agent: process.pid, mcp: mcp.pid, args: process.argv.slice(2) }))
 }
 `
 
@@ -68,6 +68,8 @@ export function fakeClaude(): string {
 export interface FakePids {
   agent: number
   mcp: number
+  /** The arguments the fake was started with. */
+  args: string[]
 }
 
 /** Every fake started so far that wrote its pids into `dir`, in no particular order. */

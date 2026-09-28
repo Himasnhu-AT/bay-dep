@@ -24,7 +24,7 @@ import type {
   ThumbnailRequest
 } from '@shared/ipc'
 import { IPC } from '@shared/ipc'
-import type { AgentEntry, AgentEvent, AgentProvider } from '@shared/agent'
+import type { AgentEntry, AgentEvent, AgentProvider, AgentTuning } from '@shared/agent'
 import type { AgentAttachmentInput } from '@shared/agent-attachments'
 import type { McpToolCall, McpToolResult } from '@shared/mcp'
 import type { Project } from '@shared/project'
@@ -159,7 +159,8 @@ const api: BayApi = {
   },
 
   agent: {
-    start: (options?: { provider?: AgentProvider }) => ipcRenderer.invoke(IPC.agentStart, options),
+    start: (options?: { provider?: AgentProvider; tuning?: AgentTuning }) => ipcRenderer.invoke(IPC.agentStart, options),
+    configure: (tuning: AgentTuning) => ipcRenderer.invoke(IPC.agentConfigure, tuning),
     providers: () => ipcRenderer.invoke(IPC.agentProviders),
     send: (text: string, attachments?: AgentAttachmentInput[]) => ipcRenderer.invoke(IPC.agentSend, text, attachments),
     stop: () => ipcRenderer.invoke(IPC.agentStop),

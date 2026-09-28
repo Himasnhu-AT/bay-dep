@@ -20,7 +20,7 @@ import {
   releasePath,
   writeComposition
 } from './html/compositions'
-import { agentProviders, disposeAgent, exportTranscript, sendToAgent, startAgent, stopAgent } from './agent/host'
+import { agentProviders, configureAgent, disposeAgent, exportTranscript, sendToAgent, startAgent, stopAgent } from './agent/host'
 import { mediaToolsReady } from './ffmpeg/ffmpeg'
 import { collectMetrics } from './metrics'
 import { probe } from './ffmpeg/probe'
@@ -163,6 +163,7 @@ interface ChannelApi {
   compositionRelease: BayApi['composition']['release']
 
   agentStart: BayApi['agent']['start']
+  agentConfigure: BayApi['agent']['configure']
   agentProviders: BayApi['agent']['providers']
   agentSend: BayApi['agent']['send']
   agentStop: BayApi['agent']['stop']
@@ -234,6 +235,7 @@ async function audioResult<T>(work: () => Promise<T>): Promise<AudioResult<T>> {
 
 const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
   agentStart: async (_event, options) => startAgent(options),
+  agentConfigure: async (_event, tuning) => configureAgent(tuning),
   agentProviders: async () => agentProviders(),
   agentSend: async (_event, text, attachments) => sendToAgent(text, attachments),
   agentStop: async () => stopAgent(),
