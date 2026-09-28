@@ -150,7 +150,7 @@ export const comparisons: Comparison[] = [
       "write_brf: every word timed to the transcript, key words larger and in red, a progress bar",
       "frame_grid and preview_frame to check each word lands as it is spoken; fixed a blank stretch from 10 s",
       "Left the college name off screen because the transcript misheard it, rather than guess",
-      "export_timeline, mastered to −14 LUFS",
+      "export_timeline, then a second export after a follow-up message asked for it unchanged but mastered to −14 LUFS",
     ],
     credits: [
       {
