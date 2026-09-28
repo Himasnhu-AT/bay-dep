@@ -20,6 +20,8 @@ sleep 2; mark start
 # leave the current project (saving it) and create a new one
 ref=$(b snapshot -i | grep -oE 'button "All projects" \[ref=e[0-9]+\]' | grep -oE 'e[0-9]+')
 [ -n "$ref" ] && { b click @$ref >/dev/null 2>&1; sleep 2; b eval "[...document.querySelectorAll('button')].find(x=>x.textContent.trim()==='Save' && x.closest('.fixed'))?.click()" >/dev/null; sleep 2; }
+# the projects list scrolls under a sticky header; a scrolled list puts the button beneath it
+b eval "document.querySelectorAll('*').forEach(e=>{if(e.scrollTop>0)e.scrollTop=0}); window.scrollTo(0,0); true" >/dev/null
 b find text "Create new project" click >/dev/null; sleep 3; mark "new project"
 ref=$(b snapshot -i | grep -oE 'button "[A-Z][a-z]+ [A-Z][a-z]+ [A-Z][a-z]+" \[ref=e[0-9]+\]' | head -1 | grep -oE 'e[0-9]+')
 b click @$ref >/dev/null; sleep .5; b press Meta+a >/dev/null; b keyboard type "$NAME" >/dev/null; b press Enter >/dev/null; sleep 1; mark renamed
