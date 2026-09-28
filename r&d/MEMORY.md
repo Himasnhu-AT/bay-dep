@@ -126,6 +126,19 @@ and **Open questions**. Keep entries short, and link to files instead of copying
 
 ## Log
 
+- **2026-09-28** (coordinator):
+  - **Promo edits made by bay's agent** (runs recorded in `~/Movies/bay-release/run-*.mp4`, transcripts in `clips/<slug>/`):
+    - retention short: 46.5 s, −14.2 LUFS
+    - kinetic type: 18.6 s, re-exported mastered at −14.2
+    - luxury/minimal: 20 s; the agent dropped a branded clip
+  - All three are ready on website `/compare` (entries plus CREDITS). The news explainer waits on the NASA download.
+  - The first parallel download produced a corrupt file (a short range part), so `pget.sh` now verifies part sizes.
+  - **Preview tiles verified in the app:**
+    - A `search_styles` card renders tiles with posters over `bay://style-preview` and a "Use this style" button.
+    - retention, kinetic and luxury media serve 200; news returns 404 (neutral tile); a traversal probe returns 400.
+    - Previews are made by `tools/make-style-preview.sh`.
+  - **The owner:** the Attest film is not to be published anywhere.
+
 - **2026-09-27** (coordinator):
   - **Style catalog merged** (4adf2c0; the review's should-fixes are in 3b3717a).
   - **In-app check:**
