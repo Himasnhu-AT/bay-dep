@@ -1,34 +1,51 @@
-/launch-film Make a ~48-second product launch film for Sage from the media I just dropped in. Sage is an agentic AI assistant that lives at the top of your Mac and actually does things. The panel at the top of the screen is called the Halo — never call it a notch, and never use the words "perry" or "notchview" anywhere. Claim only what the footage shows: no invented numbers, customers, prices, dates, URLs or "available now".
+/launch-film Design a ~48-second launch film for Sage. Treat it as motion design, not an edit: one canvas program that redraws Sage and choreographs it. Read bay://guide/motion-design first and build from its kit. Take your time: plan it, build it, look at it, and rebuild it. Three or more passes is expected.
 
-LOOK — white, premium, smooth, like an Apple product film:
-- Canvas #F5F5F7 (set it as the timeline background; no black anywhere, no dips to black). Type in Inter (in the pool): headlines #1D1D1F weight 600, tracking about −0.035em; supporting lines #6E6E73 weight 500; one accent word per scene in system blue #007AFF, never a whole line.
-- Sizes from the scale: 165 px hook statements and the end-card name, 102 px feature headlines, 63 px secondary, 39 px supporting.
-- Text never covers the UI: put it in clear canvas space beside or above the product (the takes have room above and around the Halo), or on the canvas between shots.
-- Motion rules from the launch-film skill: words rise out of a mask on [.165,.84,.44,1]; exits whip out on [.72,0,.18,1]; one spring only; keep the product straight — no rotation, gentle push-ins only (scale 1.00 → 1.05 across a shot), and crop so the fake menu-bar text at the very top edge of the Halo takes never shows cut off.
+WHAT SAGE IS: an agentic AI assistant that lives at the top of your Mac and actually does things. Tagline: "The Agentic AI Assistant for your Mac". Short line: "Your Mac, on command."
 
-MEDIA (in the pool)
-- Takes, 2880×1620, 60 fps, rendered frame by frame (smooth; clicks are exact):
-  - 01-halo-expand (8.5 s): the cursor hovers the top centre, the Halo morphs down; Home: Now Playing, Keep Awake, Up next · Standup in 8 min (Join), CPU, Memory, Battery. Click at 3.54 s.
-  - 02-halo-tabs (9 s): Keep Awake toggled, then the tab bar — Tray, Clipboard, Cloud (today's to-dos, one ticked; notes).
-  - 03-halo-alert (6.5 s): the Halo collapses; an alert live-activity slides out: "Send the Q3 roadmap · Due at 5:00 PM".
-  - 04-ask-agent (11 s): typing "check my battery and set volume to 30"; the agent's steps stream (Thinking → Running tool get_battery → result → set_volume → Complete: "Battery is at 82%… Volume is now 30%"). Clicks at 1.39 and 7.73 s.
-  - 05-settings-model (10 s): Settings › Model: provider ChatGPT (subscription), model and reasoning-effort pickers; a focus on "Using your ChatGPT subscription".
-  - 06-settings-permissions (10 s): Permissions — "Grant everything" turns every row to Allowed — then Connectors (Google, GitHub, Slack, Notion, Linear…).
-  - 00-icon-card.png and icon-tile-transparent.png: the Sage app icon for the end card.
-- Sound (original, generated for this film): music-bed-110bpm.wav (56 s, 110 BPM, 4/4), sfx-click.wav, sfx-whoosh.wav, sfx-bell.wav.
+HARD RULES:
+- The panel at the top of the screen is the **Halo**. Never call it a notch, and never write "perry" or "notchview" anywhere.
+- Claim only what Sage does and what the reference footage shows: no invented numbers, customers, prices, dates or URLs.
+- ChatGPT: say "your ChatGPT subscription". Never "official", "partnered" or "powered by OpenAI", and no OpenAI logos.
+- For approvals, use Sage's local confirmation step: a step bubble reading "confirmation required" with Approve / Deny, clicked Approve.
 
-THE CLOCK
-- detect_beats on the music; the grid is 110 BPM from 0 s, a bar is about 2.18 s. Cut only on bar lines, one idea per bar. 22 bars (about 48 s). Fade the music over the last bar.
+REFERENCE (in the pool; draw from these, don't lay them over the film):
+- **01-halo-expand**: collapsed, the Halo is a pure-black capsule at the top centre. It morphs down into a Liquid-Glass panel. Its Home tab shows a Now Playing card (art, title "Afterglow", scrubber, prev/play/next) and a status list: Keep Awake toggle; Up next · Standup in 8 min with Join; CPU and Memory bars; Battery 82%.
+- **02-halo-tabs**: the tab bar (Tray, Clipboard, Cloud). Cloud shows today's to-dos, one of them ticked, and notes.
+- **03-halo-alert**: a live activity slides out of the collapsed capsule: "Send the Q3 roadmap · Due at 5:00 PM".
+- **04b-ask-agent**: the Ask flow, "check my battery and set volume to 30". Steps stream: Thinking → Running tool get_battery → result "82%, on battery, 5h 12m left" → set_volume → Complete "Battery is at 82%… Volume is now 30%".
+- **05-settings-model** and **06-settings-permissions**: macOS-style Settings.
+  - Model: provider "ChatGPT (subscription)".
+  - Permissions: "Grant everything" turns every row to Allowed.
+  - Connectors: Google, GitHub, Slack, Notion, Linear.
+  - Don't show the footer under ChatGPT Subscription.
+- **00-icon-card.png / icon-tile-transparent.png**: the Sage app icon.
+- **Sound**: music-bed-110bpm.wav (110 BPM, 4/4, 56 s), sfx-click.wav, sfx-whoosh.wav and sfx-bell.wav. All original.
+- **Font**: Inter.woff2 (variable).
 
-STORYBOARD (bars from 0)
-- Bars 0–1, hook on the bare canvas: "Your Mac." then "On command." — one statement per bar, rising out of a mask; accent on "command".
-- Bars 2–4, the Halo: 01-halo-expand. Headline "Meet the Halo." then "Everything, one hover away." Land the expand on a bar.
-- Bars 5–6: 02-halo-tabs — "Tray. Clipboard. Cloud." one word per beat as the tabs change.
-- Bars 7–10, it acts: 04-ask-agent. "Ask." (bar 7) → "It acts." (bar 8, as the tool steps stream) → hold on Complete: "Done." Click sfx on the clicks; a soft whoosh into the shot.
-- Bar 11: 03-halo-alert — "It keeps you on time."
-- Bars 12–13: 05-settings-model — "Runs on your ChatGPT subscription." (accent "your").
-- Bars 14–15: 06-settings-permissions — "Grant once." then "Connect everything."
-- Bars 16–18, the rush: a quick montage of the best moments from the takes, one per beat in bar 18, building.
-- Bars 19–21, end card on the canvas: the Sage icon, then "Sage" at 165 px beside it, then "Your Mac, on command." at 39 px below — and, if it reads well, make the "Sage" wordmark a subtle 3D moment (a .brf <scene3d> <text3d> that turns a few degrees into place, lit softly, no fog) — keep it premium, not gimmicky. Bell sfx as the name lands.
+frame_grid those takes until you can redraw the Halo accurately: proportions, radii, glass, type sizes and the real labels.
 
-Check every scene with preview_frame and a frame_grid (text inside the frame, never over the UI, the product straight, nothing black), then export with streaming loudness to /Users/himanshu/Movies/bay-rnd/sage/after.mp4.
+LOOK: white and premium, like an Apple product film.
+- Canvas #F5F5F7 and ink #1D1D1F; one accent, system blue #007AFF.
+- Inter for statements (600, tracking about −0.035em), a serif italic for one human line, and mono for tiny labels if you use chrome.
+- The glass is frosted white with a hairline and a soft shadow. The collapsed Halo is pure black.
+
+THE IDEA TO BUILD AROUND: **the Halo is the protagonist.**
+- It is born as a dot at the top centre in the first second, and becomes the black capsule.
+- Every scene is the Halo becoming something: the glass panel, a tab, an Ask field, a step list, an alert, a settings row.
+- It ends as the capsule shrinking back to a dot that becomes the end card.
+- No fades. Morph the Halo from state to state, and give every change an on-screen cause: a cursor press flips a toggle; Approve makes the volume slider move to 30 and the battery count to 82%; "Grant everything" cascades each row to Allowed.
+- At least one transition must carry meaning.
+
+SHAPE (a starting point; improve on it):
+1. A hook in bar 0: the dot → the capsule, with "Your Mac." then "On command." (accent on "command").
+2. Meet the Halo: it morphs into the glass panel; Home comes alive (the Now Playing scrubber moving, CPU and Memory jittering); the cursor toggles Keep Awake.
+3. "Everything, one hover away.": the tabs, with Tray / Clipboard / Cloud whipping between them and a to-do ticked.
+4. "Ask. It acts. You approve.": typing, the steps springing in, the confirmation, Approve, and the results counting in.
+5. "It keeps you on time.": it collapses, and the alert slides out.
+6. "Runs on your ChatGPT subscription.", then "Grant once. Connect everything.", told with the permissions cascade.
+7. A fast montage, one beat each, of what Sage showed.
+8. End: the capsule → a dot → the Sage icon, "Sage" at 165 px, and "Your Mac, on command." Hold it at least 2 bars.
+
+TIMING: detect_beats on the music; cut on bar lines, about 22 bars. Place each sfx on the timeline at the frame your code says the press, pop or landing happens, under the music. Fade the music over the last bar.
+
+When it's right, export with streaming loudness to /Users/himanshu/Movies/bay-rnd/sage/after.mp4. Then describe the film beat by beat and list what each of your review passes changed.
