@@ -69,6 +69,17 @@ No music or sound: these clips have no audio stream and none was added. The agen
 names out of frame (it dropped a fourth clip, item 3652, whose rotor is engraved with the
 maker's name); a faint generic "…S MADE" remains at the edge of the dial in the last seconds.
 
+### news-explainer
+
+| Title | Author | Page | File downloaded | Licence |
+|---|---|---|---|---|
+| Kelsey Young SOTs, Artemis II | NASA's Goddard Space Flight Center | https://svs.gsfc.nasa.gov/14934 | https://svs.gsfc.nasa.gov/vis/a010000/a014900/a014934/Kelsey_Young__SOTs_Artemis_II_1.mp4 (first 110 s) | Public domain (NASA media) |
+
+NASA material is not copyrighted in the United States. Its use here does not imply NASA's
+endorsement of bay or of this page. The graphics (the crew card, the mission-path diagram,
+the checklist) were drawn by bay's agent from what she says on camera; they are an
+illustration, not NASA's.
+
 ## Sound
 
 The music bed (`coast-bed.m4a`) and the surf bed (`surf.m4a`) in the edit were generated
