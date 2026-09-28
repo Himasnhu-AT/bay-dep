@@ -11,7 +11,7 @@
  *     ├ timeline drawer (hosted) ──┴──────────────────────────────┴──────────────┤
  *     └──────────────────────────────────────────────────────────────────────────┘
  *
- * The viewer and the timeline are the workspace's single hosted nodes (`hosted.tsx`): this layout
+ * The viewer, the timeline and the agent panel are the workspace's single hosted nodes (`hosted.tsx`): this layout
  * only places `<Slot>`s for them, exactly as a Resolve page does, so switching modes moves them and
  * never remounts the engine. The viewer is the first region in document order, which keeps its
  * canvas the first `<canvas>` in the document (probes read it).
@@ -27,7 +27,6 @@ import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/componen
 import { runCommand, shortcutOf } from '@/lib/commands'
 import { useTimelineTool } from '@/lib/timelineTool'
 import { useEditor, WORKSPACE_PAGES, type AiPanel, type WorkspacePage } from '@/store/editor'
-import { AgentPanel } from '@/editor/AgentPanel'
 import { AGENT_STARTERS, type AgentStarter } from '@/editor/agentStarters'
 import { Inspector } from '@/editor/Inspector'
 import { MediaPool } from '@/editor/library/MediaPool'
@@ -37,21 +36,22 @@ import type { LayoutRegions } from './layoutRegions'
 import { PAGES } from './PageBar'
 import { pageContent } from './pageContent'
 
+/**
+ * The one-click tools near the chat, handed to the hosted AgentPanel while this layout shows it.
+ * Today every bay skill (the agent's own starters); the hook for "smart mode", which will choose
+ * a palette from the footage (a podcast, a talking head…) — replace this with that choice.
+ */
+export const AI_TOOL_PALETTE: readonly AgentStarter[] = AGENT_STARTERS
+
 export interface AiLayoutProps {
   drawers: LayoutRegions['drawers']
   onExport(): void
   onHome(): void
-  /**
-   * The one-click tools near the chat. Today every bay skill (the agent's own starters); the
-   * hook for "smart mode", which will choose a palette from the footage (a podcast, a talking
-   * head…) and pass it here — nothing else in the layout needs to change for that.
-   */
-  toolPalette?: readonly AgentStarter[]
 }
 
 const DRAWER_IDS = { timeline: 'ai-drawer-timeline', side: 'ai-drawer-side' } as const
 
-export function AiLayout({ drawers, onExport, onHome, toolPalette = AGENT_STARTERS }: AiLayoutProps): ReactNode {
+export function AiLayout({ drawers, onExport, onHome }: AiLayoutProps): ReactNode {
   const main = useDefaultLayout({ id: 'bay.layout.ai.main', storage: layoutStorage })
   const stage = useDefaultLayout({ id: 'bay.layout.ai.stage', storage: layoutStorage })
   const setAiPanel = useEditor((state) => state.setAiPanel)
@@ -86,10 +86,9 @@ export function AiLayout({ drawers, onExport, onHome, toolPalette = AGENT_STARTE
           </ResizablePanel>
           <ResizableHandle aria-label="Resize agent panel" />
           <ResizablePanel id="agent" minSize="360px">
+            {/* The window's one AgentPanel (`hosted.tsx`), moved here from the dock. */}
             <div className="h-full min-h-0 border-l border-line">
-              <ErrorBoundary region="the agent panel">
-                <AgentPanel palette={toolPalette} />
-              </ErrorBoundary>
+              <Slot name="agent" />
             </div>
           </ResizablePanel>
         </ResizablePanelGroup>

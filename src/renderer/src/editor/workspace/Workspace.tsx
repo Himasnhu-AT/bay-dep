@@ -19,7 +19,8 @@
  * `AiLayout` — the agent large, the viewer and the media pool beside it, the rest in drawers.
  * `layoutRegions.ts` says which regions each mode shows. Both place the same hosted viewer and
  * timeline, so a mode switch moves them like a page switch does. The agent's conversation lives
- * in the store and survives a switch; an unsent draft in its composer does not.
+ * in the store, and the panel itself is hosted too, so a draft, attachments and a send in flight
+ * survive a switch.
  */
 
 import { useCallback, type ReactNode } from 'react'
@@ -31,8 +32,8 @@ import { StatusBar } from '@/editor/StatusBar'
 import { Timeline } from '@/editor/Timeline'
 import { TopBar } from '@/editor/TopBar'
 import { useEditor } from '@/store/editor'
-import { AiLayout } from './AiLayout'
-import { Hosted, HostProvider, useHost } from './hosted'
+import { AI_TOOL_PALETTE, AiLayout } from './AiLayout'
+import { Hosted, HostProvider, Slot, useHost } from './hosted'
 import { layoutStorage } from './layoutStorage'
 import { PageBar } from './PageBar'
 import { layoutRegions } from './layoutRegions'
@@ -95,13 +96,10 @@ export function Workspace({ onHome, onExport, saving }: WorkspaceProps): ReactNo
             panelRef={agent.panelRef}
             onResize={agent.onResize}
           >
-            {/* Mounted only while docked: one AgentPanel at a time, and none sitting at 0px. */}
+            {/* The one hosted AgentPanel is placed here only while docked; undocked it waits,
+                still mounted, in the parking box rather than sitting at 0px. */}
             <div inert={!agentDocked} className="h-full min-h-0 border-l border-line">
-              {agentDocked && (
-                <ErrorBoundary region="the agent panel">
-                  <AgentPanel />
-                </ErrorBoundary>
-              )}
+              {agentDocked && <Slot name="agent" />}
             </div>
           </ResizablePanel>
         </ResizablePanelGroup>
@@ -114,6 +112,13 @@ export function Workspace({ onHome, onExport, saving }: WorkspaceProps): ReactNo
       {/* After the page, so its slots have placed these nodes before anything inside measures. */}
       <Hosted name="viewer">
         <ViewerRegion />
+      </Hosted>
+      {/* One AgentPanel for the window, placed by the dock or the AI layout. The tool palette
+          is the AI layout's; the dock keeps the starters grid only. */}
+      <Hosted name="agent">
+        <ErrorBoundary region="the agent panel">
+          <AgentPanel palette={regions.agent === 'primary' ? AI_TOOL_PALETTE : undefined} />
+        </ErrorBoundary>
       </Hosted>
       <Hosted name="timeline">
         <ErrorBoundary region="the timeline">

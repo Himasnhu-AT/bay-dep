@@ -17,6 +17,7 @@ export const workspaceCommands = [
   { id: 'workspace.toggleTimeline', label: 'Show Timeline', group: 'Workspace' },
   SEPARATOR,
   // ⌘⇧A, "A" for AI. Runs from a text field too: in the AI layout the composer usually has focus,
-  // and the way back to Resolve's pages must not need a click first.
-  { id: 'workspace.toggleLayoutMode', label: 'AI Layout', group: 'Workspace', shortcut: 'Mod+Shift+A', whileTyping: true }
+  // and the way back to Resolve's pages must not need a click first. Never behind a dialog, though:
+  // swapping the layout under Project Settings is not text editing.
+  { id: 'workspace.toggleLayoutMode', label: 'AI Layout', group: 'Workspace', shortcut: 'Mod+Shift+A', whileTyping: true, whileModal: false }
 ] as const satisfies readonly CommandEntry[]

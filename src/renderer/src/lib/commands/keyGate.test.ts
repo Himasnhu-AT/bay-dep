@@ -1,5 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
+import { commandSpec } from '@shared/commands'
 import { keyMayRun, menuCommandMayRun } from './keyGate'
 
 const base = { defaultPrevented: false, modalOpen: false, typing: false, whileTyping: false }
@@ -42,4 +43,21 @@ test('an open dialog refuses a menu command that edits the timeline behind it', 
 test('an open dialog still lets File commands and its own field’s text editing through', () => {
   assert.equal(menuCommandMayRun({ ...menu, modalOpen: true, native: true }), true)
   assert.equal(menuCommandMayRun({ ...menu, modalOpen: true, typing: true, whileTyping: true }), true)
+})
+
+// -- whileModal: false (the layout switch) ----------------------------------------------------
+
+test('a whileModal: false command never runs behind a dialog, even from its text field', () => {
+  // ⌘⇧A with the cursor in Project Settings' name field must not swap the layout behind it.
+  assert.equal(keyMayRun({ ...base, modalOpen: true, typing: true, whileTyping: true, whileModal: false }), false)
+  assert.equal(menuCommandMayRun({ ...menu, modalOpen: true, typing: true, whileTyping: true, whileModal: false }), false)
+  // Positive controls: with no dialog it runs from a text field, and a native command still runs.
+  assert.equal(keyMayRun({ ...base, typing: true, whileTyping: true, whileModal: false }), true)
+  assert.equal(menuCommandMayRun({ ...menu, modalOpen: true, native: true, whileModal: false }), true)
+})
+
+test('the layout switch is declared whileModal: false (and still whileTyping)', () => {
+  const spec = commandSpec('workspace.toggleLayoutMode')
+  assert.equal(spec.whileTyping, true, 'it runs from the composer')
+  assert.equal(spec.whileModal, false, 'but not from a dialog')
 })
