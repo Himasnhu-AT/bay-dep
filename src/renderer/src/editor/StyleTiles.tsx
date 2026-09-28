@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Wand2 } from 'lucide-react'
 import { BUILT_IN_STYLES, readUserStyles } from '@shared/styles'
 import {
+  playFailureDisablesLoop,
   readStyleTile,
   styleDraftMessage,
   styleTilesFromResult,
@@ -22,23 +23,43 @@ import { cn } from '@/lib/cn'
 
 const BUILT_IN: TileCatalogEntry[] = BUILT_IN_STYLES.map((style) => ({ style, origin: 'built-in' }))
 
+/**
+ * The user's styles, listed once for every card in the panel rather than once per card, and
+ * listed again when a `write_style` lands (`refreshUserStyles`).
+ */
+let userStyles: TileCatalogEntry[] = []
+let listing: Promise<void> | null = null
+const listeners = new Set<() => void>()
+
+function listUserStyles(): void {
+  const api = bay()
+  if (!api) return
+  listing = api.styles
+    .list()
+    .then((listed) => {
+      userStyles = readUserStyles(listed.styles).styles.map((style) => ({ style, origin: 'user' }))
+      for (const notify of listeners) notify()
+    })
+    .catch(() => {
+      // Without the user's styles the built-ins still draw; a user hit falls back to its own fields.
+    })
+}
+
+/** After `write_style` saved one: the next tiles should find it. */
+export function refreshUserStyles(): void {
+  listUserStyles()
+}
+
 /** The built-ins at once; the user's own styles once main has listed them. */
 function useStyleCatalog(): TileCatalogEntry[] {
-  const [user, setUser] = useState<TileCatalogEntry[]>([])
+  const [user, setUser] = useState<TileCatalogEntry[]>(userStyles)
   useEffect(() => {
-    const api = bay()
-    if (!api) return
-    let live = true
-    void api.styles
-      .list()
-      .then((listed) => {
-        if (live) setUser(readUserStyles(listed.styles).styles.map((style) => ({ style, origin: 'user' })))
-      })
-      .catch(() => {
-        // Without the user's styles the built-ins still draw; a user hit falls back to its own fields.
-      })
+    const notify = (): void => setUser(userStyles)
+    listeners.add(notify)
+    if (!listing) listUserStyles()
+    else notify()
     return () => {
-      live = false
+      listeners.delete(notify)
     }
   }, [])
   return useMemo(() => [...BUILT_IN, ...user], [user])
@@ -85,11 +106,21 @@ function StyleTileCard({ tile, onUse }: { tile: StyleTile; onUse: (text: string)
   useEffect(() => {
     const element = video.current
     if (!element) return
-    if (play) {
-      element.currentTime = 0
-      void element.play().catch(() => setVideoOk(false))
-    } else element.pause()
-  }, [play])
+    if (play && media) {
+      element.src = media.video
+      // A hover shorter than the load pauses a pending play(), which rejects with AbortError: that
+      // is the user moving on, not a broken file. A file that will not load reaches onError.
+      void element.play().catch((error: unknown) => {
+        if (playFailureDisablesLoop(error)) setVideoOk(false)
+      })
+    } else if (element.hasAttribute('src')) {
+      // Unset, not just paused: a paused element keeps its decoder, and a grid of hovered tiles
+      // would each hold one.
+      element.pause()
+      element.removeAttribute('src')
+      element.load()
+    }
+  }, [play, media])
 
   return (
     <article
@@ -114,14 +145,16 @@ function StyleTileCard({ tile, onUse }: { tile: StyleTile; onUse: (text: string)
           {videoOk && (
             <video
               ref={video}
-              src={play ? media.video : undefined}
               muted
               loop
               playsInline
               preload="none"
               aria-hidden="true"
               tabIndex={-1}
-              onError={() => setVideoOk(false)}
+              onError={(event) => {
+                // `load()` after the src is removed is an unload, not a failure.
+                if (event.currentTarget.hasAttribute('src')) setVideoOk(false)
+              }}
               className={cn('absolute inset-0 size-full object-cover transition-opacity', play ? 'opacity-100' : 'opacity-0')}
             />
           )}

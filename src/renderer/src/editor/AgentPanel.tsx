@@ -48,7 +48,7 @@ import { estimateToolCallUsd } from '@shared/generation'
 import { estimateSpeechToolCallUsd } from '@shared/speech'
 import { toolPreview } from '@shared/tool-preview'
 import { Composer } from './Composer'
-import { ReadStyleTile, StyleSearchTiles } from './StyleTiles'
+import { ReadStyleTile, StyleSearchTiles, refreshUserStyles } from './StyleTiles'
 import { ASSET_DRAG_TYPE } from './AssetTile'
 import { findAsset } from '@shared/project'
 import { isAttachableFile, manyImagesNote, splitDrop, type AgentAttachmentView } from '@shared/agent-attachments'
@@ -687,6 +687,11 @@ function ToolCard({ entry, onDraft }: { entry: Extract<AgentEntry, { kind: 'tool
   const expanded = open || entry.state === 'failed'
   // A paid call says what it costs where the user already looks: on the card, not in its result.
   const costUsd = estimateToolCallUsd(entry.tool, entry.args) ?? estimateSpeechToolCallUsd(entry.tool, entry.args)
+  // A saved style is in the next search's tiles, which list the user's styles once per panel.
+  const savedStyle = entry.tool === 'write_style' && entry.state === 'done'
+  useEffect(() => {
+    if (savedStyle) refreshUserStyles()
+  }, [savedStyle])
 
   return (
     <div className="rounded border border-line bg-surface-2 text-[11px]">

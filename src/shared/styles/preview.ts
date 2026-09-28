@@ -116,3 +116,12 @@ export function styleDraftMessage(tile: Pick<StyleTile, 'id' | 'title'>): string
   const title = tile.title.replace(/\s+/g, ' ').trim()
   return `Apply the ${title} style (\`${tile.id}\`) to my clip.`
 }
+
+/**
+ * Whether a tile's rejected `play()` means its loop is broken. `pause()` during a pending
+ * `play()` — a hover shorter than the load — rejects with `AbortError`, and treating that as a
+ * failure turned the loop off for good after one quick pass of the pointer.
+ */
+export function playFailureDisablesLoop(error: unknown): boolean {
+  return (error as { name?: unknown } | null)?.name !== 'AbortError'
+}

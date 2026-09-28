@@ -6,7 +6,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { BUILT_IN_STYLES, checkStyle, searchStyles, type EditingStyle, type StyleEntry } from './index'
-import { readStyleTile, styleDraftMessage, stylePreviewUrl, styleTilesFromResult, type TileCatalogEntry } from './preview'
+import { playFailureDisablesLoop, readStyleTile, styleDraftMessage, stylePreviewUrl, styleTilesFromResult, type TileCatalogEntry } from './preview'
 
 const builtIn: TileCatalogEntry[] = BUILT_IN_STYLES.map((style) => ({ style, origin: 'built-in' }))
 const first = BUILT_IN_STYLES[0]!
@@ -137,4 +137,13 @@ test('checkStyle holds a built-in preview to the one served name, and refuses on
   const user = checkStyle({ ...mine, preview: 'preview.webm' }, { origin: 'user' })
   assert.equal(user.ok, false)
   assert.match(user.ok ? '' : user.errors.join(' '), /Unknown field preview/)
+})
+
+test('a play() aborted by a quick hover does not turn the loop off; a real failure does', () => {
+  // What Chromium rejects with when pause() interrupts a pending play().
+  const abort = Object.assign(new Error('The play() request was interrupted by a call to pause().'), { name: 'AbortError' })
+  assert.equal(playFailureDisablesLoop(abort), false)
+  // Positive controls: an unsupported source, and a rejection that is not even an Error.
+  assert.equal(playFailureDisablesLoop(Object.assign(new Error('no supported source'), { name: 'NotSupportedError' })), true)
+  assert.equal(playFailureDisablesLoop(undefined), true)
 })
