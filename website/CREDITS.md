@@ -42,16 +42,9 @@ entry is marked ready, its footage and sound are listed here, one table per entr
 shape as the one above (title, author, page, file downloaded, licence), and the same rows are
 the entry's `credits`, which the page prints under the figure.
 
-### kinetic-type
+### sage-launch
 
-| Title | Author | Page | File downloaded | Licence |
-|---|---|---|---|---|
-| James speaking West Riding Yorkshire English | Wikitongues | https://commons.wikimedia.org/wiki/File:James_speaking_West_Riding_Yorkshire_English.webm | the original `.webm` (1080×1920, 6:20); the page uses 2:34.4–2:53.0, with its sound | CC0 1.0 |
-
-The person on camera keeps his personality and publicity rights; the page presents the clip as
-material the agent was given and implies no endorsement.
-The first export came out at −26.9 LUFS because the prompt didn't ask for mastering; the agent
-re-exported it, unchanged, mastered to −14 LUFS, when asked in a follow-up message.
+No third-party material. The before side is screen recordings of Sage's own demo build (the owner's product), and the film redraws those screens in code. The music bed and sound effects were generated for it from ffmpeg's own sources (`r&d/tools/make-sound-bed.sh`), with no samples. The type is Inter (OFL-1.1).
 
 ### luxury-minimal
 

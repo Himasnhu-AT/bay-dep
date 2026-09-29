@@ -85,8 +85,11 @@ duration() { "$FFPROBE" -v error -show_entries format=duration -of csv=p=0 "$1";
 # Scale to fit the side's frame and pad to exactly it.
 frame_filter() {
   local dims w h
-  dims="$("$FFPROBE" -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0:s=x "$1")"
-  w="${dims%%x*}"; h="${dims##*x}"
+  # Width and height read one at a time: ffprobe can end a csv line with a stray separator
+  # ("1920x1080x", seen on an x264 file), which splitting one line on "x" reads as no height.
+  w="$("$FFPROBE" -v error -select_streams v:0 -show_entries stream=width -of csv=p=0 "$1" | head -1 | tr -dc 0-9)"
+  h="$("$FFPROBE" -v error -select_streams v:0 -show_entries stream=height -of csv=p=0 "$1" | head -1 | tr -dc 0-9)"
+  dims="${w}x${h}"
   if [[ ! "$w" =~ ^[0-9]+$ || ! "$h" =~ ^[0-9]+$ ]]; then
     echo "cannot read the frame size of $1 (ffprobe said: $dims)" >&2; exit 2
   fi
