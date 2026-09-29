@@ -3,12 +3,14 @@
  */
 
 import { brfAssetFields, brfCodeAssetFields } from '@shared/brf'
-import { activeTimeline, assetTrackKind, placementLayout, normaliseCrop, isCropped, NO_CROP, defaultLayout, defaultTextStyle, findAsset, findItem, findTrack, framesToUs, itemEnd, itemsOverlap, usToFrames, type Item, type TrackKind } from '@shared/project'
+import { activeTimeline, assetTrackKind, placementLayout, normaliseCrop, isCropped, NO_CROP, defaultLayout, defaultTextStyle, findAsset, findItem, findTrack, framesToUs, itemEnd, itemsOverlap, usToFrames, type Item, type Timeline, type TrackKind } from '@shared/project'
 import { rippleDelete, type RippleDeleteResult } from '@shared/ripple'
+import { splitItemAt } from '@shared/split'
 import { applyRelinks } from '@shared/relink'
-import { shiftKeyframes, sliceKeyframes, withKeyframe } from '@shared/keyframes'
+import { shiftKeyframes, withKeyframe } from '@shared/keyframes'
 import { applyTrimPlan, planTrim, type TrimPlan } from '@shared/trim'
 import { detachAudio, linkedPartners, reattachAudio, unlinkItems, withLinked } from '@shared/links'
+import { CUTOUT_PICTURE_FIELDS, cutoutPartner, planBehindSubject, type BehindSubjectResult } from '@shared/behind-subject'
 import { describeDuplicate, duplicateClips, type DuplicateResult } from '@shared/clipboard'
 import { formatTimecode } from '@shared/timecode'
 import { applySpeedPlan, planSpeed, retimedLength, type SpeedPlan } from '@shared/speed'
@@ -31,6 +33,7 @@ type Actions = Pick<
   | 'splitAt'
   | 'deleteSelected'
   | 'rippleDelete'
+  | 'rippleDeleteRanges'
   | 'setCrop'
   | 'setCompositionVariable'
   | 'duplicateSelected'
@@ -39,12 +42,23 @@ type Actions = Pick<
   | 'detachAudio'
   | 'reattachAudio'
   | 'unlinkItems'
+  | 'putBehindSubject'
   | 'patchLayout'
   | 'setKeyframe'
   | 'addTrack'
   | 'removeTrack'
   | 'patchTrack'
 >
+
+/**
+ * Where an edit of a picture field lands: a subject cut-out draws with its clip's picture
+ * (`cutoutAsDrawn`), so an edit aimed at the cut-out — from the inspector, with the cut-out
+ * selected — goes to the clip, and the cut-out follows. Anything else is its own target.
+ */
+function pictureTarget(timeline: Timeline, itemId: string): string {
+  const found = findItem(timeline, itemId)
+  return (found && cutoutPartner(timeline, found.item)?.id) ?? itemId
+}
 
 export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions {
   return {
@@ -375,25 +389,8 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
             if (targets && !targets.includes(item.id)) continue
             // A cut exactly on an edge is not a cut — it would make a zero-length clip.
             if (at <= item.from || at >= itemEnd(item)) continue
-            const leftDuration = at - item.from
-            const rightDuration = item.durationInFrames - leftDuration
-            const right: Item = {
-              ...item,
-              id: newId('itm'),
-              from: at,
-              durationInFrames: rightDuration,
-              sourceStartUs:
-                item.sourceStartUs + Math.round(framesToUs(leftDuration, tl.fps) * item.speed),
-              layout: { ...item.layout },
-              fadeInFrames: 0,
-              // Each half keeps the keys that shape it, so the pair draws exactly what the whole did.
-              keyframes: sliceKeyframes(item.keyframes, leftDuration, item.durationInFrames)
-            }
-            if (!right.keyframes) delete right.keyframes
-            if (item.keyframes) item.keyframes = sliceKeyframes(item.keyframes, 0, leftDuration)
-            item.durationInFrames = leftDuration
-            item.fadeOutFrames = Math.min(item.fadeOutFrames, leftDuration)
-            right.fadeOutFrames = Math.min(right.fadeOutFrames, rightDuration)
+            const right = splitItemAt(item, at, tl.fps, newId('itm'), tl.transitions)
+            if (!right) continue
             additions.push(right)
             created.push(right.id)
           }
@@ -473,9 +470,42 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
       return removed
     },
 
+    rippleDeleteRanges(ranges) {
+      const state = get()
+      const timeline = activeTimeline(state.project)
+      if (!timeline || ranges.length === 0) return null
+      const ordered = [...ranges].sort((a, b) => b.fromFrame - a.fromFrame)
+      const total: RippleDeleteResult = {
+        removedFrames: 0,
+        removedItemIds: [],
+        trimmedItemIds: [],
+        createdItemIds: [],
+        removedTransitionIds: [],
+        desyncedTrackIds: []
+      }
+      const add = (into: string[], ids: readonly string[]): void => {
+        for (const id of ids) if (!into.includes(id)) into.push(id)
+      }
+      // One `editTimeline`, so one undo step: undoing half the silences would leave a cut nobody
+      // asked for. Last-first, so each earlier range's frames are untouched by the later ones.
+      editTimeline((tl) => {
+        for (const range of ordered) {
+          const result = rippleDelete(tl, range.fromFrame, range.toFrame, () => newId('itm'))
+          total.removedFrames += result.removedFrames
+          add(total.removedItemIds, result.removedItemIds)
+          add(total.trimmedItemIds, result.trimmedItemIds)
+          add(total.createdItemIds, result.createdItemIds)
+          add(total.removedTransitionIds, result.removedTransitionIds)
+          add(total.desyncedTrackIds, result.desyncedTrackIds)
+        }
+      })
+      if (total.removedFrames > 0) set({ selection: [] })
+      return total
+    },
+
     setCrop(itemId, edge, fraction) {
       editTimeline((tl) => {
-        const found = findItem(tl, itemId)
+        const found = findItem(tl, pictureTarget(tl, itemId))
         if (!found) return
         const next = normaliseCrop({ ...(found.item.crop ?? NO_CROP), [edge]: fraction })
         // Four zeroes is stored as absence, so an uncropped clip carries no crop at all and
@@ -539,6 +569,18 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
       editTimeline((timeline) => {
         const found = findItem(timeline, itemId)
         if (!found || found.track.locked) return
+        // A cut-out's picture is its clip's: those fields go to the clip, and the cut-out follows.
+        const target = pictureTarget(timeline, itemId)
+        if (target !== itemId) {
+          const clip = findItem(timeline, target)
+          const own: Record<string, unknown> = { ...patch }
+          for (const field of CUTOUT_PICTURE_FIELDS) {
+            if (!(field in own)) continue
+            if (clip && !clip.track.locked) (clip.item as unknown as Record<string, unknown>)[field] = own[field]
+            delete own[field]
+          }
+          patch = own as typeof patch
+        }
         const before = { ...found.item }
         Object.assign(found.item, patch)
         if (found.item.durationInFrames < 1) found.item.durationInFrames = 1
@@ -623,9 +665,26 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
       return holder.value
     },
 
+    putBehindSubject(spec) {
+      const holder: { value: BehindSubjectResult } = { value: { ok: false, error: 'No timeline is open.' } }
+      editTimeline((tl) => {
+        holder.value = planBehindSubject(tl, spec, {
+          makeId: newId,
+          makeVideoTrack: (timeline) => {
+            const track = makeTrack('video', 1)
+            track.name = nextTrackName(timeline, 'video')
+            return track
+          }
+        })
+      })
+      const result = holder.value
+      if (result.ok) set({ selection: [result.cutoutItemId] })
+      return result
+    },
+
     patchLayout(itemId, patch) {
       editTimeline((timeline) => {
-        const found = findItem(timeline, itemId)
+        const found = findItem(timeline, pictureTarget(timeline, itemId))
         if (!found || found.track.locked) return
         Object.assign(found.item.layout, patch)
       })
@@ -633,7 +692,7 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
 
     setKeyframe(itemId, property, frame, value) {
       editTimeline((timeline) => {
-        const found = findItem(timeline, itemId)
+        const found = findItem(timeline, pictureTarget(timeline, itemId))
         if (!found || found.track.locked) return
         const next = withKeyframe(found.item.keyframes, property, Math.round(frame), value)
         if (next) found.item.keyframes = next

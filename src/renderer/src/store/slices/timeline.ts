@@ -24,6 +24,7 @@ type Actions = Pick<
   | 'placeDub'
   | 'resizeCanvas'
   | 'setBackground'
+  | 'rememberDelivery'
   | 'addCaptions'
   | 'addMarker'
   | 'moveMarker'
@@ -55,6 +56,29 @@ export function timelineSlice({ set, get, edit, editTimeline, currentTimeline }:
       editTimeline((timeline) => {
         if (timeline.background.toLowerCase() !== color.toLowerCase()) timeline.background = color
       })
+    },
+
+    rememberDelivery(projectId, timelineId, loudness) {
+      if (get().project.id !== projectId) return
+      // Not an undo step: it lands when an export finishes, minutes after anything the user did,
+      // so a history entry would clear their redo and make the next ⌘Z appear to do nothing —
+      // and, outside any agent tool call, mark the agent's turn as the user's edit. Silent, then,
+      // but the decision belongs in the saved `.bay`, so the document is dirty.
+      const before = get().project
+      edit((project) => {
+        const timeline = project.timelines.find((candidate) => candidate.id === timelineId)
+        if (!timeline) return
+        if (loudness) {
+          timeline.delivery = { ...timeline.delivery, loudness: { integratedLufs: loudness.integratedLufs, truePeakDb: loudness.truePeakDb } }
+          return
+        }
+        if (!timeline.delivery?.loudness) return
+        const rest = { ...timeline.delivery }
+        delete rest.loudness
+        if (Object.keys(rest).length > 0) timeline.delivery = rest
+        else delete timeline.delivery
+      }, { silent: true })
+      if (get().project !== before) set({ dirty: true })
     },
 
     setFps(fps) {
@@ -110,7 +134,8 @@ export function timelineSlice({ set, get, edit, editTimeline, currentTimeline }:
           fromItemId: spec.fromItemId,
           toItemId: spec.toItemId,
           durationInFrames: Math.max(2, Math.floor(spec.durationInFrames)),
-          ...(spec.direction ? { direction: spec.direction } : {})
+          ...(spec.direction ? { direction: spec.direction } : {}),
+          ...(spec.ease ? { ease: spec.ease } : {})
         }
         const at = list.findIndex((t) => t.id === id)
         if (at >= 0) list[at] = next
@@ -139,6 +164,8 @@ export function timelineSlice({ set, get, edit, editTimeline, currentTimeline }:
         if (!transition) return
         Object.assign(transition, patch)
         if (transition.durationInFrames < 2) transition.durationInFrames = 2
+        // Linear is stored as absence, so a transition put back to linear saves as it was.
+        if (transition.ease === undefined || transition.ease === 'linear') delete transition.ease
       })
     },
 

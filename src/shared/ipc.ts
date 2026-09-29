@@ -9,10 +9,11 @@
  */
 
 import type { Asset, Project } from './project'
-import type { AgentEntry, AgentEvent, AgentProvider, AgentProviderStatus } from './agent'
+import type { AgentEntry, AgentEvent, AgentProvider, AgentProviderStatus, AgentTuning } from './agent'
 import type { AgentAttachmentInput } from './agent-attachments'
 import type { TranscriptSegment } from './transcribe'
 import type { BeatGrid } from './beats'
+import type { SubjectMatteIndex, SubjectMatteRequest, SubjectMatteResult } from './matte'
 import type { WhisperDownload, WhisperStatus } from './whisper'
 import type {
   GenerationJob,
@@ -25,11 +26,12 @@ import type {
 } from './generation'
 import type { CompositionFault, CompositionInfo } from './composition'
 import type { McpToolCall, McpToolResult } from './mcp'
-import type { LoudnessReport, LoudnessTarget } from './loudness'
+import type { LoudnessMeasurement, LoudnessReport, LoudnessTarget } from './loudness'
 import type { AccessStatus, ReferralResult } from './access'
 import type { UpdateStatus } from './update'
 import type { Finding } from './findings'
 import type { UrlImportResult } from './url-import'
+import type { EditingStyle } from './styles/types'
 import type { VisionAssetRef, VisionIndexAnswer, VisionSearchAnswer, VisionSearchRequest, VisionStatus } from './visual-search'
 
 // ---------------------------------------------------------------------------
@@ -43,6 +45,23 @@ export interface SceneCut {
   /** scdet's score for the change, 0–100. Higher is a harder cut. */
   score: number
 }
+
+/** A stretch of a media file's source time: where to seek, and how much to read. */
+export interface AudioSpan {
+  /** Source microseconds from the file's start. */
+  startUs: number
+  /** How much source to read, in microseconds. Non-positive or infinite reads to the end. */
+  durationUs: number
+}
+
+/** One silence `silencedetect` found, in seconds from the start of the span that was read. */
+export interface SilenceInterval {
+  startSec: number
+  endSec: number
+}
+
+/** A main-side audio measurement: its value, or ffmpeg's own words for why there is none. */
+export type AudioResult<T> = { ok: true; value: T } | { ok: false; error: string }
 
 /** scdet's default threshold: a score (0–100) above it is a cut. */
 export const DEFAULT_CUT_THRESHOLD = 10
@@ -213,6 +232,13 @@ export interface ExportProgress {
   error?: string
   /** On `done`, when the request asked for mastering: what the delivered file measures. */
   loudness?: LoudnessReport
+  /**
+   * On `done`, whenever the delivered file carries sound, mastered or not: its integrated
+   * loudness and true peak, measured on the encoded file (the mastering loop's own reading when
+   * it ran). Absent when the file has no audio, or the measurement itself failed — `message`
+   * then says why. An unmastered export out of range is warned about from this.
+   */
+  deliveredLoudness?: LoudnessMeasurement
   /**
    * On `done`: what reading the delivered file back found wrong with it (`@shared/findings`) —
    * no audio stream under a timeline with sound, a length off the range by more than 2%, an
@@ -449,6 +475,16 @@ export interface BayApi {
      * `threshold` is scdet's own (default 10): lower finds softer cuts and more false ones.
      */
     cuts(path: string, options?: { threshold?: number }): Promise<{ ok: true; cuts: SceneCut[] } | { ok: false; error: string }>
+    /**
+     * RMS level in dBFS per `windowUs` of source over `span`, on this machine (`media/audio-analysis.ts`).
+     * Index k starts k·windowUs into the span; digital silence reads -120. For `switch_speakers`
+     * (50 ms windows) and `sync_angles` (10 ms).
+     */
+    levels(path: string, span: AudioSpan, windowUs: number): Promise<AudioResult<number[]>>
+    /** ffmpeg `silencedetect` over `span`: silences below `thresholdDb` lasting `minSilenceSec` or more. */
+    silences(path: string, span: AudioSpan, thresholdDb: number, minSilenceSec: number): Promise<AudioResult<SilenceInterval[]>>
+    /** EBU R128 integrated loudness (LUFS) and true peak (dBFS) of `span`. */
+    loudness(path: string, span: AudioSpan): Promise<AudioResult<{ integratedLufs: number; truePeakDb: number }>>
     /** Reveals a file in Finder/Explorer. */
     revealInFolder(path: string): Promise<void>
     /**
@@ -480,6 +516,15 @@ export interface BayApi {
      * `bay://`. A time past the last frame, or a file with no picture, is refused in words.
      */
     freezeFrame(request: FreezeFrameRequest): Promise<{ ok: true; path: string } | { ok: false; error: string }>
+    /**
+     * The subject matte (which pixels are the person) for one source range of a file, from the
+     * cache or computed now by Apple Vision in main (`main/matte/`). Content-addressed by file
+     * content, range and engine. Refused for a path `bay://` would not serve. Takes ~11 ms per
+     * source frame the first time.
+     */
+    subjectMatte(request: SubjectMatteRequest): Promise<SubjectMatteResult>
+    /** Where a computed matte's frames are, for the compositor to read through `bay://` with Range. */
+    subjectMatteIndex(key: string): Promise<{ ok: true; index: SubjectMatteIndex } | { ok: false; error: string }>
   }
 
   /**
@@ -565,6 +610,24 @@ export interface BayApi {
   }
 
   /**
+   * The user's own editing styles (`@shared/styles`), saved by `write_style` as JSON text in
+   * `<userData>/styles` — one file per id. Main checks every write with the same `checkStyle` the
+   * renderer uses (a built-in id, a bad slug, an oversize body are refused; markup is stripped) and
+   * never runs anything in one. `list` hands back what is on disk, unvalidated: the renderer checks
+   * each entry again as it reads (`readUserStyles`), because a file may have been edited by hand.
+   * `skipped` names every style file main could not read (too large, not JSON, id not matching
+   * the file name), so nothing vanishes without a word.
+   */
+  styles: {
+    list(): Promise<{ styles: unknown[]; skipped: string[] }>
+    /**
+     * Save one style. `replace` must be true to overwrite a user style with the same id; without
+     * it the refusal names the existing id. Resolves with the style as saved (cleaned).
+     */
+    write(style: unknown, options?: { replace?: boolean }): Promise<{ ok: true; style: EditingStyle; replaced: boolean } | { ok: false; error: string }>
+  }
+
+  /**
    * HTML compositions — HyperFrames pages, rendered as a source of pictures.
    *
    * Lives in main rather than the renderer even though the renderer is itself a browser, for
@@ -585,8 +648,18 @@ export interface BayApi {
      * Returns the runtime id, or a reason it could not start. `provider` is the Settings choice
      * (Claude when omitted); `BAY_AGENT_RUNTIME` in main's environment overrides it. Starting
      * with a provider other than the running conversation's replaces that conversation.
+     * `tuning` is Preferences › Agent's effort, model and longest turn; main parses it.
      */
-    start(options?: { provider?: AgentProvider }): Promise<{ ok: true; id: string } | { ok: false; error: string }>
+    start(options?: {
+      provider?: AgentProvider
+      tuning?: AgentTuning
+    }): Promise<{ ok: true; id: string } | { ok: false; error: string }>
+    /**
+     * Preferences › Agent's effort, model or longest turn changed. The running conversation takes
+     * it from its next turn (the CLI's process is replaced then, resuming the session); a turn in
+     * progress keeps what it started with.
+     */
+    configure(tuning: AgentTuning): Promise<void>
     /** Which providers' CLIs this machine has, and what each still needs before it can start. */
     providers(): Promise<AgentProviderStatus[]>
     /**
@@ -740,6 +813,11 @@ export interface BayApi {
      * first, which is a coin toss dressed as a reply.
      */
     onToolCall(handler: (call: McpToolCall) => Promise<McpToolResult>): () => void
+    /**
+     * Main says a call's caller is gone (its socket closed) or main stopped waiting for it. A
+     * tool waiting on a job stops waiting and answers; nothing else is undone.
+     */
+    onToolCancel(listener: (callId: string) => void): () => void
   }
 
   /**
@@ -810,6 +888,7 @@ export const IPC = {
 
   /** renderer -> main: start, drive and stop the in-app agent. */
   agentStart: 'agent:start',
+  agentConfigure: 'agent:configure',
   agentProviders: 'agent:providers',
   agentSend: 'agent:send',
   agentStop: 'agent:stop',
@@ -822,6 +901,8 @@ export const IPC = {
   mcpToolCall: 'mcp:tool-call',
   /** renderer -> main: the answer, carrying the same id. */
   mcpToolResult: 'mcp:tool-result',
+  /** main -> renderer: the id of a call whose caller is gone; a waiting tool stops waiting. */
+  mcpToolCancel: 'mcp:tool-cancel',
   /**
    * renderer -> main: the executor is (true) or is no longer (false) listening. Main holds a
    * call until this arrives, because a call pushed into a page that has not mounted is lost.
@@ -855,6 +936,9 @@ export const IPC = {
   mediaWaveform: 'media:waveform',
   mediaBeats: 'media:beats',
   mediaCuts: 'media:cuts',
+  mediaLevels: 'media:levels',
+  mediaSilences: 'media:silences',
+  mediaLoudness: 'media:loudness',
   mediaReveal: 'media:reveal',
   mediaStat: 'media:stat',
   mediaLocate: 'media:locate',
@@ -862,6 +946,8 @@ export const IPC = {
   mediaReadCaptions: 'media:read-captions',
   mediaSaveCaptions: 'media:save-captions',
   mediaFreezeFrame: 'media:freeze-frame',
+  mediaSubjectMatte: 'media:subject-matte',
+  mediaSubjectMatteIndex: 'media:subject-matte-index',
 
   /**
    * renderer -> main: AI generation (the fourth network exception). Keys in, set/not-set out;
@@ -879,6 +965,9 @@ export const IPC = {
   generationRelease: 'generation:release',
   generationDubs: 'generation:dubs',
   generationSaveDub: 'generation:save-dub',
+
+  stylesList: 'styles:list',
+  stylesWrite: 'styles:write',
 
   compositionInspect: 'composition:inspect',
   compositionWrite: 'composition:write',

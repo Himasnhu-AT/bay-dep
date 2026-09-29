@@ -9,7 +9,6 @@ export {
   type Tone
 } from './Status'
 export { Button, type ButtonProps, type ButtonSize, type ButtonVariant } from './Button'
-export { ColorField, type ColorFieldProps } from './ColorField'
 export { EmptyState, type EmptyStateProps } from './EmptyState'
 export { ErrorBoundary, type ErrorBoundaryProps } from './ErrorBoundary'
 export {
@@ -31,7 +30,6 @@ export {
   type MenuProps
 } from './Menu'
 export { Modal, type ModalProps } from './Modal'
-export { NumberField, type NumberFieldProps } from './NumberField'
 export {
   Field,
   Panel,
@@ -52,7 +50,7 @@ export {
   type SegmentedOption
 } from './SegmentedControl'
 export { Select, type SelectOption, type SelectProps } from './Select'
-export { Slider, SliderField, type SliderFieldProps, type SliderProps } from './Slider'
+export * from './controls'
 export { Checkbox, Switch, type CheckboxProps, type SwitchProps } from './Switch'
 export { SearchField, TextField, type SearchFieldProps, type TextFieldProps } from './TextField'
 export { Toast } from './Toast'

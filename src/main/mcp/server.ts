@@ -42,6 +42,8 @@ interface Pending {
   args: Record<string, unknown>
   /** Which door it came through; a resend after a reload keeps it. */
   origin: CallOrigin
+  /** The caller going away; a resend keeps it too. */
+  signal: AbortSignal | undefined
 }
 
 const pending = new Map<string, Pending>()
@@ -88,7 +90,7 @@ function rescueStranded(targetId: number): void {
       waiting.resolve({ id: callId, ok: false, error: verdict.error })
       continue
     }
-    void callRenderer(waiting.tool, waiting.args, waiting.origin).then((result) =>
+    void callRenderer(waiting.tool, waiting.args, waiting.origin, waiting.signal).then((result) =>
       waiting.resolve({ ...result, id: callId })
     )
   }
@@ -138,7 +140,8 @@ function executorWebContents(): WebContents | null {
 async function callRenderer(
   tool: string,
   args: Record<string, unknown>,
-  origin: CallOrigin
+  origin: CallOrigin,
+  signal?: AbortSignal
 ): Promise<McpToolResult> {
   const target = executorWebContents()
   const id = randomUUID()
@@ -171,8 +174,15 @@ async function callRenderer(
   // A tool may declare a longer budget: transcribing a long file takes longer than the default,
   // and "bay did not answer" about a job that was still working would send the agent to retry it.
   const timeoutMs = findTool(tool)?.timeoutMs ?? MCP_CALL_TIMEOUT_MS
+  // The caller gone, or main done waiting: tell the renderer, so a tool waiting on a job stops
+  // rather than sleeping on for nobody. It still answers (at once), which settles the call here.
+  const cancel = (): void => {
+    if (!target.isDestroyed()) target.send(IPC.mcpToolCancel, id)
+  }
   return new Promise<McpToolResult>((resolve) => {
     const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', cancel)
+      cancel()
       pending.delete(id)
       resolve({
         id,
@@ -184,9 +194,22 @@ async function callRenderer(
       })
     }, timeoutMs)
 
-    pending.set(id, { resolve, timer, targetId: target.id, tool, args, origin })
+    pending.set(id, {
+      resolve: (result) => {
+        signal?.removeEventListener('abort', cancel)
+        resolve(result)
+      },
+      timer,
+      targetId: target.id,
+      tool,
+      args,
+      origin,
+      signal
+    })
     const call: McpToolCall = { id, tool, args, origin }
     target.send(IPC.mcpToolCall, call)
+    if (signal?.aborted) cancel()
+    else signal?.addEventListener('abort', cancel, { once: true })
   })
 }
 
@@ -201,7 +224,8 @@ async function callRenderer(
 export async function runTool(
   tool: string,
   args: Record<string, unknown>,
-  origin: CallOrigin = 'socket'
+  origin: CallOrigin = 'socket',
+  signal?: AbortSignal
 ): Promise<ToolOutcome> {
   // What the caller may touch on disk — see `./policy`. Before substitution, so an in-app
   // `@file` is refused rather than read.
@@ -215,7 +239,7 @@ export async function runTool(
     return { ok: false, value: error instanceof Error ? error.message : String(error) }
   }
 
-  const result = await callRenderer(tool, resolved, origin)
+  const result = await callRenderer(tool, resolved, origin, signal)
   return result.ok ? { ok: true, value: result.value } : { ok: false, value: result.error }
 }
 
@@ -251,7 +275,7 @@ export async function setMcpClients(on: boolean): Promise<McpSurfaceStatus> {
   if (on && !running) {
     running = await startSocketServer(
       () => socketPathIn(app.getPath('userData')),
-      gateToolRunner((tool, args) => runTool(tool, args), accessStatus, locked),
+      gateToolRunner((tool, args, signal) => runTool(tool, args, 'socket', signal), accessStatus, locked),
       resourceBody
     )
   } else if (!on && running) {
@@ -269,7 +293,7 @@ export async function startMcpServer(options: { clients: boolean }): Promise<Soc
   // one the UI reports — the panel says for itself whether it could start.
   runningAgent = await startSocketServer(
     () => socketPathIn(app.getPath('userData'), AGENT_SOCKET_NAME),
-    gateToolRunner((tool, args) => runTool(tool, args, 'in-app'), accessStatus, locked),
+    gateToolRunner((tool, args, signal) => runTool(tool, args, 'in-app', signal), accessStatus, locked),
     resourceBody
   )
   if (!runningAgent.status.ready) console.warn(`[bay] agent socket did not open: ${runningAgent.status.error}`)
@@ -295,13 +319,13 @@ function policyEnv(): PolicyEnv {
     home: homedir(),
     roots: [...temps],
     realpath: realpathNearest,
-    confirm: async (message, detail) => {
+    confirm: async (message, detail, accept) => {
       const window = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows().find((w) => !isCompositionWindow(w))
       const options = {
         type: 'question' as const,
         message,
         detail,
-        buttons: ['Download', 'Cancel'],
+        buttons: [accept ?? 'Download', 'Cancel'],
         defaultId: 1,
         cancelId: 1
       }

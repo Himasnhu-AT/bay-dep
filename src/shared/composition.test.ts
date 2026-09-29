@@ -6,6 +6,7 @@ import {
   isCompositionPath,
   compositionDurationUs,
   fatalFaults,
+  faultsOnWrite,
   readComposition,
   seekSecondsFor,
   MAX_COMPOSITION_SECONDS,
@@ -136,21 +137,54 @@ test('a file outside the composition’s folder is reported; one inside it is no
   assert.ok(outside.every((f) => !f.fatal))
 })
 
-test('a remote resource is reported, and is not fatal', () => {
-  const html = ROOT(
-    'data-composition-id="hero" data-duration="5" style="width:10px;height:10px"',
-    '<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>'
-  )
+test('a remote script is a warning on read and fatal on write, naming the line and the fix', () => {
+  const html =
+    '<!doctype html>\n<html><head>\n' +
+    '<script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>\n' +
+    '</head><body>\n<div data-composition-id="hero" data-duration="5" style="width:10px;height:10px"></div>\n' +
+    '</body></html>'
 
   const { info, faults } = readComposition(html)
-  const remote = faults.find((f) => f.code === 'remote-resource')
+  const remote = faults.find((f) => f.code === 'remote-script')
 
   assert.ok(remote, 'the CDN script should be reported')
+  // On read it is not fatal: a project that already holds one must still open.
   assert.equal(remote!.fatal, false)
-  // Not fatal, so the composition is still usable — it just will not look right.
   assert.equal(info?.compositionId, 'hero')
   assert.equal(fatalFaults(faults).length, 0)
-  assert.ok(remote!.line !== null, 'a remote resource is attributable to a line')
+  assert.equal(remote!.line, 3)
+  // What the author needs to retry: the line, why it fails, and what to write instead.
+  assert.match(remote!.message, /Line 3/)
+  assert.match(remote!.message, /never runs/)
+  assert.match(remote!.message, /__timelines\["<id>"\] = \{ time\(t\)/)
+  assert.match(remote!.message, /relative path/)
+
+  // On write it is fatal, and it is the only thing that changed.
+  const onWrite = faultsOnWrite(faults)
+  assert.deepEqual(fatalFaults(onWrite).map((f) => f.code), ['remote-script'])
+  assert.deepEqual(onWrite.map((f) => f.code), faults.map((f) => f.code))
+})
+
+test('a remote font or stylesheet stays a warning on write too, because the page still renders', () => {
+  // The positive control for the refusal above: a remote resource that is not a script is not refused.
+  const html = ROOT(
+    'data-composition-id="hero" data-duration="5" style="width:10px;height:10px"',
+    '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter">'
+  )
+  const faults = readComposition(html).faults
+  assert.deepEqual(faults.map((f) => f.code), ['remote-resource'])
+  assert.deepEqual(fatalFaults(faultsOnWrite(faults)), [])
+})
+
+test('a remote script is recognised whatever the tag carries around its src', () => {
+  for (const tag of [
+    '<script type="module" src="//cdn.example.com/x.js"></script>',
+    "<script defer\n  src='http://cdn.example.com/x.js'></script>",
+    '<SCRIPT async SRC="https://cdn.example.com/x.js"></SCRIPT>'
+  ]) {
+    const html = ROOT('data-composition-id="hero" data-duration="5" style="width:10px;height:10px"', tag)
+    assert.deepEqual(readComposition(html).faults.map((f) => f.code), ['remote-script'], tag)
+  }
 })
 
 test('a relative script is not mistaken for a remote one', () => {
@@ -195,7 +229,7 @@ test('three problems are reported as three, not as the first one', () => {
 
   assert.ok(codes.includes('bad-duration'))
   assert.ok(codes.includes('no-size'))
-  assert.ok(codes.includes('remote-resource'))
+  assert.ok(codes.includes('remote-script'))
 })
 
 /**
@@ -482,7 +516,7 @@ test('a remote sound is one fault, not two, and is not mixed', () => {
     ),
     '/c/x.html'
   )
-  assert.deepEqual(script.faults.map((f) => f.code), ['remote-resource'])
+  assert.deepEqual(script.faults.map((f) => f.code), ['remote-script'])
 })
 
 test('a data: sound is refused, and a file: URL is a path', () => {

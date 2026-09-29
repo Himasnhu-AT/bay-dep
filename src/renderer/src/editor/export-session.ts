@@ -17,6 +17,7 @@ import {
   DEFAULT_EXPORT_SETTINGS,
   exportRequestFields,
   isAudioOnly,
+  loudnessSetting,
   loudnessTarget,
   EXPORT_PRESETS,
   exportAspectMismatch,
@@ -25,10 +26,12 @@ import {
   resolveExportSize,
   type ExportPreset,
   type ExportRangeChoice,
-  type ExportSettings
+  type ExportSettings,
+  type LoudnessSetting
 } from '@shared/export-presets'
 import { findTimeline, timelineDuration } from '@shared/project'
 import { parseTime } from '@shared/pins'
+import { rememberedTarget } from '@shared/loudness'
 import { FrameExporter } from '@/engine'
 import { bay, call } from '@/lib/bay'
 import { useEditor, type EditorStore } from '@/store/editor'
@@ -54,7 +57,16 @@ export interface ExportSession {
    * first, for the Deliver page's render queue. `progress` above is only this form's current job.
    */
   history: readonly RenderRecord[]
+  /**
+   * The user chose Off in the Loudness menu themselves — the form's spelling of
+   * `export_timeline`'s "off", which forgets the remembered target once the export is done. A
+   * preset that happens to be unmastered (the ProRes master) is not that choice, so it is kept
+   * apart from `settings.loudness`, and any other change of the loudness clears it.
+   */
+  loudnessOffChosen: boolean
   setSettings(next: ExportSettings): void
+  /** The Loudness menu's own choice, which is the only way `loudnessOffChosen` is set. */
+  chooseLoudness(setting: LoudnessSetting): void
   setRangeKind(kind: RangeKind): void
   setCustom(bounds: { start?: string; end?: string }): void
   setOutputPath(path: string | null): void
@@ -65,11 +77,27 @@ export interface ExportSession {
    * its own never calls this. Returns whether it chose one.
    */
   adoptFittingPreset(canvasWidth: number, canvasHeight: number): boolean
+  /**
+   * The same default `export_timeline` uses: the loudness the last mastered export of this
+   * timeline used (`Timeline.delivery`), or Off once that was cleared. Applied each time the
+   * remembered decision changes — not on every render, so a choice made in the form after it
+   * stands until the next export changes what is remembered. Returns whether it changed anything.
+   */
+  adoptRememberedLoudness(timelineId: string, remembered: unknown): boolean
   start(): Promise<void>
   cancel(): void
 }
 
 let jobId: string | null = null
+/**
+ * Where this form's running job remembers its delivery decision when it finishes, and whether
+ * it forgets it (Off chosen by the user) — both only on `done`.
+ */
+let jobTimeline: { projectId: string; timelineId: string; forget: boolean } | null = null
+/** The remembered decision last adopted into the settings, as `timelineId + target`. */
+let adoptedKey: string | null = null
+/** The settings `adoptRememberedLoudness` made from the untouched defaults — still untouched. */
+let adoptedOverDefaults: ExportSettings | null = null
 let exporter: FrameExporter | null = null
 let subscribed = false
 
@@ -163,10 +191,28 @@ function subscribe(): void {
     // A tool call (`export_timeline`) exports from this window too; only this form's job drives this view.
     if (update.jobId !== jobId) return
     useExportSession.setState({ progress: update })
+    // A mastered export finished: its target is the timeline's delivery decision now, the one
+    // `export_timeline` also keeps (`rememberDelivery`).
+    if (update.stage === 'done' && update.loudness && jobTimeline) {
+      useEditor.getState().rememberDelivery(jobTimeline.projectId, jobTimeline.timelineId, update.loudness.target)
+    }
+    // Off, chosen by the user, forgets it — once the file is delivered, never on a failure.
+    if (update.stage === 'done' && jobTimeline?.forget) {
+      useEditor.getState().rememberDelivery(jobTimeline.projectId, jobTimeline.timelineId, null)
+    }
+    // A decision remembered while this job ran (an agent's export) was refused then; now it can land.
+    if (TERMINAL.includes(update.stage)) readoptRemembered()
     const notify = useEditor.getState().notify
     if (update.stage === 'done') notify(`Exported to ${update.outputPath ?? useExportSession.getState().outputPath ?? ''}`)
     if (update.stage === 'failed') notify(update.error ?? 'Export failed.', 'error')
   })
+}
+
+/** Offer the active timeline's remembered loudness to the form again, as its field would. */
+function readoptRemembered(): void {
+  const project = useEditor.getState().project
+  const timeline = findTimeline(project, project.activeTimelineId)
+  if (timeline) useExportSession.getState().adoptRememberedLoudness(timeline.id, timeline.delivery?.loudness)
 }
 
 export const useExportSession = create<ExportSession>((set, get) => ({
@@ -179,12 +225,22 @@ export const useExportSession = create<ExportSession>((set, get) => ({
   incomplete: null,
   starting: false,
   history: [],
+  loudnessOffChosen: false,
 
   setSettings(next) {
     const before = get().settings
+    const loudnessMoved = JSON.stringify(next.loudness) !== JSON.stringify(before.loudness)
     // A destination was chosen with the old format's extension; exporting WebM into `cut.mp4`
     // is a file that lies about what it is. Choose again rather than guess a rename.
-    set({ settings: next, ...(next.format !== before.format ? { outputPath: null } : {}) })
+    set({
+      settings: next,
+      ...(next.format !== before.format ? { outputPath: null } : {}),
+      ...(loudnessMoved ? { loudnessOffChosen: false } : {})
+    })
+  },
+  chooseLoudness(setting) {
+    get().setSettings({ ...get().settings, loudness: setting })
+    set({ loudnessOffChosen: setting === 'off' })
   },
   setRangeKind(kind) {
     set({ rangeKind: kind })
@@ -197,10 +253,33 @@ export const useExportSession = create<ExportSession>((set, get) => ({
   },
   adoptFittingPreset(canvasWidth, canvasHeight) {
     const session = get()
-    // By identity: the defaults object is replaced by the first `setSettings`, whatever it sets.
-    if (session.settings !== DEFAULT_EXPORT_SETTINGS || session.starting) return false
+    // By identity: the defaults object is replaced by the first `setSettings`, whatever it sets —
+    // except the remembered loudness laid over them, which is still nobody's choice.
+    const untouched = session.settings === DEFAULT_EXPORT_SETTINGS || (adoptedOverDefaults !== null && session.settings === adoptedOverDefaults)
+    if (!untouched || session.starting) return false
     if (session.progress && !TERMINAL.includes(session.progress.stage)) return false
-    get().setSettings(firstFittingPreset(canvasWidth, canvasHeight).settings)
+    const preset = firstFittingPreset(canvasWidth, canvasHeight).settings
+    const keep = session.settings === adoptedOverDefaults ? { loudness: session.settings.loudness } : {}
+    get().setSettings({ ...preset, ...keep })
+    return true
+  },
+  adoptRememberedLoudness(timelineId, stored) {
+    // Checked like an argument: an invalid remembered value is ignored (the field says so).
+    const remembered = rememberedTarget(stored).target ?? undefined
+    const session = get()
+    if (session.starting || (session.progress && !TERMINAL.includes(session.progress.stage))) return false
+    const key = `${timelineId}:${remembered ? `${remembered.integratedLufs}/${remembered.truePeakDb}` : 'none'}`
+    if (key === adoptedKey) return false
+    const previous = adoptedKey
+    adoptedKey = key
+    // Nothing remembered: only a decision this form showed and that was since cleared turns it
+    // Off. A timeline that never had one leaves the form's own choice alone.
+    if (!remembered && !(previous?.startsWith(`${timelineId}:`) && !previous.endsWith(':none'))) return false
+    const loudness = loudnessSetting(remembered ?? null)
+    const next = { ...session.settings, loudness }
+    const overDefaults = session.settings === DEFAULT_EXPORT_SETTINGS || session.settings === adoptedOverDefaults
+    get().setSettings(next)
+    adoptedOverDefaults = overDefaults ? next : null
     return true
   },
 
@@ -234,6 +313,7 @@ export const useExportSession = create<ExportSession>((set, get) => ({
 
     subscribe()
     set({ starting: true, progress: null, incomplete: null })
+    const deliveryFor = { projectId: project.id, timelineId: timeline.id }
     const job = await call('Export', (api) =>
       api.export.start({
         project,
@@ -248,6 +328,12 @@ export const useExportSession = create<ExportSession>((set, get) => ({
     set({ starting: false })
     if (!job) return
     jobId = job.jobId
+    // Off, chosen by the user, is `export_timeline`'s "off": forgotten when this export is done.
+    // A PNG sequence has no sound to decide about.
+    jobTimeline = {
+      ...deliveryFor,
+      forget: session.loudnessOffChosen && session.settings.format !== 'png-sequence' && timeline.delivery?.loudness !== undefined
+    }
     const first: ExportProgress = {
       jobId: job.jobId,
       progress: null,
@@ -314,6 +400,7 @@ export const useExportSession = create<ExportSession>((set, get) => ({
         error: message
       }
       set((state) => ({ progress: failed, history: applyProgress(state.history, failed, Date.now()) }))
+      readoptRemembered()
       notify(message, 'error')
     } finally {
       if (exporter === running) exporter = null

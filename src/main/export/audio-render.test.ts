@@ -22,6 +22,8 @@ import { join } from 'node:path'
 import type { Asset, Item, Project, Timeline } from '@shared/project'
 import { buildAudioGraph } from './audio-graph'
 import { animatedVolumeAt } from '@shared/keyframes'
+import { transitionAtFrame } from '@shared/project'
+import { transitionAudioGains } from '@shared/audio-gain'
 
 
 const FFMPEG = vendoredTools()?.ffmpeg ?? ''
@@ -152,6 +154,58 @@ test(
     )
     // And the balance moves the right way across it.
     assert.ok(at(85).low > at(95).low && at(95).high > at(85).high, 'out falls while in rises')
+  }
+)
+
+test(
+  'an eased (inOut) dissolve follows its curve in the rendered file, not a straight line',
+  { skip: FFMPEG ? false : NO_VENDORED_FFMPEG },
+  () => {
+    // `Transition.ease` shapes the progress export's gain reads (`transitionOfItemAt`). Measured
+    // in the file: a quarter and three quarters of the way through the window, the outgoing
+    // tone sits where ease-in-out puts it, which is 0.12 of full scale away from linear.
+    const dir = mkdtempSync(join(tmpdir(), 'bay-audio-ease-'))
+    const make = (frequency: number): string => {
+      const path = join(dir, `t${frequency}.wav`)
+      execFileSync(FFMPEG, ['-v', 'error', '-y', '-f', 'lavfi', '-i', `sine=frequency=${frequency}:duration=10`, '-ac', '2', '-ar', String(RATE), path])
+      return path
+    }
+    const build = (ease?: 'inOut'): { project: Project; timeline: Timeline } => {
+      const timeline: Timeline = {
+        id: 'tl', name: 'Timeline 1', fps: FPS, width: 1920, height: 1080, background: '#000000',
+        tracks: [{ id: 't', kind: 'audio', name: 'A1', locked: false, muted: false, hidden: false, items: [clip('out', 'low', 0, 90, 0), clip('in', 'high', 90, 60, 2_000_000)] }],
+        transitions: [{ id: 'x', kind: 'cross-dissolve', fromItemId: 'out', toItemId: 'in', durationInFrames: 40, ...(ease ? { ease } : {}) }]
+      }
+      const project: Project = {
+        id: 'p', name: 'p', version: 1, assets: [tone('low', make(440)), tone('high', make(880))],
+        timelines: [timeline], activeTimelineId: 'tl', createdAt: 0, updatedAt: 0
+      }
+      return { project, timeline }
+    }
+    const { project, timeline } = build('inOut')
+    const graph = buildAudioGraph(project, timeline, 0, 150)
+    assert.ok(graph)
+    const mix = join(dir, 'mix.wav')
+    execFileSync(FFMPEG, ['-v', 'error', '-y', ...graph.inputs.flatMap((path) => ['-i', path]), '-filter_complex', graph.filter, '-map', '[aout]', '-t', '5', '-ac', '1', '-ar', String(RATE), mix])
+    const raw = execFileSync(FFMPEG, ['-v', 'error', '-i', mix, '-f', 's16le', '-ac', '1', '-ar', String(RATE), '-'])
+    const samples = new Int16Array(raw.buffer, raw.byteOffset, Math.floor(raw.length / 2))
+    const full = levelAt(samples, 440, 40)
+    assert.ok(full > 0.02, `the outgoing tone must be audible before the window (${full})`)
+
+    const linear = build()
+    const window = transitionAtFrame(project, timeline, 90)!.resolved
+    const span = window.lastFrame - window.firstFrame
+    for (const fraction of [0.25, 0.75]) {
+      const frame = window.firstFrame + Math.round(span * fraction)
+      const eased = transitionAudioGains('cross-dissolve', transitionAtFrame(project, timeline, frame)!.progress).from
+      const straight = transitionAudioGains('cross-dissolve', transitionAtFrame(linear.project, linear.timeline, frame)!.progress).from
+      assert.ok(Math.abs(eased - straight) > 0.08, `the specimen must tell the curves apart at ${fraction}: ${eased} vs ${straight}`)
+      const measured = levelAt(samples, 440, frame) / full
+      assert.ok(
+        Math.abs(measured - eased) < Math.abs(measured - straight) && Math.abs(measured - eased) < 0.05,
+        `at ${fraction} of the window the outgoing tone is ${measured.toFixed(3)}; eased ${eased.toFixed(3)}, linear ${straight.toFixed(3)}`
+      )
+    }
   }
 )
 

@@ -21,7 +21,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { AgentEvent } from '@shared/agent'
 import { TOOLS } from '@shared/mcp'
-import { allowedToolNames, BUILT_IN_TOOLS, cliArgs } from './cli'
+import { allowedToolNames, BUILT_IN_TOOLS, cliArgs, MCP_TOOL_TIMEOUT_MS } from './cli'
 import {
   bundledExecutable,
   childEnv,
@@ -94,15 +94,39 @@ test("only the workspace's project settings load — bay's skills, not the user'
   assert.deepEqual(options.settingSources, ['project'])
 })
 
+test('the same effort and model as the CLI: high by default, the chosen ones when set', () => {
+  assert.equal(cliValueAfter('--effort'), 'high')
+  assert.equal(options.effort, 'high')
+  assert.equal(options.model, undefined, 'Default model passes nothing, as the CLI passes no --model')
+  const chosen = sdkOptions(
+    { ...BASE, tuning: { effort: 'xhigh', model: 'sonnet', turnMinutes: 40 } },
+    { resume: null, abortController: new AbortController() }
+  )
+  assert.equal(chosen.effort, 'xhigh')
+  assert.equal(chosen.model, 'sonnet')
+  // A value that is not a choice is the default here too.
+  const bogus = sdkOptions(
+    { ...BASE, tuning: { effort: 'ultra', model: 'gpt', turnMinutes: 1 } as never },
+    { resume: null, abortController: new AbortController() }
+  )
+  assert.equal(bogus.effort, 'high')
+  assert.equal(bogus.model, undefined)
+})
+
 test("bay's own system prompt and workspace are the ones in force", () => {
   assert.equal(options.systemPrompt, BASE.systemPrompt)
   assert.equal(options.cwd, BASE.cwd)
   assert.equal(options.includePartialMessages, true, 'without this there is no streaming text')
 })
 
-test('the child environment drops ELECTRON_RUN_AS_NODE, keeps the rest, and turns off CLAUDE.md discovery', () => {
+test('the child environment drops ELECTRON_RUN_AS_NODE, keeps the rest, turns off CLAUDE.md discovery, and sets the MCP tool timeout', () => {
   const env = childEnv({ PATH: '/usr/bin', HOME: '/Users/x', ELECTRON_RUN_AS_NODE: '1' })
-  assert.deepEqual(env, { PATH: '/usr/bin', HOME: '/Users/x', CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1' })
+  assert.deepEqual(env, { PATH: '/usr/bin', HOME: '/Users/x', CLAUDE_CODE_DISABLE_CLAUDE_MDS: '1', MCP_TOOL_TIMEOUT: String(MCP_TOOL_TIMEOUT_MS), CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT: String(MCP_TOOL_TIMEOUT_MS) })
+  // The client must outlast the slowest tool's own budget, or it abandons an export main is still
+  // waiting on: the 30-minute wait plus its margin, with a minute on top for main's answer.
+  const slowest = Math.max(...TOOLS.map((tool) => tool.timeoutMs ?? 0))
+  assert.ok(slowest >= 30 * 60_000, `the slowest tool budget is ${slowest} ms`)
+  assert.equal(MCP_TOOL_TIMEOUT_MS, slowest + 60_000)
   // Positive control: a real environment keeps PATH, or the child cannot find anything.
   assert.ok('PATH' in childEnv())
 })

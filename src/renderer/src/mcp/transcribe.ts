@@ -107,9 +107,27 @@ export async function transcribe(args: Record<string, unknown>): Promise<Record<
   const language = typeof args['language'] === 'string' ? args['language'] : undefined
   const result = await transcribeSource(asset.path, language)
 
+  // A window in the file's own seconds. The transcript is cached per file, so reading a long talk
+  // a stretch at a time costs one transcription, and each answer fits in the agent's context.
+  const from = finiteArg(args['fromSeconds'])
+  const to = finiteArg(args['toSeconds'])
+  const windowed = from !== null || to !== null
+  const inWindow = result.segments.filter(
+    (segment) => (from === null || segment.endSeconds > from) && (to === null || segment.startSeconds < to)
+  )
+  const page = windowed ? inWindow : inWindow.slice(0, PAGE_LINES)
+  const rest = inWindow.length - page.length
+  const more =
+    rest > 0
+      ? {
+          more: { lines: rest, fromSeconds: page[page.length - 1]!.endSeconds },
+          next: `This is the first ${page.length} of ${inWindow.length} lines. Call transcribe again with the same id and fromSeconds: ${page[page.length - 1]!.endSeconds} for the next stretch (it is cached, so it is instant), or pass fromSeconds/toSeconds to read any stretch.`
+        }
+      : {}
+
   const base = { model: result.model, language: result.language, asset: asset.name }
   if (found) {
-    const cues = segmentsToCues(result.segments, found.item, timeline().fps)
+    const cues = segmentsToCues(page, found.item, timeline().fps)
     return {
       ...base,
       itemId: found.item.id,
@@ -119,17 +137,27 @@ export async function transcribe(args: Record<string, unknown>): Promise<Record<
       next:
         cues.length > 0
           ? 'These cues are in timeline frames for this clip. Pass them to add_captions as `cues` (after the user approves, if approval is on).'
-          : 'No speech was found in the part of the file this clip plays.'
+          : 'No speech was found in the part of the file this clip plays.',
+      ...more
     }
   }
   return {
     ...base,
-    lines: result.segments.length,
-    segments: result.segments,
+    lines: page.length,
+    segments: page,
     findings: transcriptFindings(result.segments),
-    srt: segmentsToSrt(result.segments),
-    next: 'Lines are in seconds from the start of the file. To caption a clip, call transcribe with its itemId instead.'
+    // The SRT repeats every line; it is only worth its size when it is the whole, short file.
+    ...(windowed || rest > 0 ? {} : { srt: segmentsToSrt(page) }),
+    next: 'Lines are in seconds from the start of the file. To caption a clip, call transcribe with its itemId instead.',
+    ...more
   }
+}
+
+/** Lines per answer when no window is given: about 12 minutes of talk, well inside a turn's budget. */
+const PAGE_LINES = 250
+
+function finiteArg(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null
 }
 
 export const handlers: Handlers = {

@@ -10,7 +10,7 @@ import assert from 'node:assert/strict'
 import { request } from 'node:http'
 import { startHandoff, type Handoff } from './handoff'
 
-const SITE = 'https://bay.everholt.com'
+const SITE = 'https://bay.himanshuat.com'
 const STATE = 'A'.repeat(43)
 const GOOD = JSON.stringify({ state: STATE, idToken: 'id.token.x', refreshToken: 'refresh-1' })
 
@@ -70,7 +70,7 @@ test('a wrong state is refused, and the real sign-in still completes after it', 
 
 test('a wrong or missing Origin is refused, even with the right state', { timeout: 5000 }, async () => {
   const handoff = await open()
-  for (const origin of ['https://evil.example', 'https://bay.everholt.com.evil.example', 'http://bay.everholt.com', 'null', null]) {
+  for (const origin of ['https://evil.example', 'https://bay.himanshuat.com.evil.example', 'http://bay.himanshuat.com', 'null', null]) {
     const reply = await send(handoff.port, { origin, body: GOOD })
     assert.equal(reply.status, 403, `origin ${String(origin)}`)
     assert.equal(reply.headers['access-control-allow-origin'], undefined)

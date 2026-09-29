@@ -14,8 +14,8 @@ export const tool: ToolSpec = {
     'Easing, interpolateColors, random work); `export const vars = { title: "Hi" }` for what each ' +
     'placement may change; `export default ({ t, frame, fps, width, height, vars }) => <scene ' +
     'duration={4}>…</scene>` with t in SECONDS. Draw with <rect w h fill radius stroke>, <ellipse>, ' +
-    '<path d draw>, <text size weight font fill align w split="word" stagger>{…}</text> and <group ' +
-    'clip>; every element takes x, y (px or "50%"), anchor [ax,ay] (default centre), rotate, scale, ' +
+    '<path d draw>, <text size weight font fill align w split="word" stagger>{…}</text>, <glass w h ' +
+    'radius material="regular"> (frosted glass over what is below it) and <group clip>; every element takes x, y (px or "50%"), anchor [ax,ay] (default centre), rotate, scale, ' +
     'sx, sy, opacity, blur, shadow, t=[start,end], and in/out presets ("up", "pop", "fade", "wipe", ' +
     '"type"…). Fills may be "linear(180, #000c, #0000)". Compute values from t in code, or use ' +
     'keys [[t,v,"outBack"]]. No DOM elements, no network, no imports but bay/remotion. Full ' +

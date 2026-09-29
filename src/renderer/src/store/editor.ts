@@ -23,6 +23,7 @@ import { timelineSlice } from './slices/timeline'
 import { itemsSlice } from './slices/items'
 import { viewSlice } from './slices/view'
 import { WORKSPACE_PAGES, type WorkspacePage } from './types'
+import { LAYOUT_MODE_KEY, layoutModeFrom, NO_AI_PANELS } from './layoutMode'
 
 /** The page the editor opened on last time; Edit when nothing (or something unknown) is kept. */
 function rememberedPage(): WorkspacePage {
@@ -40,6 +41,7 @@ export {
   asClient,
   revertImpact,
   setAgentFileWriter,
+  stepAside,
   type AgentCheckpoint,
   type AgentRevert
 } from './agent-turns'
@@ -48,7 +50,9 @@ export type {
   EditorActions,
   EditorState,
   EditorStore,
+  AiPanel,
   InspectorTab,
+  LayoutMode,
   LibraryTab,
   PanelId,
   RegionId,
@@ -76,6 +80,8 @@ export const useEditor = create<EditorStore>((set, get) => {
     pixelsPerFrame: 4,
     panel: 'media',
     page: rememberedPage(),
+    layoutMode: layoutModeFrom(remembered(LAYOUT_MODE_KEY)),
+    aiPanels: { ...NO_AI_PANELS },
     inspectorTab: 'video',
     libraryTab: 'media',
     agentDocked: remembered('bay.workspace.agentDocked') === '1',

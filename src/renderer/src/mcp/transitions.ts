@@ -18,7 +18,8 @@
  * apart on the first edit to either.
  */
 
-import { findItem, resolveTransition, type Transition } from '@shared/project'
+import { findItem, resolveTransition, type KeyframeEase, type Transition } from '@shared/project'
+import { parseEase } from '@shared/ease'
 import { resolveId } from '@shared/mcp'
 import { defaultTransitionFrames, roomAt, whyInactive } from '@/lib/junctions'
 import { fail, project, resolveItem, store, timeline, type Handlers } from './helpers'
@@ -61,6 +62,7 @@ function describe(transition: Transition): Record<string, unknown> {
     lastFrame: resolved.lastFrame,
     active: true,
     ...(transition.direction ? { direction: transition.direction } : {}),
+    ...(transition.ease ? { ease: transition.ease } : {}),
     // Surfaced rather than swallowed: an agent that asked for 30 frames and got 8 has to be
     // told, or it reports a dissolve the viewer will not see.
     ...(resolved.clampedBecause
@@ -96,6 +98,11 @@ export function addTransition(args: Record<string, unknown>): Record<string, unk
     }
   }
 
+  // The same ease a keyframe takes, checked by the same parser, so a curve the agent writes here
+  // is refused (or accepted) exactly as it would be on a key.
+  const ease = parseEase(args.ease, 'add_transition', 'the progress across the cut', { overshoot: false })
+  if (ease && typeof ease === 'object' && 'error' in ease) fail(ease.error)
+
   let added: string | null = null
   let refusal: string | null = null
   store().transact(() => {
@@ -104,7 +111,8 @@ export function addTransition(args: Record<string, unknown>): Record<string, unk
       toItemId: to.item.id,
       kind: args.kind as Transition['kind'],
       durationInFrames,
-      direction: args.direction as Transition['direction'] | undefined
+      direction: args.direction as Transition['direction'] | undefined,
+      ...(ease ? { ease: ease as KeyframeEase } : {})
     })
     if ('error' in outcome) refusal = outcome.error
     else added = outcome.id

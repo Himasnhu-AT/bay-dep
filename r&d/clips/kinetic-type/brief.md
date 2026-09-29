@@ -1,0 +1,1 @@
+Make a kinetic-typography piece of about 20 seconds from James talking: his voice is the soundtrack, and his words animate on screen exactly as he says them, in the kinetic typography style. Pick one passage that works on its own. Vertical 1080×1920. When it's done and checked, export it to /Users/himanshu/Movies/bay-rnd/kinetic/after.mp4.

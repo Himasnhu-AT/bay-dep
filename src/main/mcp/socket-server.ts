@@ -48,6 +48,10 @@ export interface RunningSocket {
 function attach(socket: Socket, runTool: RunTool, readResource: ReadResource): void {
   const buffer = new LineBuffer()
   socket.setEncoding('utf8')
+  // The caller going away. bay's proxy opens one connection per call and drops it when its
+  // client does (a stopped turn, a quit), so a close here is that call's cancellation: a tool
+  // waiting on a job stops waiting rather than sleeping on for nobody.
+  const gone = new AbortController()
 
   socket.on('data', (chunk: string) => {
     for (const line of buffer.push(chunk)) {
@@ -57,7 +61,7 @@ function attach(socket: Socket, runTool: RunTool, readResource: ReadResource): v
         socket.write(encode(parsed.error))
         continue
       }
-      void handleRequest(parsed.request!, runTool, readResource)
+      void handleRequest(parsed.request!, runTool, readResource, 'full', gone.signal)
         .then((answer) => {
           if (answer && !socket.destroyed) socket.write(encode(answer))
         })
@@ -74,7 +78,7 @@ function attach(socket: Socket, runTool: RunTool, readResource: ReadResource): v
 
   // Both are expected: a proxy exits when its MCP client does, closing this abruptly.
   socket.on('error', () => undefined)
-  socket.on('close', () => undefined)
+  socket.on('close', () => gone.abort())
 }
 
 /**

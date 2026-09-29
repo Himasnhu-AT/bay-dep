@@ -162,6 +162,39 @@ test('an asset without a clip comes back in the file’s seconds, with SRT', asy
   assert.deepEqual((result.value as { findings: unknown }).findings, [], 'a transcript with words has no findings')
 })
 
+test('a stretch of a file comes back alone: only the lines that overlap it, and no SRT', async () => {
+  seed()
+  const result = await run({ assetId: 'interview', fromSeconds: 5, toSeconds: 10 })
+  assert.ok(result.ok, result.ok ? '' : result.error)
+  const value = result.value as { segments: TranscriptSegment[]; srt?: string; lines: number }
+  // Specimen: the window must cut something off each end, or it proves nothing.
+  assert.ok(SEGMENTS.some((s) => s.endSeconds <= 5) && SEGMENTS.some((s) => s.startSeconds >= 10))
+  assert.deepEqual(value.segments.map((s) => s.text), ['Inside the clip.', 'Also inside.'])
+  assert.equal(value.lines, 2)
+  assert.equal(value.srt, undefined)
+})
+
+test('a long talk comes back a page at a time, the next page is named, and it is transcribed once', async () => {
+  // A 25-minute talk gave the agent a transcript too big to read, so it could not find its lines.
+  seed()
+  const long: TranscriptSegment[] = Array.from({ length: 300 }, (_, i) => ({ startSeconds: i * 5, endSeconds: i * 5 + 4, text: `Line ${i}.` }))
+  answer = { ok: true, segments: long, model: 'base.en', language: 'en' }
+  const before = sent.length
+  const first = await run({ assetId: 'interview' })
+  assert.ok(first.ok, first.ok ? '' : first.error)
+  const page = first.value as { segments: TranscriptSegment[]; srt?: string; more?: { lines: number; fromSeconds: number }; next: string }
+  assert.ok(page.segments.length < long.length, 'the first answer must not be the whole transcript')
+  assert.equal(page.srt, undefined, 'no SRT copy of a partial transcript')
+  assert.equal(page.more?.lines, long.length - page.segments.length)
+  assert.match(page.next, /fromSeconds/)
+  const second = await run({ assetId: 'interview', fromSeconds: page.more!.fromSeconds })
+  assert.ok(second.ok, second.ok ? '' : second.error)
+  const rest = (second.value as { segments: TranscriptSegment[] }).segments
+  assert.equal(rest[0]?.text, `Line ${page.segments.length}.`, 'the next page starts where the first stopped')
+  assert.equal(page.segments.length + rest.length, long.length, 'together the pages are the whole talk')
+  assert.equal(sent.length - before, 1, 'the second page came from the cache')
+})
+
 test('a transcription that heard nothing carries a blocking finding, not just zero lines', async () => {
   seed()
   answer = { ok: true, segments: [], model: 'ggml-base.en.bin', language: 'en' }

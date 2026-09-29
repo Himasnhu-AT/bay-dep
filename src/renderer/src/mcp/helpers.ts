@@ -37,8 +37,29 @@ export class ToolError extends Error {
   }
 }
 
+/**
+ * What the executor hands a handler besides its arguments. Only the tools that wait read it
+ * (`./wait.ts`); every other handler ignores the second argument.
+ */
+export interface CallContext {
+  /** Aborted when the caller is gone: its connection closed (a stopped turn), or main gave up. */
+  signal: AbortSignal
+  /**
+   * Runs `work` as time this call is not acting. A tool call counts as the agent's (or a
+   * client's) while it runs, so an edit the user makes meanwhile is marked as theirs; a call
+   * that sits waiting for an export would otherwise claim the user's edits for 30 seconds.
+   */
+  idle<T>(work: () => Promise<T>): Promise<T>
+}
+
+/** For a handler called directly (a panel, a test): never aborted, and nothing to step aside from. */
+export const DIRECT_CALL: CallContext = {
+  signal: new AbortController().signal,
+  idle: (work) => work()
+}
+
 /** One tool's implementation: validated arguments in, the result the agent reads out. */
-export type Handler = (args: Record<string, unknown>) => unknown | Promise<unknown>
+export type Handler = (args: Record<string, unknown>, context?: CallContext) => unknown | Promise<unknown>
 
 /**
  * A module's tools, by name. Every executor module that implements tools exports one as

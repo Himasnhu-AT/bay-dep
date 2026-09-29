@@ -29,10 +29,15 @@ import {
   playableTimeline
 } from '@shared/project'
 import { animatedItemAt } from '@shared/keyframes'
+import { matteRecordAt, MAX_MASK_FEATHER, subjectMaskOf } from '@shared/matte'
+import { cutoutAsDrawn, cutoutPartner } from '@shared/behind-subject'
+import { subjectMattes, type MatteImage } from './subjectMatte'
+import { MaskScratch, maskedPicture, matteRect } from './subjectMask'
 import { MediaPool, isDrawable, type MediaEntry } from './mediaPool'
 import type { CompositionPool } from './compositionPool'
 import { planTransition } from './transitions'
 import { BrfSurfaces, documentOf, layoutSizeOf, secondsAt } from './brf'
+import { paintGlassBackdrop, planGlass, releaseGlassBuffers, surfaceToDevice, type GlassPatch } from './glass'
 import { brfRuntime } from './brfCode'
 import { importedFonts } from './importedFonts'
 import type { BrfDocument } from '@shared/brf'
@@ -150,6 +155,17 @@ interface SeekState {
   timing?: boolean
 }
 
+/** A subject mask resolved for one draw: the matte frame, and how to apply it. */
+interface ResolvedMask {
+  matte: MatteImage
+  invert: boolean
+  /** Timeline pixels. */
+  feather: number
+}
+
+/** Matte frames fetched ahead of the playhead while playing, so the exact one is usually decoded in time. */
+const MATTE_LOOKAHEAD = 6
+
 const PLACEHOLDER_FILL = '#232329'
 const PLACEHOLDER_EDGE = '#3a3a44'
 const PLACEHOLDER_INK = '#8b8b96'
@@ -223,8 +239,12 @@ export class Compositor {
   readonly #seekLatency = new Map<string, number>()
 
   readonly #compositions: CompositionPool | null
+  /** Scratch surfaces for a subject-masked draw (`subjectMask.ts`), reused per size. */
+  readonly #maskScratch = new MaskScratch()
   /** The project of the frame being drawn — where a graded clip's LUT asset is looked up. */
   #project: Project | null = null
+  /** The timeline of the frame being drawn — where a subject cut-out finds the clip it draws its picture from. */
+  #timeline: Timeline | null = null
 
   constructor(pool: MediaPool, compositions?: CompositionPool) {
     this.#compositions = compositions ?? null
@@ -246,6 +266,11 @@ export class Compositor {
     frame: number,
     options: DrawOptions = {}
   ): DrawStats {
+    // Where a subject cut-out finds its clip's picture: the timeline as stored, not the playable one.
+    // A switched-off clip still frames its cut-out — measured, looked up in the playable timeline a
+    // cut-out drawn with its clip off (background removal, or test/app/mask.mjs's cut-out-alone
+    // render) fell back to its framing at creation, 1.15× away from a punched-in clip (IoU 78%).
+    this.#timeline = timeline
     // A disabled clip draws nowhere — here, `preview_frame` and export all come through this line.
     timeline = playableTimeline(timeline)
     const mode = options.mode ?? 'scrub'
@@ -361,6 +386,8 @@ export class Compositor {
     this.#seeks.clear()
     this.#seekLatency.clear()
     this.#brf.reset()
+    this.#maskScratch.release()
+    releaseGlassBuffers()
   }
 
   // -- internals ------------------------------------------------------------
@@ -374,7 +401,11 @@ export class Compositor {
     item: Item,
     frame: number,
     alphaMul = 1,
-    stats?: DrawStats
+    stats?: DrawStats,
+    /** Glass panes on a `.brf` surface: their backdrop is drawn from the canvas before the surface. */
+    glass: GlassPatch[] = [],
+    /** A subject matte to keep only the person with (`#subjectMatte`), applied after the grade. */
+    mask: ResolvedMask | null = null
   ): void {
     const box = layoutBox(item)
     if (!box) return
@@ -407,19 +438,25 @@ export class Compositor {
         ? cropDestRect(item.crop, box)
         : { dx: box.left, dy: box.top, dw: box.width, dh: box.height }
 
+      if (glass.length > 0) this.#glassBackdrop(ctx, item, glass, src, dest, alpha)
+
       // The grade replaces the source with a graded picture of the same framing, at the size it
       // will be drawn — everything else about the draw (alpha, blend, filter, rotation) is
       // unchanged. An identity grade resolves to null and costs nothing.
+      // Times the item's own zoom, which `applyRotation` applies after the device scale was read:
+      // a pushed-in clip is graded (and masked) at the size it appears, not upscaled from its box.
+      const deviceWidth = Math.max(1, Math.round(Math.abs(dest.dw) * scaleX * zoomOf(item)))
+      const deviceHeight = Math.max(1, Math.round(Math.abs(dest.dh) * scaleY * zoomOf(item)))
+      // What a mask is applied to: the graded picture when there is one, else the element's crop rect.
+      let picture: { source: unknown; sx: number; sy: number; sw: number; sh: number } = { source: element, ...src }
       const grade = resolvedGradeOf(item.grade)
       if (grade && src.sw > 0 && src.sh > 0) {
         const lutAsset = grade.lut && this.#project ? findAsset(this.#project, grade.lut.assetId) : undefined
         const graded = gradeSource(grade, {
           source: element,
           ...src,
-          // Times the item's own zoom, which `applyRotation` applies after the device scale was
-          // read: a pushed-in clip is graded at the size it appears, not upscaled from its box.
-          width: Math.max(1, Math.round(Math.abs(dest.dw) * scaleX * zoomOf(item))),
-          height: Math.max(1, Math.round(Math.abs(dest.dh) * scaleY * zoomOf(item))),
+          width: deviceWidth,
+          height: deviceHeight,
           boxWidth: Math.abs(dest.dw),
           boxHeight: Math.abs(dest.dh),
           frame,
@@ -427,11 +464,36 @@ export class Compositor {
           lut: lutAsset?.kind === 'lut' ? lutAsset.lut : undefined
         })
         if (graded.ok) {
-          ctx.drawImage(graded.canvas, 0, 0, graded.width, graded.height, dest.dx, dest.dy, dest.dw, dest.dh)
           if (graded.warning) noteGradeIssue(stats, `clip ${item.id}: ${graded.warning}`)
-          return
+          if (!mask) {
+            ctx.drawImage(graded.canvas, 0, 0, graded.width, graded.height, dest.dx, dest.dy, dest.dw, dest.dh)
+            return
+          }
+          picture = { source: graded.canvas, sx: 0, sy: 0, sw: graded.width, sh: graded.height }
+        } else {
+          noteGradeIssue(stats, `clip ${item.id} was drawn ungraded: ${graded.error}`)
         }
-        noteGradeIssue(stats, `clip ${item.id} was drawn ungraded: ${graded.error}`)
+      }
+
+      // The subject mask: after the grade, on the picture at the size it will be drawn, so the
+      // preview, `preview_frame` and export mask through this one line. The matte covers the whole
+      // source frame, so the crop rect maps onto it by scale (`matteRect`) — which is also what
+      // stretches Vision's 4:3 mask back over a 16:9 frame.
+      if (mask && src.sw > 0 && src.sh > 0) {
+        const masked = maskedPicture(
+          {
+            ...picture,
+            width: deviceWidth,
+            height: deviceHeight,
+            matte: mask.matte,
+            ...matteRect(src, sourceWidth, sourceHeight, mask.matte),
+            invert: mask.invert,
+            featherPx: mask.feather * scaleX * zoomOf(item)
+          },
+          this.#maskScratch
+        )
+        if (masked) ctx.drawImage(masked as unknown as CanvasImageSource, 0, 0, deviceWidth, deviceHeight, dest.dx, dest.dy, dest.dw, dest.dh)
+        return
       }
 
       if (cropped) {
@@ -444,6 +506,50 @@ export class Compositor {
       // went away). One missing item must not abandon the rest of the frame.
     } finally {
       ctx.restore()
+    }
+  }
+
+  /**
+   * Frosts what the canvas holds under each glass pane, inside the pane, before the surface that
+   * paints the pane's tint and rim is drawn over it. Mapped with the transform in force right now
+   * — the device scale, any transition offset, the item's rotation and zoom — and the same
+   * `src`/`dest` the surface is about to be drawn with, so crop and rotation place the frost where
+   * the pane lands, clipped to the surface's drawn rect and the scene inside it. A blend mode
+   * other than normal skips it: such an item is meant to combine with what is under it, and
+   * replacing that with a blur would contradict the mode — the pane then draws tint and rim only,
+   * which the guide says.
+   */
+  #glassBackdrop(
+    ctx: RenderTarget,
+    item: Item,
+    glass: GlassPatch[],
+    src: { sx: number; sy: number; sw: number; sh: number },
+    dest: { dx: number; dy: number; dw: number; dh: number },
+    alpha: number
+  ): void {
+    if (blendOperation(item.blendMode) !== 'source-over') return
+    const t = ctx.getTransform()
+    const toDevice = surfaceToDevice([t.a, t.b, t.c, t.d, t.e, t.f], src, dest)
+    if (!toDevice) return
+    const canvas = { width: ctx.canvas.width, height: ctx.canvas.height }
+    for (const patch of glass) {
+      const plan = planGlass(patch, toDevice, canvas, alpha)
+      if (!plan) continue
+      ctx.save()
+      try {
+        // Only where the surface itself lands (its box, or its crop), and only inside the scene
+        // there: a pane sliding in from off-scene must not frost what the tint and rim cannot reach.
+        ctx.beginPath()
+        ctx.rect(dest.dx, dest.dy, dest.dw, dest.dh)
+        ctx.clip()
+        ctx.setTransform(...toDevice)
+        ctx.beginPath()
+        ctx.rect(patch.scene.x, patch.scene.y, patch.scene.w, patch.scene.h)
+        ctx.clip()
+        paintGlassBackdrop(ctx, plan)
+      } finally {
+        ctx.restore()
+      }
     }
   }
 
@@ -527,6 +633,10 @@ export class Compositor {
     // Keyframes resolve here, once, into the layout every draw below reads — so a transition's
     // two sides, text, .brf, compositions and placeholders all animate through one sampler, and
     // an item with no keys is passed through as the same object.
+    // A subject cut-out draws with its clip's layout, crop, keys, grade and look, read now — so a
+    // punch-in or crop of the clip moves the cut-out with it (`cutoutAsDrawn`). Before keys resolve,
+    // so the clip's keyframes animate the cut-out through the same sampler.
+    if (this.#timeline && item.masks) item = cutoutAsDrawn(item, cutoutPartner(this.#timeline, item))
     item = animatedItemAt(item, frame)
     const asset = findAsset(project, item.assetId)
     if (!asset || asset.error) {
@@ -594,7 +704,9 @@ export class Compositor {
         this.#placeholder(ctx, item, stats, asset.name, `${asset.name} (${painted.error})`)
         return
       }
-      this.#drawSource(ctx, painted.surface, item, frame, opts.alphaMul, stats)
+      const brfMask = this.#subjectMatte(ctx, project, item, asset, null, frame, fps, mode, stats)
+      if (brfMask === 'skip') return
+      this.#drawSource(ctx, painted.surface, item, frame, opts.alphaMul, stats, painted.glass, brfMask)
       stats.drawn += 1
       return
     }
@@ -623,7 +735,9 @@ export class Compositor {
         notePending(stats, asset.name)
         return
       }
-      this.#drawSource(ctx, bitmap, item, frame, opts.alphaMul, stats)
+      const htmlMask = this.#subjectMatte(ctx, project, item, asset, null, frame, fps, mode, stats)
+      if (htmlMask === 'skip') return
+      this.#drawSource(ctx, bitmap, item, frame, opts.alphaMul, stats, [], htmlMask)
       stats.drawn += 1
       return
     }
@@ -645,8 +759,66 @@ export class Compositor {
       return
     }
 
-    this.#drawSource(ctx, entry.element, item, frame, opts.alphaMul, stats)
+    const mask = this.#subjectMatte(ctx, project, item, asset, entry.element, frame, fps, mode, stats)
+    if (mask === 'skip') return
+    this.#drawSource(ctx, entry.element, item, frame, opts.alphaMul, stats, [], mask)
     stats.drawn += 1
+  }
+
+  /**
+   * The matte an item's subject mask draws with this frame; `null` when it has no mask; `'skip'`
+   * when it cannot be drawn correctly and has already been recorded — pending while a matte frame
+   * loads (export and `preview_frame` wait for it), a named placeholder when there is no matte for
+   * this moment or it cannot be read. **Never drawn unmasked**: a full copy of the clip over a
+   * title hides the title behind a picture that looks deliberate.
+   *
+   * The moment is the one the picture is showing: a video element's own `currentTime` (the element
+   * is shared with the clip under it — `elementSlots` — so both are one decoded frame), and the
+   * item's mapped source time for anything without an element.
+   */
+  #subjectMatte(
+    ctx: RenderTarget,
+    project: Project,
+    item: Item,
+    asset: Asset,
+    element: MediaEntry['element'] | null,
+    frame: number,
+    fps: number,
+    mode: 'playback' | 'scrub',
+    stats: DrawStats
+  ): ResolvedMask | null | 'skip' {
+    const mask = subjectMaskOf(item)
+    if (!mask) return null
+    const matteAsset = mask.assetId ? findAsset(project, mask.assetId) : asset
+    if (!matteAsset) {
+      this.#placeholder(ctx, item, stats, 'Subject matte missing', `${asset.name} (its subject mask names asset ${mask.assetId}, which is not in the project)`)
+      return 'skip'
+    }
+    const seconds =
+      element instanceof HTMLVideoElement && matteAsset.id === asset.id
+        ? element.currentTime
+        : sourceSecondsAt(item, matteAsset, frame, fps)
+    const sourceUs = Math.round(seconds * 1_000_000)
+    const record = matteRecordAt(matteAsset.subjectMattes, sourceUs)
+    if (!record) {
+      this.#placeholder(ctx, item, stats, 'Subject matte missing',
+        `${asset.name} (no subject matte for ${seconds.toFixed(2)} s of ${matteAsset.name} — run put_behind_subject again to compute it)`)
+      return 'skip'
+    }
+    const found = subjectMattes.lookup(record, sourceUs, { ahead: mode === 'playback' ? MATTE_LOOKAHEAD : 0 })
+    if ('pending' in found) {
+      notePending(stats, `${asset.name} (subject matte)`)
+      return 'skip'
+    }
+    if ('missing' in found || 'error' in found) {
+      const why = 'missing' in found ? found.missing : found.error
+      this.#placeholder(ctx, item, stats, 'Subject matte missing', `${asset.name} (${why} — run put_behind_subject again to compute it)`)
+      return 'skip'
+    }
+    // Capped here as well as in the tool: a `.bay` is data anyone can write, and a crafted feather of
+    // 1e9 is a blur filter no canvas should be asked for.
+    const feather = mask.feather !== undefined && Number.isFinite(mask.feather) ? Math.min(MAX_MASK_FEATHER, Math.max(0, mask.feather)) : 0
+    return { matte: found.image, invert: mask.invert === true, feather }
   }
 
   /**
@@ -1041,12 +1213,39 @@ export function prerollTargets(
 export function elementSlots(drawing: Item[]): Map<string, number> {
   const slots = new Map<string, number>()
   const used = new Map<string, number>()
+  const views: Item[] = []
   for (const item of drawing) {
+    // A second drawing of the *same moment* of the same file — the subject cut-out over its own
+    // clip, or any duplicate-and-stack — takes the element the first one has. Two elements would
+    // be two decoders, each allowed `DRIFT_TOLERANCE_SECONDS` of slip in playback, so up to
+    // ~160 ms apart (one early, one late): the cut-out a different frame from the picture under
+    // it, a doubled edge on every movement. One element is one decoded frame, exact by
+    // construction, and preroll and `awaitSources` inherit it because they ask here too.
+    //
+    // Only a *silent* second drawing shares (the cut-out is `audioDetached`). The audio engine
+    // routes one source node per element, so two sounding copies on one element would play once in
+    // the preview and twice in the export, which mixes each item — a duplicate that sounds keeps an
+    // element of its own, exactly as before.
+    const same = item.audioDetached === true ? views.find((other) => sameSourceMoment(other, item)) : undefined
+    if (same) {
+      slots.set(item.id, slots.get(same.id) ?? 0)
+      continue
+    }
     const next = used.get(item.assetId) ?? 0
     slots.set(item.id, next)
     used.set(item.assetId, next + 1)
+    views.push(item)
   }
   return slots
+}
+
+/**
+ * Whether two items show the same source time at every frame: same file, same timeline start,
+ * same in-point, same speed. Frame-independent, so the answer (and the slot) cannot flip mid-clip.
+ * Trims and moves of a linked pair keep all four equal on both.
+ */
+export function sameSourceMoment(a: Item, b: Item): boolean {
+  return a.assetId === b.assetId && a.from === b.from && a.sourceStartUs === b.sourceStartUs && a.speed === b.speed
 }
 
 export interface Box {

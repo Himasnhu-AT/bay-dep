@@ -8,10 +8,12 @@ import {
   type Grade,
   type GradeWheel
 } from '@shared/grade'
-import { ColorField, Field, NumberField, Section, SectionReset, Select, SliderField } from '@/components'
-import { centredRange } from '@/components/Slider'
+import { ColorField, ColorWheel, Field, NumberField, Section, SectionReset, Select, SliderField } from '@/components'
+import { balanceOf, withBalance, withMaster } from '@/components/controls/wheel'
+import { centredRange } from '@/components/controls/Slider'
 import { useEditor } from '@/store/editor'
 import { Disclosure } from './Disclosure'
+import { LIVE } from './liveGesture'
 
 /**
  * Colour grade. The common controls first — white balance, saturation, the three wheels as
@@ -61,7 +63,7 @@ const SCALARS: {
 
 /**
  * `min`/`max` are the agent's ranges, per channel, and what a channel is clamped to. `reach` is
- * the slider's travel either side of 0: the stored ranges are lopsided (Gamma −0.9…4), and a track
+ * the master strip's travel either side of 0: the stored ranges are lopsided (Gamma −0.9…4), and a track
  * spanning them put the neutral 0 at a fifth of its width. Past `reach` the track stretches to
  * show the value (`centredRange`).
  */
@@ -83,8 +85,16 @@ const AMOUNTS: { key: Amount; label: string }[] = [
   { key: 'grain', label: 'Grain' }
 ]
 
-const mean = (w: GradeWheel | undefined): number => (w ? (w.r + w.g + w.b) / 3 : 0)
-const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value))
+/**
+ * Channel units at a wheel's rim: a cast of ±0.25 between channels is already a strong grade, and
+ * the rim is where the puck stops (the value can go further, typed or set by the agent).
+ */
+const WHEEL_REACH = 0.25
+
+const stripRange = (control: (typeof WHEELS)[number], master: number): { min: number; max: number } => {
+  const { min, max } = centredRange(0, control.reach, master, control)
+  return { min, max }
+}
 
 export function GradeSection({ items, luts }: { items: Item[]; luts: Asset[] }): ReactNode {
   const patchItem = useEditor((state) => state.patchItem)
@@ -103,20 +113,20 @@ export function GradeSection({ items, luts }: { items: Item[]; luts: Asset[] }):
     })
   }
 
+  /**
+   * The wheel's master strip: every channel moves by the same amount, so a cast already set is
+   * kept — exactly what the averaged slider it replaces did (`withMaster`), per clip, so each clip
+   * in a multi-selection keeps its own cast.
+   */
   const setWheel = (key: WheelKey, value: number): void => {
     const range = WHEELS.find((w) => w.key === key)!
-    update((g) => {
-      const delta = value - mean(g[key])
-      const w = g[key] ?? { r: 0, g: 0, b: 0 }
-      return {
-        ...g,
-        [key]: {
-          r: clamp(w.r + delta, range.min, range.max),
-          g: clamp(w.g + delta, range.min, range.max),
-          b: clamp(w.b + delta, range.min, range.max)
-        }
-      }
-    })
+    update((g) => ({ ...g, [key]: withMaster(g[key], value, range.min, range.max) }))
+  }
+
+  /** The wheel's puck: the cast, each clip keeping its own master (`withBalance`). */
+  const setBalance = (key: WheelKey, x: number, y: number): void => {
+    const range = WHEELS.find((w) => w.key === key)!
+    update((g) => ({ ...g, [key]: withBalance(g[key], x, y, range.min, range.max) }))
   }
 
   const setChannel = (key: WheelKey, channel: keyof GradeWheel, value: number): void =>
@@ -188,21 +198,30 @@ export function GradeSection({ items, luts }: { items: Item[]; luts: Asset[] }):
             step={control.step}
             format={control.format}
             onCommit={(next) => update((g) => ({ ...g, [control.key]: next }))}
+            defaultValue={control.identity}
+            gesture={LIVE}
           />
         ))}
       </div>
-      <div className="mt-2 space-y-0.5">
+      {/* Resolve's primaries: a wheel per range, its puck the cast and the strip under it the
+          level. The strip is the averaged slider that was here; the puck is the per-channel cast
+          that used to need the three numbers below. */}
+      <div className="mt-2 grid grid-cols-3 gap-1.5">
         {WHEELS.map((control) => (
-          <SliderField
+          <ColorWheel
             key={control.key}
             label={control.label}
-            ariaLabel={`${control.label} (${control.hint}), all channels`}
-            value={mean(grade[control.key])}
-            mixed={mixedOf((g) => mean(g[control.key]))}
-            {...centredRange(0, control.reach, mean(grade[control.key]), control)}
-            step={0.005}
-            format={signed(3)}
-            onCommit={(next) => setWheel(control.key, next)}
+            hint={control.hint}
+            value={grade[control.key]}
+            mixed={mixedOf((g) => JSON.stringify(g[control.key] ?? null))}
+            // The strip's travel, as the averaged slider's was: `reach` either side of 0, stretched
+            // to show a level the agent set past it, never past the channel range.
+            {...stripRange(control, balanceOf(grade[control.key]).master)}
+            reach={WHEEL_REACH}
+            onBalance={(x, y) => setBalance(control.key, x, y)}
+            onMaster={(next) => setWheel(control.key, next)}
+            gesture={LIVE}
+            size={60}
           />
         ))}
       </div>
@@ -226,6 +245,8 @@ export function GradeSection({ items, luts }: { items: Item[]; luts: Asset[] }):
                   step={0.005}
                   precision={3}
                   onCommit={(next) => setChannel(control.key, channel.key, next)}
+                  defaultValue={0}
+                  gesture={LIVE}
                 />
               ))}
             </div>
@@ -267,6 +288,8 @@ export function GradeSection({ items, luts }: { items: Item[]; luts: Asset[] }):
             step={0.01}
             format={percent}
             onCommit={(next) => update((g) => (g.lut ? { ...g, lut: { ...g.lut, intensity: next } } : g))}
+            defaultValue={1}
+            gesture={LIVE}
           />
         )}
       </div>
@@ -282,6 +305,8 @@ export function GradeSection({ items, luts }: { items: Item[]; luts: Asset[] }):
             step={0.01}
             format={percent}
             onCommit={(next) => setAmount(control.key, next)}
+            defaultValue={0}
+            gesture={LIVE}
           />
         ))}
       </div>
@@ -302,6 +327,8 @@ export function GradeSection({ items, luts }: { items: Item[]; luts: Asset[] }):
                   onCommit={(next) =>
                     update((g) => (g.halation ? { ...g, halation: { ...g.halation, threshold: next } } : g))
                   }
+                  defaultValue={DEFAULT_HALATION_THRESHOLD}
+                  gesture={LIVE}
                 />
                 <NumberField
                   row
@@ -317,6 +344,8 @@ export function GradeSection({ items, luts }: { items: Item[]; luts: Asset[] }):
                   onCommit={(next) =>
                     update((g) => (g.halation ? { ...g, halation: { ...g.halation, radius: next } } : g))
                   }
+                  defaultValue={DEFAULT_HALATION_RADIUS}
+                  gesture={LIVE}
                 />
                 <Field label="Glow">
                   <ColorField
@@ -342,6 +371,8 @@ export function GradeSection({ items, luts }: { items: Item[]; luts: Asset[] }):
                 precision={1}
                 suffix="px"
                 onCommit={(next) => update((g) => (g.grain ? { ...g, grain: { ...g.grain, size: next } } : g))}
+                defaultValue={DEFAULT_GRAIN_SIZE}
+                gesture={LIVE}
               />
             )}
           </div>

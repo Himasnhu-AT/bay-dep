@@ -1,8 +1,9 @@
 <!--
 Migrated from the HyperFrames project (https://github.com/heygen-com/hyperframes),
 packages/../skills/hyperframes-core/SKILL.md, which is licensed Apache-2.0.
-Carried into bay unmodified except for this notice and the section "Sound in bay" at the end,
-which is bay's own: it says which part of the HyperFrames audio contract bay mixes, because
+Carried into bay with two changes: the timeline is plain JavaScript rather than GSAP from a CDN
+(a composition may load nothing from the network, and bay ships no animation library), and the
+section "Sound in bay" at the end is bay's own: it says which part of the HyperFrames audio contract bay mixes, because
 bay renders HyperFrames compositions and an agent writing one needs the same contract the
 renderer enforces.
 -->
@@ -41,7 +42,7 @@ This skill is the **technical contract** — how to build one hyperframes projec
 | `references/frame-worker-core.md`       | the shared frame-worker role contract — each narrative workflow's packet builder prepends it to that workflow's `sub-agents/frame-worker.md` delta                                 |
 | `references/tailwind.md`                | work in a Tailwind v4 project (`init --tailwind`; runtime contract differs from Studio's v3)                                                                                       |
 
-For animation runtime specifics (GSAP API, Lottie, Three.js, etc.) go to `hyperframes-animation` → `adapters/<runtime>.md`.
+bay ships no animation library, and a composition may load nothing from the network — so write the timeline in plain JavaScript (below, and `minimal-composition.md`). A library you are licensed to use can be vendored beside the file and loaded by relative path.
 
 ## Building a composition
 
@@ -61,13 +62,13 @@ The standalone root needs an explicit **sized box** (`width`/`height` in px), an
 
 ### One paused timeline
 
-Each composition registers **exactly one** `gsap.timeline({ paused: true })` at `window.__timelines["<id>"]` (key = root `data-composition-id`). Building it inside an async callback (`document.fonts.ready`) is supported; what matters is that you **register only after the build completes**. Render length is the root's `data-duration`, **not** the timeline's length: a timeline that runs past it is cut off, and one that ends early holds its last frame. Omit the root `data-duration` and the length is inferred instead (timeline, media window, or adapter). You do not need `window.__timelines = window.__timelines || {}`: the runtime creates the registry before your inline scripts run, and `lint` no longer asks for it. Don't manually nest sub-timelines into the host; the runtime auto-nests registered child timelines. Full contract (incl. non-GSAP runtimes) → `references/determinism-rules.md` + `hyperframes-animation/adapters/`.
+Each composition registers **exactly one** timeline at `window.__timelines["<id>"]` (key = root `data-composition-id`): an object with `time(seconds)`, which sets every animated style from that time alone, and `duration()`, which returns the length in seconds — `{ time, duration: () => 5 }`. bay calls `time(t)` for each frame, in any order, and nothing else. A remote `<script src>` (a GSAP CDN tag, say) never runs in bay, and `write_composition` refuses it. Building it inside an async callback (`document.fonts.ready`) is supported; what matters is that you **register only after the build completes**. Render length is the root's `data-duration`, **not** the timeline's length: a timeline that runs past it is cut off, and one that ends early holds its last frame. bay requires the root `data-duration`. You do not need `window.__timelines = window.__timelines || {}`: bay creates the registry before your inline scripts run. Don't manually nest sub-timelines into the host; the runtime auto-nests registered child timelines. Full contract → `determinism-rules.md`.
 
 ### First-pass lint gotchas (a guaranteed first build failure)
 
 Rules that `lint` **does** catch, but only after the fact. Write them right the first time:
 
-- Never pair a CSS initial `transform` with a GSAP tween on the **same** property — the CSS value and the tween's start fight and `lint` rejects it with `gsap_css_transform_conflict`. Set the initial state inside the tween with `gsap.fromTo(el, { x: -40 }, { x: 0 })` instead of a CSS `transform: translateX(-40px)`.
+- Never leave an animated property's start value only in CSS. `time(t)` must write both ends itself — `el.style.transform = \`translateX(${(1 - p) * -40}px)\`` — so a seek back to 0 restores the start rather than keeping whatever the last frame wrote.
 - Never put `crossorigin` on `<video>`/`<audio>`. `lint` rejects it unconditionally with `media_crossorigin_breaks_preview` (error), including for canvas/WebGL/WebAudio readback. There is no suppression.
 - Never give a `<video data-start>` an ancestor that also carries `data-start`. `lint` rejects it with `video_nested_in_timed_element` (error). Time the wrapper **or** the video, not both.
 - Every `<audio>` needs an `id`. `lint` rejects it with `media_missing_id`, and an id-less `<audio>` is never picked up by the mixer, so the render is **silent**.
@@ -78,8 +79,8 @@ A lint **error** also switches off the layout and contrast audits: `check` then 
 
 Surfaced here; full rationale in the linked reference. Do not violate:
 
-- No render-time clocks / unseeded `Math.random` / network / input-state; no `repeat: -1` (use a finite count). → `determinism-rules.md`
-- Never tween `display` or raw `visibility` on a clip element. The framework owns clip visibility, and `lint` rejects it. Use GSAP `autoAlpha` or a zero-duration boundary `set`. (Tweening ordinary visual properties on a clip element is fine; what lint forbids is taking over its visibility.) → `determinism-rules.md`
+- No render-time clocks / unseeded `Math.random` / network / input-state; no loop without an end (compute the cycle from `t`, e.g. `(t % cycle) / cycle`). → `determinism-rules.md`
+- Never tween `display` or raw `visibility` on a clip element. The framework owns clip visibility, and `lint` rejects it. Animate `opacity` instead, or set `visibility` from `t` at an explicit beat boundary on a child wrapper. (Tweening ordinary visual properties on a clip element is fine; what lint forbids is taking over its visibility.) → `determinism-rules.md`
 - No `<br>` in body text; transformed elements must be block-level + sized; pulsing absolute decoratives need peak clearance. → `determinism-rules.md`
 - `<video>`/`<audio>` are found by a flat document query, so the framework seeks and decodes them at **any nesting depth** (including inside a sub-comp `<template>` or wrapper). One hard limit: `lint` errors if a `<video data-start>` sits inside another **plain** element that also has `data-start`, and the failure is real (wrong source frames, then the clip vanishes mid-slot), so put the timing on the wrapper or on the video, never both. Sub-composition hosts are exempt: media inside a sub-composition renders correctly. The other caveat is timelines, not placement: a sub-comp timeline can't animate host-root elements. → `variables-and-media.md`
 - Keep every `id` unique across the **assembled** page (prefix sub-comp ids with the composition id, `#<id>-hero`) so your own `#id` CSS and `getElementById` calls resolve. Frame injection no longer depends on it: the compiler stamps a document-unique `data-hf-render-id` on every `video[src]`/`audio[src]`/`img[src]`. Media that uses `<source>` children instead of a `src` attribute is **not** stamped, so unique ids still matter there. → `composition-patterns.md`
@@ -140,7 +141,7 @@ clip's volume, its fade-in/out and any transition over its ends apply to every s
 declares, through the same gain function the preview uses — so what you hear while editing is
 what the export contains. A muted track silences its compositions too.
 
-**Not honoured:** volume *tweens* (`tl.to("#bgm", { volume: 0 })`). bay mixes each sound at its
+**Not honoured:** volume set from script (`bgm.volume = 0` inside `time(t)`, or a library tween of `volume`). bay mixes each sound at its
 static `data-volume` and never sees the page's timeline, so fade the **clip** instead — set its
 fade-in/out or volume on the bay timeline. `read_composition` warns when a composition tweens
 `volume` in script.

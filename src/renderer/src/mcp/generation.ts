@@ -12,7 +12,7 @@
  *
  * When a job lands, the file is imported through the ordinary import path (`media.importPaths`,
  * as `import_media` does), so it is an asset like any other, admitted to `bay://` by main, and
- * deduplicated by path — polling a finished job again returns the same asset. Adding it and
+ * deduplicated by path — tracking a finished job again returns the same asset. Adding it and
  * placing it are one `transact`: one undo step.
  */
 
@@ -29,7 +29,8 @@ import { activeTimeline, allItems } from '@shared/project'
 import { validateSpeech } from '@shared/speech'
 import { estimateSpeech, type SpeechEstimate, type SpeechPace } from '@shared/speech-duration'
 import { bay } from '@/lib/bay'
-import { ToolError, fail, project, resolveAsset, store, usToFramesAtTimeline, type Handlers } from './helpers'
+import { ToolError, fail, project, resolveAsset, store, usToFramesAtTimeline, type CallContext, type Handlers } from './helpers'
+import { stillWorking, waitSecondsOf, waitUntil } from './wait'
 import { placeAsset } from './write'
 
 function api(): NonNullable<ReturnType<typeof bay>> {
@@ -90,7 +91,7 @@ async function generate(kind: GenerationKind, args: Record<string, unknown>): Pr
   const started = await api().generation.start(request)
   if (!started.ok) fail(started.error)
   // A submission refused at once (a bad key, a prompt the provider will not take) is already
-  // failed here; telling the agent to poll it would only delay the error it needs now.
+  // failed here; sending the agent to track it would only delay the error it needs now.
   if (started.job.status === 'failed') {
     fail(`${label} refused the request: ${started.job.error ?? 'no reason was given'}. Nothing was imported.`)
   }
@@ -99,9 +100,8 @@ async function generate(kind: GenerationKind, args: Record<string, unknown>): Pr
     ...sessionSpend(started.spending),
     defaultsApplied,
     next:
-      `Call track_generation { jobId: "${started.job.id}" }` +
-      (kind === 'video' ? ' every 15–30 seconds' : '') +
-      ' until it is done or failed, before your final answer.'
+      `Call track_generation { jobId: "${started.job.id}" } before your final answer — it waits until the job is ` +
+      'done or failed and then imports the result.'
   }
 }
 
@@ -173,7 +173,9 @@ async function speak(args: Record<string, unknown>): Promise<Record<string, unkn
     ...sessionSpend(started.spending),
     estimatedSpeech: estimated,
     defaultsApplied,
-    next: `Call track_generation { jobId: "${started.job.id}" } until it is done or failed, before your final answer.`
+    next:
+      `Call track_generation { jobId: "${started.job.id}" } before your final answer — it waits until the job is ` +
+      'done or failed and then imports the result.'
   }
 }
 
@@ -232,14 +234,18 @@ function summarise(job: GenerationJob): Record<string, unknown> {
   }
 }
 
-async function track(args: Record<string, unknown>): Promise<Record<string, unknown>> {
+/** How often a waiting `track_generation` asks main: an IPC round trip each, and jobs take seconds to minutes. */
+const GENERATION_CHECK_MS = 2000
+
+async function track(args: Record<string, unknown>, context?: CallContext): Promise<Record<string, unknown>> {
   const bridge = api()
   if (args.jobId === undefined) {
     const jobs = await bridge.generation.jobs()
     return { jobs: jobs.slice(0, 20).map(summarise) }
   }
   const id = String(args.jobId)
-  const job = await bridge.generation.job(id)
+  const seconds = waitSecondsOf(args)
+  let job = await bridge.generation.job(id)
   if (!job) {
     const recent = (await bridge.generation.jobs()).slice(0, 10).map((j) => `${j.id} (${j.kind}, ${j.status})`)
     fail(
@@ -248,12 +254,39 @@ async function track(args: Record<string, unknown>): Promise<Record<string, unkn
     )
   }
 
+  const running = (j: GenerationJob | null): boolean => j !== null && (j.status === 'queued' || j.status === 'running')
+  let latest: GenerationJob | null = job
+  const outcome = await waitUntil(
+    async () => {
+      if (!running(latest)) return true
+      latest = await bridge.generation.job(id)
+      return !running(latest)
+    },
+    { seconds, everyMs: GENERATION_CHECK_MS, context }
+  )
+  // Main forgot the job while this call waited. Answering from the last look would say "still
+  // working" about a job that no longer exists, and the agent would wait on it for good.
+  if (latest === null) {
+    const recent = (await bridge.generation.jobs()).slice(0, 10).map((j) => `${j.id} (${j.kind}, ${j.status})`)
+    fail(
+      `Generation job "${id}" is gone: it was ${job.status} when this call began waiting, and after ` +
+        `${outcome.waited}s main no longer had it, so nothing was imported. Main keeps a bounded list of ` +
+        `jobs and drops the oldest finished ones as new jobs start, so it most likely finished and was pruned; ` +
+        `whether its file landed is unknown. ` +
+        (recent.length > 0 ? `Recent jobs: ${recent.join(', ')}. ` : '') +
+        'Check those before starting a new paid generation.'
+    )
+  }
+  job = latest
+  const waited = { waited: outcome.waited }
+
   if (job.status === 'queued' || job.status === 'running') {
-    return { ...summarise(job), next: 'Still working. Call track_generation again in 15–30 seconds.' }
+    return { ...summarise(job), ...waited, next: stillWorking(`track_generation { jobId: "${id}" }`, job.status === 'queued' ? 'queued' : 'running', outcome) }
   }
   if (job.status === 'failed') {
     return {
       ...summarise(job),
+      ...waited,
       next: 'Nothing was imported. Tell the user what failed; retry only if the error says a retry can help.'
     }
   }
@@ -269,6 +302,7 @@ async function track(args: Record<string, unknown>): Promise<Record<string, unkn
   if (!imported || imported.error) {
     return {
       ...summarise(job),
+      ...waited,
       status: 'failed',
       error: `The file landed at ${job.outputPath} but could not be imported${imported?.error ? `: ${imported.error}` : ''}.`
     }
@@ -288,7 +322,7 @@ async function track(args: Record<string, unknown>): Promise<Record<string, unkn
     hasAudio: imported.hasAudio,
     hasVideo: imported.hasVideo
   }
-  // Polling a finished job again is normal (the agent re-checks before its final answer); with
+  // Tracking a finished job again is normal (the agent re-checks before its final answer); with
   // `place: true` it must not lay a second copy of the clip. Placed means on any timeline.
   const current = project()
   const known = current.assets.find((a) => a.id === imported.id || (a.path !== null && a.path === imported.path))
@@ -298,6 +332,7 @@ async function track(args: Record<string, unknown>): Promise<Record<string, unkn
   if (args.place === true && known && onTimeline) {
     return {
       ...summarise(job),
+      ...waited,
       // A second look at a placed voiceover still needs its length: the agent re-checks here
       // before fitting the edit to it.
       ...measured,
@@ -329,6 +364,7 @@ async function track(args: Record<string, unknown>): Promise<Record<string, unkn
   const place = `place_asset { assetId: "${imported.id}" }`
   return {
     ...summarise(job),
+    ...waited,
     ...measured,
     asset,
     ...(placed ? { placed } : {}),
@@ -342,5 +378,5 @@ export const handlers: Handlers = {
   generate_video: (args) => generate('video', args),
   generate_speech: (args) => speak(args),
   estimate_speech: async (args) => estimate(args),
-  track_generation: (args) => track(args)
+  track_generation: (args, context) => track(args, context)
 }

@@ -50,6 +50,8 @@ export default ({ t, vars }) => (
 | `<path>` | `d` (SVG path data, in pixels, origin at the anchor), `fill`, `stroke`, `strokeWidth`, `draw` (0–1 of the stroke drawn) |
 | `<text>` | children are the text; `size`, `weight` (100–1000, default 700), `font`, `italic`, `fill` (default white), `stroke`, `strokeWidth`, `align` (default `center`), `w` (wrap width), `lineHeight` (×size, default 1.2), `tracking` (px), `split`, `stagger`, `variations` (variable-font axes, below) |
 | `<group>` | children; `w`, `h` (its box, for `anchor`, `clip` and `wipe`), `clip` |
+| `<glass>` | `w`, `h`, `radius`, `material`, `blur`, `saturation`, `tint`, `tintOpacity`, `refraction`, `bezel`, `edgeHighlight` — frosted glass over what is below the clip ([Glass](#glass)) |
+| `<scene3d>` | `w`, `h` (or `width`, `height`), `camera`, `fog`, `background`; children are `<text3d>`, `<box3d>`, `<plane3d>`, `<light3d>` — a 3D view drawn in its box ([3D](#3d-extruded-text-and-a-camera)) |
 
 Every element also takes:
 
@@ -280,6 +282,158 @@ export default ({ t }) => {
   )
 }
 ```
+
+## 3D: extruded text and a camera
+
+`<scene3d>` is a box in the 2D scene that shows a 3D world through a camera. Place it like any
+element (`x`, `y`, `w`, `h`, `opacity`, `in`/`out` all apply to the box), and put 3D objects inside
+it. It draws in the same pass as everything else, so it scrubs, previews and exports alike.
+**Everything that moves is computed from `t`** — to fly the camera through a title, compute
+`camera.position` each frame, exactly as you would compute `x` for a rect.
+
+The world is y-up, in units you choose: a `size={1}` text is one unit per em. The default camera
+sits at `[0, 0, 10]` looking at the origin with `fov` 40, which frames about 7 units top to bottom.
+
+| Element | Props |
+|---|---|
+| `<scene3d>` | `camera={{ position: [x, y, z], lookAt: [x, y, z], fov, roll, near, far }}` (`roll` degrees; positive tilts the picture clockwise), `fog={{ near, far, color, mode }}`, `background` (`"transparent"` default, or a colour) |
+| `<text3d>` | children are the text (≤ 200 characters, `\n` for lines); `size` (default 1), `depth` (0.2), `bevel` (0 = sharp; try 0.02–0.04 of size), `weight` (700), `font`, `align`, `lineHeight`, `curveSegments` (1–24, default 8) |
+| `<box3d>` | `size={[w, h, d]}` |
+| `<plane3d>` | `size={[w, h]}` — visible from both sides |
+| `<light3d>` | `type="ambient"`, `"directional"` or `"point"`; `color`, `intensity`, `position`, `distance` (point: how far it reaches; no falloff before) |
+
+Every mesh (`text3d`, `box3d`, `plane3d`) takes `position`, `rotation` (degrees about x, y, z),
+`scale`, and a material: `color`, `metalness` (0–1), `roughness` (0–1), `emissive`,
+`emissiveIntensity`, `opacity`. With no `<light3d>` at all the scene gets a soft ambient light and
+a key light from the upper right.
+
+- **Fog**: `mode: "fade"` (the default over a transparent background) makes distant things
+  see-through, which is what you want over footage. `"tint"` turns them the fog colour — only right
+  over an opaque `background` of that colour; over video it turns far letters a flat colour.
+- **Fonts**: 3D text needs the font's outlines, so `font` is **`"Inter"`** (built in, weights
+  400/700/900, Latin) or a font the project **imported** as `.ttf`, `.otf` or `.woff` (by its
+  family; a variable font extrudes its default instance). WOFF2 cannot be read, and an installed
+  font is refused — `write_brf` names what you can use. A character the font has no glyph for is
+  refused by name.
+- **Keep shapes still, move the objects.** A text's geometry is built once per `text`, `font`,
+  `weight`, `bevel`, `align`, `lineHeight` and `curveSegments`, then reused; `size`, `depth` and a
+  box's or plane's `size` are applied as a scale, so animating them is free, like `position`,
+  `rotation`, `scale`, colours, `opacity` and the camera. **A bevel is the exception**: it is an
+  absolute width, so a bevelled text is rebuilt whenever its `bevel`, `size` or `depth` changes —
+  animating any of those on a bevelled text rebuilds it every frame (up to the whole vertex budget).
+  Animate `scale` instead, or drop the bevel.
+- **Limits**: 64 meshes and 8 lights per `<scene3d>`, and a vertex budget (about 2M, estimated from
+  the text before anything is built) — a very long bevelled title at high `curveSegments` is
+  refused with what to lower.
+
+### Fly through a 3D title
+
+```tsx
+import { interpolate, spring } from 'bay'
+
+export const vars = { line1: 'SOC 2', line2: 'in minutes', accent: '#7CF2C4' }
+
+export default ({ t, vars }) => {
+  // Far back, glide in, then fly through the first line as it ends.
+  const z = interpolate(t, [0, 2.6, 4.2], [22, 5.5, -3], { easing: 'inOutCubic' })
+  const x = interpolate(t, [0, 2.6, 4.2], [0, 0.8, 0], { easing: 'inOutCubic' })
+  const lookZ = interpolate(t, [2.6, 4.2], [0, -12], { easing: 'inExpo' })
+  const rise = spring(t, { delay: 0.6, damping: 200 })
+  return (
+    <scene duration={5}>
+      <scene3d x="50%" y="50%" w="100%" h="100%"
+        camera={{ position: [x, 0.3, z], lookAt: [0, 0, lookZ], fov: 38, roll: interpolate(t, [0, 4.2], [0, -6]) }}
+        fog={{ near: 8, far: 30 }} out={['fade', 0.4]}>
+        <light3d type="ambient" intensity={0.4} />
+        <light3d type="directional" position={[4, 6, 8]} intensity={2.4} />
+        <text3d size={1.8} depth={0.55} bevel={0.035} weight={900} position={[0, 0.9, 0]}
+          color="#E9EDF6" metalness={0.55} roughness={0.28} opacity={interpolate(t, [0, 0.5], [0, 1])}>
+          {vars.line1}
+        </text3d>
+        <text3d size={0.9} depth={0.3} bevel={0.02} position={[0, -0.9 - 0.6 * (1 - rise), -2.5]}
+          color={vars.accent} emissive={vars.accent} emissiveIntensity={0.25} opacity={rise}>
+          {vars.line2}
+        </text3d>
+      </scene3d>
+    </scene>
+  )
+}
+```
+
+Check it with `preview_frame` at the start (the title small and far), mid-glide, and just before
+the fly-through, over the footage it will sit on.
+
+## Glass
+
+`<glass>` is a pane of frosted glass: what the **tracks below this clip** show through it
+blurred, a little more saturated, and bent at the rim, with a tint and a rim light on top. It is a
+leaf, so put text and shapes *after* it to sit on the glass.
+
+```tsx
+import { spring, interpolate } from 'bay'
+
+export const vars = { title: 'Nothing leaves your Mac', kicker: 'PRIVATE BY DESIGN' }
+
+export default ({ t, vars }) => {
+  const rise = spring(t, { delay: 0.1, damping: 200 })
+  const y = 540 + 60 * (1 - rise)
+  return (
+    <scene duration={4} size={[1920, 1080]}>
+      <glass x={960} y={y} w={1100} h={300} radius={48} material="regular" tint="#ffffff"
+        tintOpacity={0.14} opacity={rise} out={['fade', 0.3]} />
+      <text x={960} y={y - 50} size={34} weight={700} tracking={6} fill="#0B0B0Fb3"
+        opacity={interpolate(t, [0.3, 0.6], [0, 1])} out={['fade', 0.3]}>{vars.kicker}</text>
+      <text x={960} y={y + 30} size={84} weight={900} fill="#0B0B0F"
+        opacity={interpolate(t, [0.35, 0.7], [0, 1])} out={['fade', 0.3]}>{vars.title}</text>
+    </scene>
+  )
+}
+```
+
+**Materials** are quick-liquid's, clearest to most frosted — each sets `blur`, `saturation`,
+`tintOpacity`, `refraction` and `bezel`, and any of them given beside it wins:
+
+| `material` | blur | saturation | tintOpacity | refraction | bezel | Use |
+|---|---|---|---|---|---|---|
+| `clear` | 2 | 1.55 | 0.03 | 26 | 36 | a lens over a busy shot; the picture stays legible |
+| `thin` | 6 | 1.5 | 0.05 | 18 | 26 | chips and small labels |
+| `regular` (default) | 14 | 1.7 | 0.09 | 16 | 30 | cards and lower thirds with text on them |
+| `thick` | 22 | 1.8 | 0.13 | 12 | 28 | long text over detailed footage |
+| `ultra` | 30 | 1.85 | 0.17 | 10 | 26 | the backdrop only as colour and light |
+
+**Parameters**, and where each stops reading as glass — `write_brf` refuses a value past these:
+
+| Prop | Safe range | Past it |
+|---|---|---|
+| `blur` | 0–40 px | past 40 px the backdrop turns to fog and the glass reads as a grey card |
+| `saturation` | 0–2.5 (1 = unchanged) | past 2.5 skin and skies go neon under the glass |
+| `tint` | a colour, or `"r, g, b"` | — (its strength is `tintOpacity`) |
+| `tintOpacity` | 0–0.6 | past 0.6 the tint hides the backdrop and it reads as a flat card |
+| `refraction` | 0–60 px | past 60 px the rim smears the backdrop into streaks |
+| `bezel` | 0–120 px | past 120 px the bend covers the whole pane and it reads as a fisheye |
+| `edgeHighlight` | 0–1 | above 1 the rim clips to a white outline |
+
+A glass number given as a `"$name"` var is not refused past its range; it is clamped to the
+range when drawn, so check the look with `preview_frame`. Plain numbers and keys are refused. Lengths are in the scene's own
+pixels and scale with it. `blur` on a glass pane is its frost —
+the pane itself is never blurred.
+
+**Text on glass: dark ink on light glass, light ink on dark glass.** A white tint lifts
+whatever is behind it, so white text on it disappears; use near-black (`#0B0B0F`) at full
+strength and a lighter alpha for secondary lines. For light text, tint dark
+(`tint="#0B0B0F" tintOpacity={0.35}`). Check both with `preview_frame` over the actual footage —
+the backdrop decides the contrast, not the tint alone.
+
+What glass frosts, and what it does not:
+
+- It frosts what is **under the clip** — footage, photos and other clips on lower tracks. Shapes
+  earlier in the **same** scene, and a scene `background`, are painted on the same layer as the
+  glass and are not behind it; to frost a graphic, put it in its own `.brf` on a lower track.
+- A clip with a **blend mode** other than normal draws its glass as tint and rim only, without
+  the frost: a blended clip is meant to mix with what is under it.
+- A `group`'s `clip` does not clip the frost; keep panes inside their group's box.
+- Near the edge of the frame the frost fades a little, because there is nothing beyond the frame
+  to blur in.
 
 ## When `write_brf` refuses
 

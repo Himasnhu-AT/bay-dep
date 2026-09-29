@@ -30,13 +30,15 @@
 #
 # Output (release/, or --out):
 #   bay-<version>-<arch>.dmg            the download: notarized, stapled
+#   bay-mac-<arch>.dmg                  a byte copy of it under a name that never changes, which the
+#                                       website's /download redirects to (releases/latest/download/)
 #   bay-<version>-<arch>-mac.zip        the same notarized, stapled app, for the in-app updater
 #   latest-mac.yml                      the updater's feed entry for both (sha512, size)
 #   *.sha256                            `shasum -a 256` lines, for the website
 #   mac-<arch>/bay.app                  the signed, notarized, stapled app
 #   notary/<submission-id>.json         Apple's notarization log for each submission
-# To publish an update, upload the zip, the DMG and latest-mac.yml together to the feed folder
-# (README, "Releasing").
+# To publish an update, upload the zip, both DMGs and latest-mac.yml together as assets of one
+# release on the feed's GitHub repo (README, "Releasing"). This script uploads nothing.
 set -euo pipefail
 
 here=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
@@ -102,6 +104,8 @@ case "$ARCH" in
 esac
 dmg="$out/bay-$version-$ARCH.dmg"
 zip="$out/bay-$version-$ARCH-mac.zip"
+# The website links to releases/latest/download/<this name>, so it must not carry the version.
+stable_dmg="$out/bay-mac-$ARCH.dmg"
 info "bay $version ($ARCH) · $SIGN_ID · notarize=$([[ $NOTARIZE == 1 ]] && echo "yes, profile $NOTARY_PROFILE" || echo no) · $out"
 
 # --- build and sign ---------------------------------------------------------------------------
@@ -112,7 +116,7 @@ fi
 [[ -f out/main/index.js ]] || die "out/ is empty: run without --no-build"
 
 info "electron-builder: package and sign bay.app"
-/bin/rm -rf "$app" "$dmg" "$dmg.sha256" "$zip" "$zip.sha256" "$out/latest-mac.yml"
+/bin/rm -rf "$app" "$dmg" "$dmg.sha256" "$stable_dmg" "$stable_dmg.sha256" "$zip" "$zip.sha256" "$out/latest-mac.yml"
 # identity: electron-builder wants the name without its "Developer ID Application: " prefix.
 # notarize=false: this script notarizes, so it can read Apple's log and refuse on any issue.
 # extraMetadata.version stamps the packaged package.json (app.getVersion()), not the source one.
@@ -225,6 +229,10 @@ if [[ "$NOTARIZE" == 1 ]]; then
   ok "Gatekeeper accepts the DMG, the app, a quarantined copy, and the update zip's app: Notarized Developer ID"
 fi
 
+# --- the stable-named DMG: the same bytes, stapled ticket included --------------------------
+/bin/cp -f "$dmg" "$stable_dmg"
+cmp -s "$dmg" "$stable_dmg" || die "$(basename "$stable_dmg") is not a byte copy of $(basename "$dmg")"
+
 # --- the updater's feed entry (electron-updater's latest-mac.yml) -----------------------------
 sha512() { openssl dgst -sha512 -binary "$1" | base64 | tr -d '\n'; }
 size() { stat -f %z "$1"; }
@@ -245,11 +253,17 @@ size() { stat -f %z "$1"; }
     sed 's/^/  /' "$NOTES"
   fi
 } > "$out/latest-mac.yml"
+# The updater downloads `path` and the first `url` relative to the feed: both must name this
+# version's zip, or an installed bay would fetch another release's (or nothing).
+grep -qx "path: $(basename "$zip")" "$out/latest-mac.yml" || die "latest-mac.yml's path does not name $(basename "$zip")"
+[[ "$(grep -m1 '^  - url: ' "$out/latest-mac.yml")" == "  - url: $(basename "$zip")" ]] || die "latest-mac.yml's first file is not $(basename "$zip")"
+grep -q "^version: $version\$" "$out/latest-mac.yml" || die "latest-mac.yml does not say version $version"
 
-(cd "$out" && shasum -a 256 "$(basename "$dmg")" > "$(basename "$dmg").sha256" && shasum -a 256 "$(basename "$zip")" > "$(basename "$zip").sha256")
+(cd "$out" && shasum -a 256 "$(basename "$dmg")" > "$(basename "$dmg").sha256" && shasum -a 256 "$(basename "$stable_dmg")" > "$(basename "$stable_dmg").sha256" && shasum -a 256 "$(basename "$zip")" > "$(basename "$zip").sha256")
 info "done"
 echo "    $dmg"
 echo "      sha256 $(cut -d' ' -f1 "$dmg.sha256")  ($(du -h "$dmg" | cut -f1 | tr -d ' '))"
+echo "    $stable_dmg  (the same bytes, for the website's /download)"
 echo "    $zip"
 echo "      sha256 $(cut -d' ' -f1 "$zip.sha256")  ($(du -h "$zip" | cut -f1 | tr -d ' '))"
 echo "    $out/latest-mac.yml"

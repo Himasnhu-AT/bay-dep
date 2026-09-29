@@ -190,3 +190,26 @@ export async function verifyDelivered(
   }
   return { ...partial, summary: loudnessSummary(partial) }
 }
+
+/**
+ * The level of the delivered file, for every export with sound — mastered or not. An unmastered
+ * re-export once came out at −33.4 LUFS where the last one was −14.1, and nothing measured it,
+ * so nothing could say so. When mastering ran its report already holds this reading of the same
+ * file; otherwise this is one `ebur128` pass over the encoded file. A failed measurement is a
+ * sentence, not a failed export: the file is fine, only the report is missing.
+ */
+export async function deliveredLoudness(
+  ffmpeg: string,
+  path: string,
+  report?: LoudnessReport,
+  /** Called just before a measuring pass actually runs, so the export can say what it is doing. */
+  onMeasuring?: () => void
+): Promise<{ measured: LoudnessMeasurement } | { error: string }> {
+  if (report?.measured) return { measured: report.measured }
+  onMeasuring?.()
+  try {
+    return { measured: await measureLoudness(ffmpeg, path) }
+  } catch (error) {
+    return { error: `The delivered loudness could not be measured: ${error instanceof Error ? error.message : String(error)}` }
+  }
+}

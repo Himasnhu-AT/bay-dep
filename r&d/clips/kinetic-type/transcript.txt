@@ -1,0 +1,166 @@
+Make a kinetic-typography piece of about 20 seconds from James talking: his voice is the soundtrack, and his words animate on screen exactly as he says them, in the kinetic typography style. Pick one passage that works on its own. Vertical 1080×1920. When it's done and checked, export it to /Users/himanshu/Movies/bay-rnd/kinetic/after.mp4.
+
+Loading the motion-graphics skill, since this is a custom kinetic-type piece driven by the speech.
+
+/motion-graphics loaded
+read_project
+browse_assets
+read_style
+ReadMcpResourceTool
+
+Now transcribing James's recording to find a self-contained ~20 s passage.
+
+transcribe
+
+I can't open that saved file, so I'll pull the sentence list instead, which is more compact.
+
+find_highlights
+
+Thought for 3s
+
+transcribe
+
+Thought for 2s
+
+transcribe
+
+Thought for 1m 8s
+
+I'll use the ~18-second passage where James talks about quitting and returning to study English language and linguistics—it has a clear arc and clean transcription. Now setting up the vertical canvas with just his voice.
+
+
+
+set_canvas
+place_asset
+edit_item
+
+Now removing his picture so only the voice remains, and adding tiny fades on the sound edges.
+
+detach_audio
+delete_items
+edit_item
+
+Now building the typography, with each word timed to the moment he says it.
+
+write_brf
+
+Checking frames: lines at rest, mid-entrance, and the inverted finale.
+
+preview_frame
+preview_frame
+
+Thought for 2s
+
+Spacing and hierarchy read well. Now a pass over the whole piece with his words alongside, to check the sync.
+
+transcribe
+frame_grid
+
+Thought for 4s
+
+One bug: a brief moment with no words on screen broke the render from 10 s onward. Fixing that.
+
+read_brf
+
+Thought for 1s
+
+write_brf
+frame_grid
+
+Every section renders now, and the words land with his speech. Exporting.
+
+export_timeline
+track_export
+track_export
+track_export
+
+Rendering, about 8% in. I'll keep checking.
+
+track_export
+track_export
+track_export
+track_export
+track_export
+track_export
+
+The export is still rendering, about a third of the way through. I'll keep checking until it's finished.
+
+track_export
+track_export
+track_export
+track_export
+track_export
+track_export
+
+The export is over halfway done (58%). Still checking.
+
+track_export
+track_export
+track_export
+track_export
+track_export
+track_export
+
+The export is at 81% and nearly finished. Still checking.
+
+track_export
+track_export
+track_export
+track_export
+track_export
+track_export
+
+All frames are rendered, and the file is in its final encoding step.
+
+track_export
+track_export
+
+Thought for 7s
+
+The kinetic-type piece is exported to /Users/himanshu/Movies/bay-rnd/kinetic/after.mp4. It's a vertical 1080×1920 video, about 18.6 s long, and the export finished with no problems reported.
+
+The passage: James on quitting and coming back to study: "I said I'm not — I'm not doing this. So I took a couple of years out and I'm back again. I'm a student… as you can see… I'm doing English, English language and linguistics, and I'm enjoying it." It starts and ends on his own sentences, and the piece holds its last line for about a second after he stops. It's a little under your 20 s because the passages before and after it are either mid-story or transcribed too unreliably to put on screen.
+
+How it looks:
+
+Sound: only his voice, with very short fades at the edges and no loudness change.
+Words: heavy upper-case type, one line stacked at a time on a warm off-white background. Each word springs in when he starts saying it.
+Emphasis: one key word per line is larger and red (NOT, THIS, YEARS, BACK, STUDENT, LINGUISTICS, ENJOYING).
+Ending: the last line, "and I'm enjoying it", switches to white on black. A thin red bar along the bottom fills as the piece plays.
+
+Checks: I looked at frames across the whole piece next to the transcript. Every word appears as he says it, nothing is cut off at the edges, and there are no blank or broken frames. One bug came up: a moment with no words on screen made the graphic fail from about 10 s to the end. I fixed it and checked that stretch again before exporting. I didn't watch the exported file itself.
+
+Words left off screen (you can still hear them):
+
+The college name: after "I'm a student at…" he names his college, but the transcription came out as "comedy action", which is clearly wrong. I didn't want to guess, so the screen shows "I'M A STUDENT" and then "AS YOU CAN SEE". If you tell me the name, I'll add it at the right moment.
+A stumble: the text also skips his "and it's doing…" right before "I'm doing English", so the screen is briefly blank for about a quarter of a second there.
+4 changes
+Revert
++
+Imported “James — kinetic type”
+~
+Canvas 1920×1080 → 1080×1920
++
+Added “James — kinetic type” on V1, 00:00:00:00–00:00:18:18
++
+Added “james.webm” on A1, 00:00:00:00–00:00:17:19
+
+4.22M in (4.16M cached) · 17.5k out · $1.67
+
+Pin
+Attach
+Range
+Format
+1080×1920
+fps
+30
+Duration
+00:00:18:18
+1 clip selected
+Unsaved changes
+Master
+Media
+Edit
+Color
+Audio
+Deliver

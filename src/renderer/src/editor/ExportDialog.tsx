@@ -1,9 +1,9 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { AlertTriangle, Check, FolderOpen, Loader2, Upload } from 'lucide-react'
 import type { ExportFormat } from '@shared/ipc'
 import { formatFps, formatTimecode, timelineDuration } from '@shared/project'
-import type { LoudnessPreset } from '@shared/loudness'
+import { describeTarget, LOUDNESS_PRESETS, rememberedTarget, type LoudnessPreset } from '@shared/loudness'
 import { parseTime } from '@shared/pins'
 import {
   EXPORT_PRESETS,
@@ -257,8 +257,24 @@ export function LoudnessFields(): ReactNode {
   const form = useExportForm()
   // What the last loudness entry was held to, when it was out of range; cleared by the next commit.
   const [clampNote, setClampNote] = useState<string | null>(null)
+  // The default `export_timeline` uses: what the last mastered export of this timeline asked for.
+  const timelineId = form?.timeline.id
+  // Checked like an argument: a shared `.bay` can hold anything there, and an invalid one is ignored.
+  const checked = rememberedTarget(form?.timeline.delivery?.loudness)
+  const remembered = checked.target ?? undefined
+  const rememberedLufs = remembered?.integratedLufs
+  const rememberedPeak = remembered?.truePeakDb
+  useEffect(() => {
+    if (!timelineId) return
+    const target = rememberedLufs !== undefined && rememberedPeak !== undefined ? { integratedLufs: rememberedLufs, truePeakDb: rememberedPeak } : undefined
+    useExportSession.getState().adoptRememberedLoudness(timelineId, target)
+  }, [timelineId, rememberedLufs, rememberedPeak])
   if (!form) return null
   const { settings, locked, update } = form
+  const chosen = settings.format !== 'png-sequence' ? loudnessTarget(settings.loudness) : null
+  const showsRemembered =
+    remembered !== undefined && chosen !== null && 'target' in chosen && chosen.target !== null &&
+    chosen.target.integratedLufs === remembered.integratedLufs && chosen.target.truePeakDb === remembered.truePeakDb
   const loudnessChoice: LoudnessChoice = typeof settings.loudness === 'string' ? settings.loudness : 'custom'
   const loudnessProblem = settings.format !== 'png-sequence' ? loudnessTarget(settings.loudness) : null
   return (
@@ -274,7 +290,8 @@ export function LoudnessFields(): ReactNode {
               const seed = 'target' in current && current.target ? current.target : { integratedLufs: -14, truePeakDb: -1 }
               update({ loudness: { ...seed } })
             } else {
-              update({ loudness: choice })
+              // The menu's own choice: Off here is the user's decision, which forgets the remembered target.
+              useExportSession.getState().chooseLoudness(choice)
             }
           }}
           // A PNG sequence has no audio to master.
@@ -293,6 +310,7 @@ export function LoudnessFields(): ReactNode {
               max={-5}
               precision={1}
               suffix="LUFS"
+              defaultValue={LOUDNESS_PRESETS.streaming.integratedLufs}
               disabled={locked}
               onClamp={(asked, kept) => setClampNote(`${formatLevel(asked)} LUFS is outside the target range, so it is ${formatLevel(kept)}.`)}
               onCommit={(integratedLufs) => {
@@ -308,6 +326,7 @@ export function LoudnessFields(): ReactNode {
               max={0}
               precision={1}
               suffix="dBTP"
+              defaultValue={LOUDNESS_PRESETS.streaming.truePeakDb}
               disabled={locked}
               onClamp={(asked, kept) => setClampNote(`${formatLevel(asked)} dBTP is outside the peak range, so it is ${formatLevel(kept)}.`)}
               onCommit={(truePeakDb) => {
@@ -322,6 +341,14 @@ export function LoudnessFields(): ReactNode {
         // The limits, always shown: a typed −80 used to become −40 with nothing said.
         <p className={cn('mt-1 text-[11px] text-pretty', clampNote ? 'text-warning' : 'text-ink-2')} role={clampNote ? 'status' : undefined}>
           {clampNote ? `${clampNote} ` : ''}Target −40 to −5 LUFS · peak −12 to 0 dBTP.
+        </p>
+      )}
+      {checked.warning && settings.format !== 'png-sequence' && (
+        <p className="mt-1 text-[11px] text-pretty text-warning" role="status">{checked.warning}</p>
+      )}
+      {showsRemembered && remembered && (
+        <p className="mt-1 text-[11px] text-pretty text-ink-2">
+          {describeTarget(remembered)}, remembered from this timeline’s last mastered export. Choose Off to export unmastered and forget it.
         </p>
       )}
       {loudnessProblem && 'error' in loudnessProblem && <p className="mt-1.5 text-[11px] text-pretty text-danger">{loudnessProblem.error}</p>}

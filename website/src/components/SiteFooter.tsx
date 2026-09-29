@@ -27,6 +27,9 @@ export function SiteFooter() {
           <Link href="/status" className={LINK}>
             Status
           </Link>
+          <Link href="/compare" className={LINK}>
+            Compare
+          </Link>
           <Link href="/waitlist" className={LINK}>
             Request access
           </Link>

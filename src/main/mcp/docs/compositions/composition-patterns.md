@@ -1,8 +1,8 @@
 <!--
 Migrated from the HyperFrames project (https://github.com/heygen-com/hyperframes),
 packages/../skills/hyperframes-core/references/composition-patterns.md, which is licensed Apache-2.0.
-Carried into bay unmodified except for this notice, because bay renders HyperFrames
-compositions and an agent writing one needs the same contract the renderer enforces.
+Adapted for bay: examples use a plain-JavaScript timeline rather than GSAP from a CDN,
+because a composition may load nothing from the network and bay ships no animation library.
 -->
 
 # Composition Patterns
@@ -50,7 +50,6 @@ When using sub-compositions, `index.html` should be **thin**. Its job is to decl
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
     <style>
       body {
         margin: 0;
@@ -117,8 +116,8 @@ When using sub-compositions, `index.html` should be **thin**. Its job is to decl
     </div>
 
     <script>
-      window.__timelines = window.__timelines || {};
-      window.__timelines["root"] = gsap.timeline({ paused: true });
+      // Nothing animates at the root, but the key must still answer time() and duration().
+      window.__timelines["root"] = { time() {}, duration: () => 30 };
     </script>
   </body>
 </html>
@@ -169,14 +168,15 @@ The reason to reach for it: a sub-comp timeline **cannot** drive host elements (
 
 <script>
   // MAIN timeline drives the host video. Global time: scene starts at 20.
-  window.__timelines = window.__timelines || {};
-  const main = window.__timelines["main"];
-  main.fromTo(
-    "#final-video",
-    { scale: 1.4, filter: "blur(14px)" },
-    { scale: 1.0, filter: "blur(0px)", duration: 0.9, ease: "power3.out" },
-    20,
-  ); // = slot data-start (+ any scene-local offset)
+  const clamp = (v) => Math.min(1, Math.max(0, v));
+  const easeOut = (p) => 1 - Math.pow(1 - p, 3);
+  const finalVideo = document.getElementById("final-video");
+  function time(t) {
+    const p = easeOut(clamp((t - 20) / 0.9)); // 20 = slot data-start (+ any scene-local offset)
+    finalVideo.style.transform = `scale(${1.4 - 0.4 * p})`;
+    finalVideo.style.filter = `blur(${14 * (1 - p)}px)`;
+  }
+  window.__timelines["main"] = { time, duration: () => 30 };
 </script>
 
 <!-- compositions/final-anim.html — frame/shell only, no <video>, no host-element animation -->
@@ -189,10 +189,12 @@ The reason to reach for it: a sub-comp timeline **cannot** drive host elements (
     style="position:absolute; inset:0; pointer-events:none;"
   >
     <script>
-      window.__timelines = window.__timelines || {};
-      const tl = gsap.timeline({ paused: true });
-      // animate ONLY this sub-comp's own elements here (labels, frame, overlays)
-      window.__timelines["final-anim"] = tl;
+      window.__timelines["final-anim"] = {
+        time(t) {
+          // set styles of ONLY this sub-comp's own elements here (labels, frame, overlays)
+        },
+        duration: () => 6,
+      };
     </script>
   </div>
 </template>
@@ -223,13 +225,14 @@ When several beat-level scenes share continuous state — a chat thread that gro
     <div class="phase" id="phase-b">…</div>
     <div class="phase" id="phase-c">…</div>
     <script>
-      window.__timelines = window.__timelines || {};
-      const tl = gsap.timeline({ paused: true });
-      tl.set("#phase-a", { opacity: 1 }, 0);
-      tl.to("#phase-a", { opacity: 0, duration: 0.4 }, 3.0);
-      tl.set("#phase-b", { opacity: 1 }, 3.0);
-      // …
-      window.__timelines["act2-merged"] = tl;
+      const phaseA = document.getElementById("phase-a");
+      const phaseB = document.getElementById("phase-b");
+      function time(t) {
+        phaseA.style.opacity = t < 3 ? 1 : Math.max(0, 1 - (t - 3) / 0.4); // out over 0.4s at 3s
+        phaseB.style.opacity = t < 3 ? 0 : 1; // in at 3s
+        // …
+      }
+      window.__timelines["act2-merged"] = { time, duration: () => 9 };
     </script>
   </div>
 </template>
@@ -239,7 +242,7 @@ Reach for this over multiple sequential slots when scenes share DOM, share a can
 
 ### D. Audio at root, reactive visual inside
 
-Audio always lives at the host (`index.html`) as a root-level `<audio>` so playback survives scene cuts. A sub-comp that visualizes audio should read a **pre-baked** frequency curve at init, then sample the baked curve from its timeline — the visual must still be a deterministic function of `tl.time()`, not of `audio.currentTime`. See `determinism-rules.md` and `hyperframes-creative` for the authoring pattern.
+Audio always lives at the host (`index.html`) as a root-level `<audio>` so playback survives scene cuts. A sub-comp that visualizes audio should read a **pre-baked** frequency curve at init, then sample the baked curve from its timeline — the visual must still be a deterministic function of the `t` passed to `time(t)`, not of `audio.currentTime`. See `determinism-rules.md` and `hyperframes-creative` for the authoring pattern.
 
 ## Naming Conventions
 

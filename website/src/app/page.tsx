@@ -1,7 +1,7 @@
 import type { CSSProperties } from "react";
 import { DepthFallback } from "@/components/DepthFallback";
 import { Reveal } from "@/components/Reveal";
-import { BeforeAfter } from "@/components/app/BeforeAfter";
+import { BeforeAfter, HOME_PAIR } from "@/components/app/BeforeAfter";
 import { ScrollSequence } from "@/components/app/ScrollSequence";
 import {
   ActionLink,
@@ -76,7 +76,7 @@ export default function Home() {
             <div data-depth="peel" style={peel(0.14, 0.2)}>
               <Reveal delay={0.05}>
                 <Eyebrow tone="night">
-                  For the Mac. Releasing soon.
+                  For Macs with Apple silicon. By invitation.
                 </Eyebrow>
               </Reveal>
             </div>
@@ -128,7 +128,16 @@ export default function Home() {
           </Reveal>
           <Reveal delay={0.1}>
             <div className="mt-10">
-              <BeforeAfter />
+              <BeforeAfter
+                pair={HOME_PAIR}
+                seam
+                caption={
+                  <>
+                    <span className="font-medium text-ink-soft">Fig. 2</span> Left of the line, the four clips as they
+                    came from Pexels, cut to the same frames. Right of it, the edit in Fig. 1.
+                  </>
+                }
+              />
             </div>
           </Reveal>
           <p
@@ -215,10 +224,21 @@ export default function Home() {
         <Wrap>
           {product.download ? (
             <Reveal>
-              <Headline tone="night">Download for Mac.</Headline>
-              <ActionLink href={product.download} className="mt-10">
-                Download for Mac
-              </ActionLink>
+              <Headline tone="night" quiet="You need access to sign in.">
+                Download for Mac.
+              </Headline>
+              <p className="mt-6 max-w-[52ch] text-lead text-on-night-soft">
+                A notarized disk image for Macs with Apple silicon. {product.name}{" "}
+                is by invitation: it opens to a sign-in, and works once your
+                Google account has access. Request access, or ask someone who
+                already uses it to refer you from inside the app.
+              </p>
+              <div className="mt-10 flex flex-wrap items-center gap-x-7 gap-y-4">
+                <ActionLink href={product.download}>Download for Mac</ActionLink>
+                <TextLink href="/waitlist" tone="night" arrow>
+                  Request access
+                </TextLink>
+              </div>
             </Reveal>
           ) : (
             <Reveal>

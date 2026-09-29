@@ -45,6 +45,8 @@ type Entry = {
   family: string
   source: FaceSource
   font: CompositionFont
+  /** The file over `bay://`, for readers that need its outlines rather than a face (3D text). */
+  url: string
   handle: unknown
   state: 'loading' | 'ready' | 'failed'
   error?: string
@@ -91,6 +93,7 @@ export class ImportedFonts {
         family: asset.font.family,
         source: { src, weight: descriptors.weight, stretch: descriptors.stretch, style: descriptors.style },
         font: { family: asset.font.family, path: asset.path, ...descriptors, format: asset.font.format },
+        url,
         handle,
         state: 'loading'
       }
@@ -146,6 +149,14 @@ export class ImportedFonts {
     return [...this.#entries.values()]
       .filter((e) => e.state === 'failed')
       .map((e) => ({ family: e.family, error: e.error ?? 'did not load' }))
+  }
+
+  /**
+   * Every imported face as a file the renderer can fetch — what 3D text reads glyph outlines
+   * from (`scene3dFonts.ts`), since a registered `FontFace` exposes no outlines.
+   */
+  files(): { family: string; weight: string; style: string; format: FontInfo['format']; url: string }[] {
+    return [...this.#entries.values()].map((e) => ({ family: e.family, weight: e.font.weight, style: e.font.style, format: e.font.format, url: e.url }))
   }
 
   /** The faces a composition window must be given, as files main can read. */

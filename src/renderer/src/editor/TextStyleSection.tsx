@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import {
   AlignCenter,
   AlignLeft,
@@ -20,13 +20,16 @@ import {
   NumberField,
   Section,
   SectionReset,
+  FontPicker,
   SegmentedControl,
-  Select
+  Select,
+  type FontOption
 } from '@/components'
 import { useTextFit } from '@/lib/useTextFit'
 import { useEditor } from '@/store/editor'
+import { LIVE } from './liveGesture'
 import { importedFamilies } from '@shared/fonts'
-import { FontFamilyField } from './FontFamilyField'
+import { typedFont } from './typedFont'
 
 /**
  * Families **measured** as present on this machine, not assumed.
@@ -63,9 +66,6 @@ const FAMILIES: { value: string; label: string }[] = [
   { value: '"Courier New", Courier, monospace', label: 'Courier' }
 ]
 
-/** The list's "type any family" entry. Not a stack a text item can hold (stacks are quoted). */
-const OTHER = '__other__'
-
 const WEIGHTS = [
   { value: '300', label: 'Light' },
   { value: '400', label: 'Regular' },
@@ -74,6 +74,13 @@ const WEIGHTS = [
   { value: '700', label: 'Bold' },
   { value: '800', label: 'Heavy' }
 ]
+
+/** What the type fields reset to (double-click a label): the default style's values. */
+const TEXT_DEFAULTS = defaultTextStyle()
+/** An outline, shadow or plate as it is first added — and what its fields reset to. */
+const OUTLINE_ON = { color: '#000000', width: 4 }
+const SHADOW_ON = { color: '#000000', blur: 12, offsetX: 0, offsetY: 4 }
+const PLATE_ON = { color: '#000000', padding: 24, radius: 8 }
 
 export interface TextStyleSectionProps {
   /** The text items in the selection. Every edit applies to all of them. */
@@ -98,8 +105,6 @@ export function TextStyleSection({ items, asset }: TextStyleSectionProps): React
   // Narrow: the asset list changes on import, not per frame.
   const imported = importedFamilies(useEditor((state) => state.project.assets))
   const first = items[0]
-  // "Other…" chosen while the current family is still a listed one: show the typed field anyway.
-  const [typing, setTyping] = useState(false)
   const fit = useTextFit(first, asset, {
     left: first?.layout.left ?? 0,
     top: first?.layout.top ?? 0,
@@ -112,12 +117,10 @@ export function TextStyleSection({ items, asset }: TextStyleSectionProps): React
   const style = resolvedTextStyle(first)
   // The project's own fonts first: they are the ones that travel with it. A family's value is
   // the quoted name with a generic fallback behind it, the shape every other entry has.
-  const families = [
-    ...imported.map((family) => ({ value: `"${family.replace(/"/g, '')}", sans-serif`, label: `${family} · imported` })),
-    ...FAMILIES
+  const families: FontOption[] = [
+    ...imported.map((family) => ({ value: `"${family.replace(/"/g, '')}", sans-serif`, label: family, group: 'project' as const })),
+    ...FAMILIES.map((family) => ({ ...family, group: 'system' as const }))
   ]
-
-  const listed = families.some((f) => f.value === style.fontFamily)
 
   /** Applies a partial style to every selected text item, as one undo step. */
   const set = (patch: Partial<TextStyle>): void => {
@@ -162,21 +165,14 @@ export function TextStyleSection({ items, asset }: TextStyleSectionProps): React
         }
       >
         <Field label="Font">
-          <Select
+          <FontPicker
             label="Font family"
-            value={listed && !typing ? style.fontFamily : OTHER}
-            options={[...families, { value: OTHER, label: 'Other…' }]}
-            onChange={(value) => {
-              setTyping(value === OTHER)
-              if (value !== OTHER) set({ fontFamily: value })
-            }}
+            value={style.fontFamily}
+            options={families}
+            onChange={(fontFamily) => set({ fontFamily })}
+            typed={typedFont}
           />
         </Field>
-        {(!listed || typing) && (
-          <div className="mt-1.5 pl-[72px]">
-            <FontFamilyField value={style.fontFamily} onCommit={(fontFamily) => set({ fontFamily })} />
-          </div>
-        )}
         <div className="mt-1.5">
           <Field label="Weight">
             <Select
@@ -194,6 +190,8 @@ export function TextStyleSection({ items, asset }: TextStyleSectionProps): React
             ariaLabel="Font size"
             value={style.fontSize}
             onCommit={(value) => set({ fontSize: Math.max(1, value) })}
+            defaultValue={TEXT_DEFAULTS.fontSize}
+            gesture={LIVE}
             min={1}
             max={2000}
             suffix="px"
@@ -203,6 +201,8 @@ export function TextStyleSection({ items, asset }: TextStyleSectionProps): React
             label="Line height"
             value={style.lineHeight}
             onCommit={(value) => set({ lineHeight: value })}
+            defaultValue={TEXT_DEFAULTS.lineHeight}
+            gesture={LIVE}
             step={0.05}
             min={0.5}
             max={4}
@@ -214,12 +214,14 @@ export function TextStyleSection({ items, asset }: TextStyleSectionProps): React
             label="Letter spacing"
             value={style.letterSpacing}
             onCommit={(value) => set({ letterSpacing: value })}
+            defaultValue={TEXT_DEFAULTS.letterSpacing}
+            gesture={LIVE}
             step={0.5}
             precision={1}
             suffix="px"
           />
           <Field label="Colour">
-            <ColorField label="Text colour" value={style.color} onCommit={(value) => set({ color: value })} />
+            <ColorField label="Text colour" gesture={LIVE} value={style.color} onCommit={(value) => set({ color: value })} />
           </Field>
         </div>
         <div className="mt-2 grid grid-cols-2 gap-1.5">
@@ -278,14 +280,14 @@ export function TextStyleSection({ items, asset }: TextStyleSectionProps): React
             label={style.stroke ? 'Remove outline' : 'Add outline'}
             active={Boolean(style.stroke)}
             icon={style.stroke ? <Minus className="size-3" /> : <Plus className="size-3" />}
-            onClick={() => toggle('stroke', { color: '#000000', width: 4 })}
+            onClick={() => toggle('stroke', OUTLINE_ON)}
           />
         }
       >
         {style.stroke ? (
           <div className="grid grid-cols-2 gap-1.5">
             <ColorField
-              label="Outline colour"
+              label="Outline colour" gesture={LIVE}
               value={style.stroke.color}
               onCommit={(color) => set({ stroke: { ...style.stroke!, color } })}
             />
@@ -293,6 +295,8 @@ export function TextStyleSection({ items, asset }: TextStyleSectionProps): React
               label="Width"
               value={style.stroke.width}
               onCommit={(width) => set({ stroke: { ...style.stroke!, width: Math.max(0, width) } })}
+              defaultValue={OUTLINE_ON.width}
+              gesture={LIVE}
               min={0}
               max={64}
               suffix="px"
@@ -314,7 +318,7 @@ export function TextStyleSection({ items, asset }: TextStyleSectionProps): React
             label={style.shadow ? 'Remove shadow' : 'Add shadow'}
             active={Boolean(style.shadow)}
             icon={style.shadow ? <Minus className="size-3" /> : <Plus className="size-3" />}
-            onClick={() => toggle('shadow', { color: '#000000', blur: 12, offsetX: 0, offsetY: 4 })}
+            onClick={() => toggle('shadow', SHADOW_ON)}
           />
         }
       >
@@ -322,7 +326,7 @@ export function TextStyleSection({ items, asset }: TextStyleSectionProps): React
           <>
             <div className="grid grid-cols-2 gap-1.5">
               <ColorField
-                label="Shadow colour"
+                label="Shadow colour" gesture={LIVE}
                 value={style.shadow.color}
                 onCommit={(color) => set({ shadow: { ...style.shadow!, color } })}
               />
@@ -330,6 +334,8 @@ export function TextStyleSection({ items, asset }: TextStyleSectionProps): React
                 label="Blur"
                 value={style.shadow.blur}
                 onCommit={(blur) => set({ shadow: { ...style.shadow!, blur: Math.max(0, blur) } })}
+                defaultValue={SHADOW_ON.blur}
+                gesture={LIVE}
                 min={0}
                 max={200}
                 suffix="px"
@@ -340,12 +346,16 @@ export function TextStyleSection({ items, asset }: TextStyleSectionProps): React
                 label="X"
                 value={style.shadow.offsetX}
                 onCommit={(offsetX) => set({ shadow: { ...style.shadow!, offsetX } })}
+                defaultValue={SHADOW_ON.offsetX}
+                gesture={LIVE}
                 suffix="px"
               />
               <NumberField
                 label="Y"
                 value={style.shadow.offsetY}
                 onCommit={(offsetY) => set({ shadow: { ...style.shadow!, offsetY } })}
+                defaultValue={SHADOW_ON.offsetY}
+                gesture={LIVE}
                 suffix="px"
               />
             </div>
@@ -366,14 +376,14 @@ export function TextStyleSection({ items, asset }: TextStyleSectionProps): React
             label={style.background ? 'Remove plate' : 'Add plate'}
             active={Boolean(style.background)}
             icon={style.background ? <Minus className="size-3" /> : <Plus className="size-3" />}
-            onClick={() => toggle('background', { color: '#000000', padding: 24, radius: 8 })}
+            onClick={() => toggle('background', PLATE_ON)}
           />
         }
       >
         {style.background ? (
           <>
             <ColorField
-              label="Plate colour"
+              label="Plate colour" gesture={LIVE}
               value={style.background.color}
               onCommit={(color) => set({ background: { ...style.background!, color } })}
             />
@@ -384,6 +394,8 @@ export function TextStyleSection({ items, asset }: TextStyleSectionProps): React
                 onCommit={(padding) =>
                   set({ background: { ...style.background!, padding: Math.max(0, padding) } })
                 }
+                defaultValue={PLATE_ON.padding}
+                gesture={LIVE}
                 min={0}
                 max={400}
                 suffix="px"
@@ -394,6 +406,8 @@ export function TextStyleSection({ items, asset }: TextStyleSectionProps): React
                 onCommit={(radius) =>
                   set({ background: { ...style.background!, radius: Math.max(0, radius) } })
                 }
+                defaultValue={PLATE_ON.radius}
+                gesture={LIVE}
                 min={0}
                 max={400}
                 suffix="px"

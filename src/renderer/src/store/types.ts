@@ -16,6 +16,7 @@ import type {
   TrackKind,
   Transition,
   TransitionDirection,
+  KeyframeEase,
   TransitionKind
 } from '@shared/project'
 import type { BrfCodeMeta, BrfDocument } from '@shared/brf'
@@ -24,16 +25,19 @@ import type { AgentEntry, AgentEvent, AgentGate, Proposal } from '@shared/agent'
 import type { Pin } from '@shared/pins'
 import type { AgentAttachmentView } from '@shared/agent-attachments'
 import type { RippleDeleteResult } from '@shared/ripple'
+import type { SwitchSegment } from '@shared/speaker-switch'
 import type { OpenSpanResult } from '@shared/insert-edit'
 import type { TrackMove } from '@shared/track-move'
 import type { TrimPlan, TrimRefusal, TrimSpec } from '@shared/trim'
 import type { DetachResult, ReattachResult } from '@shared/links'
+import type { BehindSubjectResult, BehindSubjectSpec } from '@shared/behind-subject'
 import type { SpeedPlan } from '@shared/speed'
 import type { CaptionCue } from '@shared/captions'
 import type { ScriptOp } from '@shared/script'
 import type { WhisperDownload } from '@shared/whisper'
 import type { ClipboardPayload, PasteAttribute } from '@shared/clipboard'
 import type { FreezeResult } from '@shared/freeze-frame'
+import type { LoudnessTarget } from '@shared/loudness'
 import type { AgentCheckpoint, AgentRevert } from './agent-turns'
 
 /** What `placeDub` lays down: lines on one audio track, and what happens to the original sound. */
@@ -90,6 +94,21 @@ export type WorkspacePage = 'media' | 'edit' | 'color' | 'audio' | 'deliver'
 
 export const WORKSPACE_PAGES: readonly WorkspacePage[] = ['media', 'edit', 'color', 'audio', 'deliver']
 
+/**
+ * The window's layout mode: `resolve` is the page layout above (library, inspector, timeline, the
+ * page bar, the agent as a dock); `ai` puts the agent at the centre with only the viewer and the
+ * media pool beside it, and opens everything else on demand (`AiPanel`). Like a page, a mode is
+ * a layout over the one project and never changes what an edit does. Remembered per machine
+ * (`bay.workspace.layoutMode`); see `store/layoutMode.ts` for the default and how to flip it.
+ */
+export type LayoutMode = 'resolve' | 'ai'
+
+/**
+ * What the AI layout opens on demand. `inspector` and `pages` share the right-hand drawer, so at
+ * most one of them is open; the timeline drawer runs along the bottom, independently.
+ */
+export type AiPanel = 'timeline' | 'inspector' | 'pages'
+
 /** The inspector's tabs, in Resolve's order. `timeline` is what shows with nothing selected. */
 export type InspectorTab = 'video' | 'title' | 'audio' | 'effects' | 'transition' | 'color' | 'file' | 'timeline'
 
@@ -108,6 +127,10 @@ export interface EditorState {
   panel: PanelId
   /** Which workspace page is showing. Remembered per machine (`bay.workspace.page`). */
   page: WorkspacePage
+  /** Resolve's pages or the agent-first AI layout. Remembered per machine (`bay.workspace.layoutMode`). */
+  layoutMode: LayoutMode
+  /** Which on-demand panels the AI layout has open. Not remembered: AI mode opens on its three regions. */
+  aiPanels: Record<AiPanel, boolean>
   /** The inspector tab last chosen; the inspector falls back when it does not apply. */
   inspectorTab: InspectorTab
   /** The library slot's tab. */
@@ -241,6 +264,13 @@ export interface EditorActions {
   setCanvasPreset(presetId: string, fit?: CanvasFit): { refitted: number } | { error: string }
   /** The colour shown wherever no video covers the canvas. `#RRGGBB`. */
   setBackground(color: string): void
+  /**
+   * Remember (a target) or forget (null) the loudness the last mastered export of a timeline used
+   * (`Timeline.delivery`). Keyed by project and timeline id because an export finishes minutes
+   * after it started, when another project or timeline may be open; a mismatch does nothing.
+   * Not an undo step (past and future are left alone), but it marks the document dirty.
+   */
+  rememberDelivery(projectId: string, timelineId: string, loudness: LoudnessTarget | null): void
   // agent ---------------------------------------------------------------------
   /** Begin an in-app agent session: from here writes are gated until something is approved. */
   startAgentSession(): void
@@ -354,6 +384,12 @@ export interface EditorActions {
    * the hole between them) is not an operation anybody wants.
    */
   rippleDelete(fromFrame?: Frames, toFrame?: Frames): RippleDeleteResult | null
+  /**
+   * Several ripple deletes as one edit and one undo step, applied last-first so each range's
+   * frames still mean what they meant before any was removed. Ranges are half-open
+   * `[fromFrame, toFrame)` and must not overlap. The results are summed; `removedFrames` is the total.
+   */
+  rippleDeleteRanges(ranges: readonly { fromFrame: Frames; toFrame: Frames }[]): RippleDeleteResult | null
   duplicateSelected(): void
   /**
    * Sets fields on one item. The sync fields — `from`, `durationInFrames`, `sourceStartUs`,
@@ -373,6 +409,13 @@ export interface EditorActions {
   reattachAudio(itemIds: string[]): ReattachResult
   /** Breaks the links of these clips and their partners. Returns the ids that were linked. */
   unlinkItems(itemIds: string[]): string[]
+  /**
+   * "Text behind the subject" (`@shared/behind-subject`): the clip, then the title (moved above the
+   * clip if it was under it), then a linked, silent cut-out copy of the clip with a subject mask, in
+   * one undo step. The subject matte itself is the caller's to compute and record first
+   * (`put_behind_subject`). Returns what it made, or why not.
+   */
+  putBehindSubject(spec: BehindSubjectSpec): BehindSubjectResult
   /**
    * Set one of a composition clip's declared variables, on that clip alone.
    *
@@ -404,6 +447,17 @@ export interface EditorActions {
   pasteAttributes(attributes: readonly PasteAttribute[]): number
   /** Switch clips off (or back on): all off if any is on. Defaults to the selection. */
   toggleDisabled(itemIds?: string[]): void
+  /**
+   * Switch exactly these clips on or off — not their linked partners, which a caller expands to
+   * if it means to. Locked tracks are skipped. Returns the ids whose state changed. One undo step.
+   */
+  setItemsEnabled(itemIds: readonly string[], enabled: boolean): string[]
+  /**
+   * Apply a speaker switch: razor each angle (`itemIds[i]` is angle i; the wide, if any, is last)
+   * where it goes on or off screen and disable the off pieces (`applyAngleSwitch`,
+   * `@shared/speaker-switch`). One undo step.
+   */
+  applyAngleSwitch(itemIds: readonly string[], segments: readonly SwitchSegment[]): { createdItemIds: string[]; disabledItemIds: string[] }
   /** Move the selection by `delta` frames, refusing (with a toast naming the blocker) if blocked. */
   nudgeSelection(delta: Frames): boolean
   /**
@@ -460,6 +514,8 @@ export interface EditorActions {
     kind: TransitionKind
     durationInFrames: Frames
     direction?: TransitionDirection
+    /** Absent is linear. */
+    ease?: KeyframeEase
   }): { id: string } | { error: string }
   removeTransition(transitionId: string): void
   /**
@@ -469,7 +525,7 @@ export interface EditorActions {
   applyScript(timelineId: string, operations: readonly ScriptOp[]): void
   patchTransition(
     transitionId: string,
-    patch: Partial<Pick<Transition, 'kind' | 'durationInFrames' | 'direction'>>
+    patch: Partial<Pick<Transition, 'kind' | 'durationInFrames' | 'direction' | 'ease'>>
   ): void
 
   // captions ------------------------------------------------------------------
@@ -558,6 +614,13 @@ export interface EditorActions {
   zoomBy(factor: number): void
   setPanel(panel: PanelId): void
   setPage(page: WorkspacePage): void
+  /** Switch layout mode (remembered). Entering either mode starts with the AI drawers closed. */
+  setLayoutMode(mode: LayoutMode): void
+  toggleLayoutMode(): void
+  /** Open or close one AI-layout panel; opening `inspector` closes `pages` and vice versa. */
+  setAiPanel(panel: AiPanel, open: boolean): void
+  toggleAiPanel(panel: AiPanel): void
+  closeAiPanels(): void
   setInspectorTab(tab: InspectorTab): void
   setLibraryTab(tab: LibraryTab): void
   setAgentDocked(docked: boolean): void

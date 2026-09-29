@@ -9,20 +9,26 @@
  *
  * The frame pump runs in the renderer on purpose. `export.start` only opens a job on the
  * encoder; if nothing feeds it, ffmpeg waits on a stream that never arrives and the agent
- * polls a job that will never finish. That exact gap shipped once already.
+ * waits on a job that will never finish. That exact gap shipped once already.
  */
 
 import type { ExportFormat, ExportProgress, IncompleteFrames } from '@shared/ipc'
 import { timelineDuration } from '@shared/project'
-import { parseLoudness } from '@shared/loudness'
+import { chooseExportLoudness, describeTarget, rememberedTarget, unmasteredLevelWarning, type LoudnessTarget } from '@shared/loudness'
 import { checkExportRange } from '@shared/export-presets'
 import { hasBlocking, type Finding } from '@shared/findings'
 import { FrameExporter } from '@/engine'
 import { bay } from '@/lib/bay'
-import { fail, project, timeline, type Handlers } from './helpers'
+import { fail, project, store, timeline, type CallContext, type Handlers } from './helpers'
+import { stillWorking, waitSecondsOf, waitUntil } from './wait'
 
 interface Job {
   jobId: string
+  /** Where the delivery decision is remembered when a mastered export finishes. */
+  projectId: string
+  timelineId: string
+  /** Asked for "off" over a remembered target: forgotten when — only when — the export is done. */
+  forget: boolean
   outputPath: string
   format: ExportFormat
   fromFrame: number
@@ -32,6 +38,31 @@ interface Job {
 }
 
 const jobs = new Map<string, Job>()
+
+/**
+ * The export jobs this window started, kept in `sessionStorage` because that survives a reload
+ * while the job map above does not. An export is rendered by this page, so a reload ends it; this
+ * is how `track_export` tells "lost to a reload" from "never started here".
+ */
+const STARTED_KEY = 'bay.mcp.exportsStarted'
+
+function startedBefore(): string[] {
+  try {
+    const raw = sessionStorage.getItem(STARTED_KEY)
+    const list: unknown = raw ? JSON.parse(raw) : []
+    return Array.isArray(list) ? list.filter((id): id is string => typeof id === 'string') : []
+  } catch {
+    return []
+  }
+}
+
+function rememberStarted(jobId: string): void {
+  try {
+    sessionStorage.setItem(STARTED_KEY, JSON.stringify([...startedBefore(), jobId].slice(-50)))
+  } catch {
+    // No storage (a test, a locked-down profile): a lost export then reads as unknown.
+  }
+}
 let subscribed = false
 
 /** Audio-only containers have no pictures to push; main muxes those from the project alone. */
@@ -44,12 +75,22 @@ function subscribe(): void {
   subscribed = true
   api.export.onProgress((update) => {
     const job = jobs.get(update.jobId)
-    if (job) job.progress = update
+    if (!job) return
+    job.progress = update
+    // A mastered export finished: that target is now the timeline's delivery decision, so the
+    // next export without a `loudness` argument keeps it rather than silently dropping it.
+    if (update.stage === 'done' && update.loudness) {
+      store().rememberDelivery(job.projectId, job.timelineId, update.loudness.target)
+    }
+    // "off" is a decision too, but only a delivered file makes it one: a failed or cancelled
+    // export must leave the remembered target where it was.
+    if (update.stage === 'done' && job.forget) store().rememberDelivery(job.projectId, job.timelineId, null)
   })
 }
 
 export async function exportTimeline(
-  args: Record<string, unknown>
+  args: Record<string, unknown>,
+  context?: CallContext
 ): Promise<Record<string, unknown>> {
   const api = bay()
   if (!api) fail('This window has no bridge to the app, so nothing can be exported.')
@@ -60,16 +101,20 @@ export async function exportTimeline(
   }
   const format = String(args.format) as ExportFormat
 
-  // Refused before anything starts: an export that ran for minutes and then ignored a
-  // misspelled preset would deliver a file at the wrong level with no word about it.
-  const loudness = parseLoudness(args.loudness)
-  if ('error' in loudness) fail(loudness.error)
   const quality = args.quality === undefined ? 'good' : String(args.quality)
   if (quality !== 'draft' && quality !== 'good' && quality !== 'best') {
     fail(`quality must be "draft", "good" or "best"; got "${quality}".`)
   }
 
   const tl = timeline()
+  // Refused before anything starts: an export that ran for minutes and then ignored a
+  // misspelled preset would deliver a file at the wrong level with no word about it. No
+  // argument means the timeline's remembered target, when it has one.
+  // The remembered target is checked like an argument: a shared `.bay` can hold anything.
+  const remembered = rememberedTarget(tl.delivery?.loudness)
+  const loudness = chooseExportLoudness(args.loudness, remembered.target ?? undefined)
+  if ('error' in loudness) fail(loudness.error)
+  const projectId = project().id
   const duration = timelineDuration(tl)
   if (duration === 0) {
     fail(
@@ -109,6 +154,10 @@ export async function exportTimeline(
 
   const record: Job = {
     jobId: job.jobId,
+    projectId,
+    timelineId: tl.id,
+    // An invalid remembered value is forgotten by "off" too.
+    forget: loudness.source === 'off' && (loudness.forget !== null || remembered.warning !== null),
     outputPath,
     format,
     fromFrame,
@@ -123,6 +172,7 @@ export async function exportTimeline(
     exporter: null
   }
   jobs.set(job.jobId, record)
+  rememberStarted(job.jobId)
 
   if (!AUDIO_ONLY.includes(format)) {
     const exporter = new FrameExporter({
@@ -147,8 +197,8 @@ export async function exportTimeline(
       }
     })
     record.exporter = exporter
-    // Deliberately not awaited: the tool returns a job id so the agent can poll rather than
-    // hold a turn open for minutes. Failures land on the job record, which is what
+    // Deliberately not awaited: the tool returns a job id, and any wait (`wait: true`,
+    // `track_export { waitSeconds }`) is a bounded one that reads the job record. Failures land on the job record, which is what
     // track_export reads.
     void exporter.run().catch((error: unknown) => {
       const current = jobs.get(job.jobId)
@@ -161,7 +211,7 @@ export async function exportTimeline(
     })
   }
 
-  return {
+  const started = {
     jobId: job.jobId,
     outputPath,
     format,
@@ -170,14 +220,66 @@ export async function exportTimeline(
     framesTotal: toFrame - fromFrame + 1,
     quality,
     ...(loudness.target ? { loudnessTarget: loudness.target } : {}),
-    note: 'Poll track_export with this jobId. Do not assume success — check the final stage.'
+    ...loudnessResult(loudness.target, loudness.source, loudness.forget),
+    ...(remembered.warning && args.loudness === undefined ? { warning: remembered.warning } : {}),
+    note: `Rendering in the background. track_export { jobId: "${job.jobId}" } waits until it finishes and returns the result; check its stage and \`complete\` before calling it done.`
   }
+  if (args.wait === false) return started
+
+  // By default the call waits until the export is done, failed or cancelled, and answers with
+  // what `track_export` would then say — so there is nothing left to ask about. The start's own
+  // facts (quality, the loudness decision) stay beside it; the stage is the status's.
+  const status = await trackExport({ jobId: job.jobId }, context)
+  const { note: _note, ...rest } = started
+  return { ...rest, ...status }
 }
 
-export function trackExport(args: Record<string, unknown>): Record<string, unknown> {
+/**
+ * How the export's loudness was decided, said in the result so a remembered target is never a
+ * surprise and a forgotten one is never silent.
+ */
+function loudnessResult(
+  target: LoudnessTarget | null,
+  source: 'argument' | 'remembered' | 'off' | 'default',
+  forgot: LoudnessTarget | null
+): Record<string, unknown> {
+  if (source === 'remembered' && target) {
+    return {
+      loudness: {
+        target,
+        source: 'remembered from the last export',
+        note: `Mastering to ${describeTarget(target)} because the last export of this timeline did. Pass loudness: "off" to export unmastered (and forget it).`
+      }
+    }
+  }
+  if (source === 'argument' && target) return { loudness: { target, source: 'this call' } }
+  if (source === 'off' && forgot) {
+    return {
+      loudness: {
+        target: null,
+        source: 'off',
+        note: `Unmastered. The remembered target (${describeTarget(forgot)}) is forgotten once this export is done — kept if it fails or is cancelled — and later exports stay unmastered until one passes loudness.`
+      }
+    }
+  }
+  return {}
+}
+
+const FINISHED: readonly string[] = ['done', 'failed', 'cancelled']
+
+/** How often a waiting `track_export` looks at the job: a map read, so often. */
+const EXPORT_CHECK_MS = 250
+
+export async function trackExport(args: Record<string, unknown>, context?: CallContext): Promise<Record<string, unknown>> {
   const jobId = String(args.jobId)
   const job = jobs.get(jobId)
   if (!job) {
+    if (startedBefore().includes(jobId)) {
+      fail(
+        `Export "${jobId}" was lost when the editor reloaded: exports are rendered by the editor page, ` +
+          'so the reload ended it and it will not finish. Start it again with export_timeline.'
+      )
+    }
     const known = [...jobs.keys()]
     fail(
       `No export job "${jobId}" in this session.` +
@@ -187,9 +289,19 @@ export function trackExport(args: Record<string, unknown>): Record<string, unkno
     )
   }
 
+  const seconds = waitSecondsOf(args)
+  // The record is replaced in place by progress events, so each look reads the latest.
+  const outcome = await waitUntil(() => FINISHED.includes(job.progress.stage), { seconds, everyMs: EXPORT_CHECK_MS, context })
+
   // Read live from the exporter, not from main's progress: main encodes what it is handed and
   // cannot know a frame was missing something. Final before `done` can arrive (see the getter).
-  return exportStatus(job.progress, job.outputPath, job.exporter?.incomplete ?? null)
+  const status = exportStatus(job.progress, job.outputPath, job.exporter?.incomplete ?? null)
+  status.waited = outcome.waited
+  if (!status.finished) {
+    const state = status.percent === null ? `rendering (${job.progress.stage})` : `rendering at ${String(status.percent)}%`
+    status.note = stillWorking(`track_export { jobId: "${jobId}" }`, state, outcome)
+  }
+  return status
 }
 
 /**
@@ -205,7 +317,8 @@ export function exportStatus(
   // Main's read-back of the file is the only thing that can say it lacks audio or runs short;
   // the frames' own faults are known only here. Any blocking one makes the export not complete.
   const findings = progress.stage === 'done' ? doneFindings(progress, incomplete) : null
-  return {
+  const levelWarning = progress.stage === 'done' ? unmasteredLevelWarning(progress) : null
+  const status: Record<string, unknown> = {
     jobId: progress.jobId,
     stage: progress.stage,
     framesDone: progress.framesDone,
@@ -230,10 +343,17 @@ export function exportStatus(
           }
         }
       : {}),
+    // Every export with sound, mastered or not: the level the file will play at.
+    ...(progress.stage === 'done' && progress.deliveredLoudness
+      ? {
+          deliveredLoudness: {
+            integratedLufs: finiteOrNull(progress.deliveredLoudness.integratedLufs),
+            truePeakDbtp: finiteOrNull(progress.deliveredLoudness.truePeakDb),
+            mastered: progress.loudness !== undefined
+          }
+        }
+      : {}),
     ...(progress.message && progress.stage === 'done' ? { message: progress.message } : {}),
-    ...(finished
-      ? {}
-      : { note: 'Still working. Poll again in a few seconds rather than in a tight loop.' }),
     // The catalog warns that an export can finish having written nothing; saying it here
     // means the agent sees it at the moment it is about to report success.
     ...(progress.stage === 'done' && progress.framesDone === 0
@@ -262,6 +382,14 @@ export function exportStatus(
           : { complete: true }
         : {})
   }
+  // After the faults that make the export not complete, which hide better and matter more.
+  if (levelWarning) status.warning = typeof status.warning === 'string' ? `${status.warning} ${levelWarning}` : levelWarning
+  return status
+}
+
+/** One decimal for the reader; `null` for the −∞ of digital silence, which JSON cannot carry. */
+function finiteOrNull(value: number): number | null {
+  return Number.isFinite(value) ? Number(value.toFixed(1)) : null
 }
 
 /**
@@ -279,15 +407,44 @@ export function doneFindings(progress: ExportProgress, incomplete: IncompleteFra
       fix: 'Wait for the named items to load (or fix the ones that failed), then export again.'
     })
   }
+  const level = unmasteredLevelWarning(progress)
+  if (level) out.push({ severity: 'warn', message: level, fix: 'Export again with loudness: "streaming" (or "podcast"), and it is remembered for later exports.' })
   if (progress.framesDone === 0 && progress.framesTotal !== 0) {
     out.push({ severity: 'blocking', message: 'The export finished with zero frames.', fix: 'Check fromFrame/toFrame cover the edit, and export again.' })
   }
   return out.sort((a, b) => (a.severity === b.severity ? 0 : a.severity === 'blocking' ? -1 : 1))
 }
 
-/** Test seam: forget everything this session knows about exports. */
+/** Test seam: the page reloading — the job map is gone, `sessionStorage` is not. */
+export function forgetJobsForTest(): void {
+  jobs.clear()
+}
+
+/**
+ * Test seam: a job as `export_timeline` would record it, with no encoder behind it. Returns the
+ * setter main's progress events would call.
+ */
+export function recordJobForTest(jobId: string, progress: Omit<ExportProgress, 'jobId'>): (next: Omit<ExportProgress, 'jobId'>) => void {
+  const job: Job = {
+    jobId,
+    projectId: 'test',
+    timelineId: 'test',
+    forget: false,
+    outputPath: `/tmp/${jobId}.mp4`,
+    format: 'mp4',
+    fromFrame: 0,
+    toFrame: (progress.framesTotal ?? 1) - 1,
+    progress: { ...progress, jobId },
+    exporter: null
+  }
+  jobs.set(jobId, job)
+  rememberStarted(jobId)
+  return (next) => {
+    job.progress = { ...next, jobId }
+  }
+}
 
 export const handlers: Handlers = {
-  export_timeline: (args) => exportTimeline(args),
-  track_export: (args) => trackExport(args),
+  export_timeline: (args, context) => exportTimeline(args, context),
+  track_export: (args, context) => trackExport(args, context),
 }

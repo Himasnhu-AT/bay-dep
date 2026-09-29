@@ -23,6 +23,8 @@ import { fitCanvasInFrame } from '@shared/export-presets'
 import { brfRuntime } from './brfCode'
 import { variationFaces } from './brfFonts'
 import { importedFonts } from './importedFonts'
+import { scene3dRuntime } from './scene3dRuntime'
+import { subjectMattes } from './subjectMatte'
 import {
   findTimeline,
   timelineDuration,
@@ -193,7 +195,7 @@ export class FrameExporter {
         let stats = this.#compositor.drawFrame(ctx, project, timeline, frame, { mode: 'scrub' })
         for (let attempt = 0; stats.pending > 0 && attempt < MAX_PENDING_REDRAWS; attempt += 1) {
           if (this.#cancelled) break
-          await Promise.all([this.#compositions.settle(this.#seekTimeout), brfRuntime.settle(this.#seekTimeout), variationFaces.settle(this.#seekTimeout), importedFonts.settle(this.#seekTimeout)])
+          await Promise.all([this.#compositions.settle(this.#seekTimeout), brfRuntime.settle(this.#seekTimeout), variationFaces.settle(this.#seekTimeout), importedFonts.settle(this.#seekTimeout), scene3dRuntime.settle(this.#seekTimeout), subjectMattes.settle(this.#seekTimeout)])
           stats = this.#compositor.drawFrame(ctx, project, timeline, frame, { mode: 'scrub' })
         }
         // Both are recorded from the draw that was written — the last one — and nothing else.

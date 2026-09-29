@@ -115,7 +115,7 @@ test('validateOnly prices the call and starts nothing; the same call without it 
   assert.equal(real.ok, true)
   assert.equal(started.length, 1)
   assert.equal(started[0]!.durationSeconds, 8)
-  assert.match(String(real.ok ? (real.value as Record<string, unknown>).next : ''), /track_generation \{ jobId: "job-1" \} every 15–30 seconds/)
+  assert.match(String(real.ok ? (real.value as Record<string, unknown>).next : ''), /Call track_generation \{ jobId: "job-1" \} before your final answer — it waits/)
 })
 
 test('an invalid option is refused before main is asked; a dry run says the same', async () => {
@@ -151,9 +151,9 @@ test('a video asset as the reference is refused; an image asset is sent by its p
 
 test('track_generation: running reports and imports nothing; done imports and places', async () => {
   await call('generate_video', { model: 'veo-3.1-generate-preview', prompt: 'surf' })
-  const running = await call('track_generation', { jobId: 'job-1' })
+  const running = await call('track_generation', { jobId: 'job-1', waitSeconds: 0 })
   assert.equal(running.ok, true)
-  assert.match(String(running.ok ? (running.value as Record<string, unknown>).next : ''), /again in 15–30 seconds/)
+  assert.match(String(running.ok ? (running.value as Record<string, unknown>).next : ''), /^Still running after 0s\. Call track_generation \{ jobId: "job-1" \} to keep waiting/)
   assert.equal(imported.length, 0)
 
   Object.assign(jobs[0]!, { status: 'done', outputPath: '/data/generated/surf-abc.mp4', findings: [{ severity: 'warn', message: 'no sound' }] })
@@ -188,7 +188,7 @@ test('track_generation: an unknown id names the recent jobs; a known one answers
   const unknown = await call('track_generation', { jobId: 'nope' })
   assert.equal(unknown.ok, false)
   assert.match(unknown.ok ? '' : unknown.error, /no generation job "nope"\. Recent jobs: job-1 \(image, running\)/)
-  assert.equal((await call('track_generation', { jobId: 'job-1' })).ok, true)
+  assert.equal((await call('track_generation', { jobId: 'job-1', waitSeconds: 0 })).ok, true)
 })
 
 test('a real call reports the session spend; a dry run reports the guard would refuse, before anything starts', async () => {

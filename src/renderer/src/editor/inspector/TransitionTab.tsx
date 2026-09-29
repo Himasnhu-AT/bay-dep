@@ -4,12 +4,14 @@ import {
   findAsset,
   formatTimecode,
   type Item,
+  type KeyframeEase,
   type Project,
   type Timeline,
   type TransitionDirection,
   type TransitionKind
 } from '@shared/project'
-import { Button, Field, IconButton, InlineAlert, NumberField, Section, Select } from '@/components'
+import { Button, EaseEditor, Field, IconButton, InlineAlert, Section, Select, TimecodeField } from '@/components'
+import { LIVE } from '../liveGesture'
 import { formatShortcut, runCommand, shortcutOf } from '@/lib/commands'
 import { defaultTransitionFrames, junctionsForTrack, whyNoRoom, type Junction } from '@/lib/junctions'
 import { useEditor } from '@/store/editor'
@@ -96,7 +98,7 @@ function CutEditor({ junction, project, fps }: { junction: Junction; project: Pr
   const [direction, setDirection] = useState<TransitionDirection>('left')
   const nameOf = (item: Item): string => findAsset(project, item.assetId)?.name ?? 'clip'
 
-  const patch = (change: { kind?: TransitionKind; durationInFrames?: number; direction?: TransitionDirection }): void => {
+  const patch = (change: { kind?: TransitionKind; durationInFrames?: number; direction?: TransitionDirection; ease?: KeyframeEase }): void => {
     if (!existing) return
     const store = useEditor.getState()
     const nextKind = change.kind ?? existing.kind
@@ -178,20 +180,34 @@ function CutEditor({ junction, project, fps }: { junction: Junction; project: Pr
             </Field>
           )}
           {existing ? (
-            <NumberField
+            <TimecodeField
               row
               label="Duration"
-              ariaLabel="Transition duration in frames"
+              ariaLabel="Transition duration"
               value={existing.durationInFrames}
+              fps={fps}
               min={2}
               step={2}
-              suffix="f"
+              framesReadout
               onCommit={(next) => patch({ durationInFrames: Math.max(2, Math.round(next)) })}
+              defaultValue={defaultTransitionFrames(junction, fps)}
             />
           ) : (
             <Button variant="primary" className="mt-1 w-full" onClick={add}>
               Add {TRANSITION_KINDS.find((option) => option.value === kind)?.label.toLowerCase() ?? 'transition'}
             </Button>
+          )}
+          {existing && (
+            // The curve the transition travels along — picture and audio cross-fade alike.
+            <Field label="Ease">
+              <EaseEditor
+                label="Transition ease: how it travels across the cut"
+                value={existing.ease}
+                onChange={(ease) => patch({ ease })}
+                gesture={LIVE}
+                overshoot={false}
+              />
+            </Field>
           )}
           {existing && (
             <p className="text-[10px] text-ink-2 tabular-nums">

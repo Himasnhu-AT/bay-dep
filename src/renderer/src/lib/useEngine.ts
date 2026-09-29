@@ -23,6 +23,8 @@ import { FrameExporter } from '@/engine/exporter'
 import { brfRuntime } from '@/engine/brfCode'
 import { variationFaces } from '@/engine/brfFonts'
 import { importedFonts } from '@/engine/importedFonts'
+import { scene3dRuntime } from '@/engine/scene3dRuntime'
+import { subjectMattes } from '@/engine/subjectMatte'
 import { PictureHold } from '@/engine/pictureHold'
 
 /**
@@ -73,6 +75,10 @@ declare global {
        * never waited for the worker (`test/app/brf-export.mjs`).
        */
       brfRuntime: typeof brfRuntime
+      /** The 3D renderer's door, so a probe can lose its context on purpose (`test/app/scene3d.mjs`). */
+      scene3dRuntime: typeof scene3dRuntime
+      /** Subject matte frames, shared by preview, `renderFrame` and export; a probe of export resets it first (`test/app/mask.mjs`). */
+      subjectMattes: typeof subjectMattes
     }
   }
 }
@@ -175,6 +181,8 @@ class Engine {
     this.#offs.push(brfRuntime.onReady(() => this.redraw()))
     this.#offs.push(variationFaces.onReady(() => this.redraw()))
     this.#offs.push(importedFonts.onReady(() => this.redraw()))
+    this.#offs.push(scene3dRuntime.onReady(() => this.redraw()))
+    this.#offs.push(subjectMattes.onReady(() => this.redraw()))
 
     // An occluded or minimised window stops `requestAnimationFrame`. The clock then stops
     // producing frames while the media elements play on, so the sound runs away from a
@@ -196,7 +204,7 @@ class Engine {
     this.clock.seek(state.playhead)
     this.redraw()
     if (this.handle && probeSurfaceEnabled()) {
-      window.bayEngine = { engine: this.handle, store: useEditor, renderFrame, FrameExporter, MediaPool, awaitSources, Compositor, brfRuntime }
+      window.bayEngine = { engine: this.handle, store: useEditor, renderFrame, FrameExporter, MediaPool, awaitSources, Compositor, brfRuntime, scene3dRuntime, subjectMattes }
     }
     return () => this.detach()
   }
@@ -217,6 +225,8 @@ class Engine {
     this.compositor.reset()
     this.pool.dispose()
     this.compositions.dispose()
+    // The 3D context and its caches go with the engine; the next 3D draw builds them again.
+    scene3dRuntime.dispose()
     this.#getCanvas = () => null
   }
 

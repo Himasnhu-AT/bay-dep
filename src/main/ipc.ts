@@ -9,7 +9,7 @@
 
 import { BrowserWindow, ipcMain, shell, app } from 'electron'
 import type { IpcMainInvokeEvent } from 'electron'
-import type { BayApi } from '@shared/ipc'
+import type { AudioResult, AudioSpan, BayApi } from '@shared/ipc'
 import type { McpToolResult } from '@shared/mcp'
 import { IPC } from '@shared/ipc'
 import {
@@ -20,7 +20,7 @@ import {
   releasePath,
   writeComposition
 } from './html/compositions'
-import { agentProviders, disposeAgent, exportTranscript, sendToAgent, startAgent, stopAgent } from './agent/host'
+import { agentProviders, configureAgent, disposeAgent, exportTranscript, sendToAgent, startAgent, stopAgent } from './agent/host'
 import { mediaToolsReady } from './ffmpeg/ffmpeg'
 import { collectMetrics } from './metrics'
 import { probe } from './ffmpeg/probe'
@@ -37,16 +37,19 @@ import {
 import { homedir } from 'node:os'
 import { waveform } from './media/waveform'
 import { detectBeats } from './media/beats'
+import { audioLevels, detectSilences, measureLoudness } from './media/audio-analysis'
 import { detectSceneCuts } from './media/scene-cuts'
 import { sizesOf } from './media/caption-file'
 import { locate, openCaptions, readCaptions, saveCaptions } from './media/files'
 import { forgetPath, importDialog, importPaths } from './media/import'
 import { freezeFrame } from './media/freeze-frame'
+import { ensureSubjectMatte, subjectMattes } from './matte/host'
 import { importFromUrl } from './media/url-import'
 import { isAllowed } from './protocol'
 import { vision } from './vision/host'
 import { checkSearchRequest, checkVisionAssets } from './vision/requests'
-import { downloadsDir } from './paths'
+import { downloadsDir, stylesDir } from './paths'
+import { listUserStyles, writeUserStyle } from './styles/store'
 import * as store from './project/store'
 import * as encode from './export/encode'
 import { mcpStatus, setExecutorReady, setMcpClients, settleToolCall } from './mcp/server'
@@ -70,7 +73,7 @@ import {
 } from './generate/service'
 
 /** Channels pushed *to* the renderer. They carry no handler, so the table excludes them. */
-type PushChannel = 'exportProgress' | 'appMenuCommand' | 'mcpToolCall' | 'agentEvent' | 'whisperProgress' | 'visionChanged' | 'accessChanged' | 'updateChanged'
+type PushChannel = 'exportProgress' | 'appMenuCommand' | 'mcpToolCall' | 'mcpToolCancel' | 'agentEvent' | 'whisperProgress' | 'visionChanged' | 'accessChanged' | 'updateChanged'
 type InvokeChannel = Exclude<keyof typeof IPC, PushChannel | 'mcpToolResult' | 'mcpExecutorReady'>
 
 interface ChannelApi {
@@ -107,6 +110,9 @@ interface ChannelApi {
   mediaWaveform: BayApi['media']['waveform']
   mediaBeats: BayApi['media']['beats']
   mediaCuts: BayApi['media']['cuts']
+  mediaLevels: BayApi['media']['levels']
+  mediaSilences: BayApi['media']['silences']
+  mediaLoudness: BayApi['media']['loudness']
   mediaReveal: BayApi['media']['revealInFolder']
   mediaStat: BayApi['media']['stat']
   mediaLocate: BayApi['media']['locate']
@@ -114,6 +120,8 @@ interface ChannelApi {
   mediaReadCaptions: BayApi['media']['readCaptions']
   mediaSaveCaptions: BayApi['media']['saveCaptions']
   mediaFreezeFrame: BayApi['media']['freezeFrame']
+  mediaSubjectMatte: BayApi['media']['subjectMatte']
+  mediaSubjectMatteIndex: BayApi['media']['subjectMatteIndex']
 
   projectInitial: BayApi['project']['initial']
   projectSave: BayApi['project']['save']
@@ -143,6 +151,9 @@ interface ChannelApi {
   generationDubs: BayApi['generation']['dubs']
   generationSaveDub: BayApi['generation']['saveDub']
 
+  stylesList: BayApi['styles']['list']
+  stylesWrite: BayApi['styles']['write']
+
   compositionInspect: BayApi['composition']['inspect']
   compositionWrite: BayApi['composition']['write']
   compositionWriteTemplate: BayApi['composition']['writeTemplate']
@@ -152,6 +163,7 @@ interface ChannelApi {
   compositionRelease: BayApi['composition']['release']
 
   agentStart: BayApi['agent']['start']
+  agentConfigure: BayApi['agent']['configure']
   agentProviders: BayApi['agent']['providers']
   agentSend: BayApi['agent']['send']
   agentStop: BayApi['agent']['stop']
@@ -202,8 +214,28 @@ function windowOf(event: IpcMainInvokeEvent): BrowserWindow | null {
   return BrowserWindow.fromWebContents(event.sender)
 }
 
+/** A span from the renderer, with anything non-numeric read as "from the start, to the end". */
+function checkSpan(span: unknown): AudioSpan {
+  const given = (span ?? {}) as Partial<Record<keyof AudioSpan, unknown>>
+  return { startUs: finiteOr(given.startUs, 0), durationUs: finiteOr(given.durationUs, 0) }
+}
+
+function finiteOr(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback
+}
+
+/** An audio measurement's value, or its failure in ffmpeg's words — never a rejection across IPC. */
+async function audioResult<T>(work: () => Promise<T>): Promise<AudioResult<T>> {
+  try {
+    return { ok: true as const, value: await work() }
+  } catch (error) {
+    return { ok: false as const, error: error instanceof Error ? error.message : String(error) }
+  }
+}
+
 const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
   agentStart: async (_event, options) => startAgent(options),
+  agentConfigure: async (_event, tuning) => configureAgent(tuning),
   agentProviders: async () => agentProviders(),
   agentSend: async (_event, text, attachments) => sendToAgent(text, attachments),
   agentStop: async () => stopAgent(),
@@ -222,6 +254,9 @@ const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
   generationRelease: (_event, reservationId) => releaseGeneration(reservationId),
   generationDubs: () => generationDubs(),
   generationSaveDub: (_event, record) => saveGenerationDub(record),
+
+  stylesList: () => listUserStyles(stylesDir()),
+  stylesWrite: (_event, style, options) => writeUserStyle(stylesDir(), style, { replace: options?.replace === true }),
 
   compositionInspect: async (_event, path, includeHtml) => inspectComposition(path, includeHtml),
   compositionWrite: async (_event, path, html) => {
@@ -351,6 +386,11 @@ const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
       return { ok: false as const, error: error instanceof Error ? error.message : String(error) }
     }
   },
+  mediaLevels: (_event, path, span, windowUs) =>
+    audioResult(() => audioLevels(String(path), checkSpan(span), Number(windowUs))),
+  mediaSilences: (_event, path, span, thresholdDb, minSilenceSec) =>
+    audioResult(() => detectSilences(String(path), checkSpan(span), finiteOr(thresholdDb, -30), finiteOr(minSilenceSec, 0.5))),
+  mediaLoudness: (_event, path, span) => audioResult(() => measureLoudness(String(path), checkSpan(span))),
   mediaReveal: async (_event, path) => {
     shell.showItemInFolder(path)
   },
@@ -360,6 +400,8 @@ const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
   mediaReadCaptions: (_event, path) => readCaptions(String(path)),
   mediaSaveCaptions: (event, defaultName, text) => saveCaptions(windowOf(event), String(defaultName), String(text)),
   mediaFreezeFrame: (_event, request) => freezeFrame(request),
+  mediaSubjectMatte: (_event, request) => ensureSubjectMatte(request),
+  mediaSubjectMatteIndex: (_event, key) => subjectMattes().index(key),
 
   projectInitial: () => store.initial(),
   projectSave: (event, project) => store.save(project, windowOf(event)),

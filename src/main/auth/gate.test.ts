@@ -21,7 +21,7 @@ import type { RunTool, ToolOutcome } from '../mcp/protocol'
 
 const LOCKED: AccessStatus[] = [
   { state: 'signed-out' },
-  { state: 'waiting', url: 'https://bay.everholt.com/desktop/sign-in?port=1&state=x', expiresAt: 0 },
+  { state: 'waiting', url: 'https://bay.himanshuat.com/desktop/sign-in?port=1&state=x', expiresAt: 0 },
   { state: 'checking', email: null },
   { state: 'no-access', email: 'a@example.com', reason: 'no-grant' },
   { state: 'locked-offline', email: 'a@example.com', lastVerifiedAt: 0 },

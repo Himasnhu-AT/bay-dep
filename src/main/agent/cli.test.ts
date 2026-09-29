@@ -15,7 +15,7 @@ import { spawn } from 'node:child_process'
 import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { AgentEvent } from '@shared/agent'
+import { parseAgentTuning, TURN_LIMITS, type AgentEvent, type AgentTuning } from '@shared/agent'
 import {
   allowedToolNames,
   BUILT_IN_TOOLS,
@@ -25,7 +25,9 @@ import {
   killTree,
   mcpConfig,
   processTable,
+  TURN_TIMEOUT_FLOOR_MS,
   TURN_TIMEOUT_MS,
+  turnTimeoutFor,
   userContent,
   type ProcessTable
 } from './cli'
@@ -127,6 +129,40 @@ test('the stream is machine-readable in both directions', () => {
 test("bay's own system prompt is the one in force", () => {
   assert.equal(valueAfter('--system-prompt'), OPTIONS.systemPrompt)
   assert.equal(valueAfter('--session-id'), 'session-1')
+})
+
+test('every turn runs at high effort unless Preferences says otherwise, and on the CLI’s own model', () => {
+  // Without `--effort` every turn ran at the CLI's default — too little for a film written as code.
+  assert.equal(valueAfter('--effort'), 'high')
+  assert.equal(args.includes('--model'), false, 'Default model passes nothing')
+})
+
+test('the chosen effort and model reach the CLI', () => {
+  const chosen = cliArgs({ ...OPTIONS, tuning: { effort: 'max', model: 'opus', turnMinutes: 180 } }, 'session-1')
+  assert.equal(chosen[chosen.indexOf('--effort') + 1], 'max')
+  assert.equal(chosen[chosen.indexOf('--model') + 1], 'opus')
+  // Each accepted level is passed as itself — the CLI's own spelling (`claude --help`).
+  for (const effort of ['low', 'medium', 'high', 'xhigh', 'max'] as const) {
+    const each = cliArgs({ ...OPTIONS, tuning: { effort, model: 'default', turnMinutes: 90 } }, 'session-1')
+    assert.equal(each[each.indexOf('--effort') + 1], effort)
+  }
+})
+
+test('a stored value that is not a choice falls back to the default rather than reaching argv', () => {
+  // As a stale localStorage value or a hand-crafted IPC payload would arrive.
+  const bogus = { effort: 'ultra', model: '--dangerously-skip-permissions', turnMinutes: 5 } as unknown as AgentTuning
+  const parsed = cliArgs({ ...OPTIONS, tuning: bogus }, 'session-1')
+  assert.equal(parsed[parsed.indexOf('--effort') + 1], 'high')
+  assert.equal(parsed.includes('--model'), false)
+  assert.equal(parsed.includes('--dangerously-skip-permissions'), false)
+  assert.equal(parsed.includes('ultra'), false)
+  assert.deepEqual(parseAgentTuning(bogus), { effort: 'high', model: 'default', turnMinutes: 90 })
+  // Positive control: the same parser keeps a real choice, in either stored form.
+  assert.deepEqual(parseAgentTuning({ effort: 'low', model: 'sonnet', turnMinutes: '40' }), {
+    effort: 'low',
+    model: 'sonnet',
+    turnMinutes: 40
+  })
 })
 
 test('the config is valid JSON on one line, because it is an argv entry', () => {
@@ -301,6 +337,54 @@ test('a turn outlasts the slowest tool call, with room for the model around it',
   const slowest = Math.max(...TOOLS.map((tool) => tool.timeoutMs ?? 0))
   assert.ok(slowest > 10 * 60 * 1000, 'specimen: some tool is allowed longer than the old 10-minute turn')
   assert.ok(TURN_TIMEOUT_MS >= slowest + 5 * 60 * 1000, `turn ${TURN_TIMEOUT_MS} ms vs tool ${slowest} ms`)
+  // And every "Longest agent turn" choice does too — the floor is not the default's alone.
+  for (const minutes of TURN_LIMITS) {
+    assert.ok(turnTimeoutFor(minutes) >= slowest + 5 * 60 * 1000, `${minutes} min vs tool ${slowest} ms`)
+  }
+})
+
+test('"Longest agent turn" sets the timeout, defaults to 90 minutes, and never undercuts the floor', () => {
+  assert.equal(TURN_TIMEOUT_MS, 90 * 60_000)
+  assert.equal(turnTimeoutFor(180), 180 * 60_000)
+  assert.equal(turnTimeoutFor('180'), 180 * 60_000, 'as localStorage holds it')
+  assert.equal(turnTimeoutFor(7), 90 * 60_000, 'not a choice: the default')
+  assert.equal(turnTimeoutFor(undefined), 90 * 60_000)
+  // The floor wins over a shorter choice. With today's catalog no choice is below it, so the
+  // floor is given explicitly — the real floor's own check is the test above.
+  assert.equal(turnTimeoutFor(40, 60 * 60_000), 60 * 60_000)
+  assert.equal(turnTimeoutFor(90, 60 * 60_000), 90 * 60_000, 'positive control: a longer choice stands')
+  assert.ok(TURN_TIMEOUT_FLOOR_MS > 10 * 60_000)
+})
+
+test('a changed effort or model replaces claude at the next message, resuming the session', { timeout: 25_000 }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'bay-cli-rt-'))
+  const { runtime } = fakeRuntime(dir)
+  let pids: FakePids[] = []
+  try {
+    runtime.send('one')
+    await waitFor('the first claude to start', () => pidsIn(dir).length === 1)
+    const [first] = pidsIn(dir) as [FakePids]
+    assert.equal(first.args[first.args.indexOf('--effort') + 1], 'high')
+
+    // Positive control: with nothing changed, the next message goes to the same process.
+    runtime.configure({ effort: 'high', model: 'default', turnMinutes: 180 })
+    runtime.send('two')
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    assert.equal(pidsIn(dir).length, 1, 'an unchanged effort and model keep the process')
+
+    runtime.configure({ effort: 'max', model: 'opus', turnMinutes: 90 })
+    runtime.send('three')
+    await waitFor('a second claude to start', () => pidsIn(dir).length === 2)
+    pids = pidsIn(dir)
+    const second = pids.find((entry) => entry.agent !== first.agent)!
+    assert.equal(second.args[second.args.indexOf('--effort') + 1], 'max')
+    assert.equal(second.args[second.args.indexOf('--model') + 1], 'opus')
+    assert.equal(second.args[second.args.indexOf('--resume') + 1], runtime.id)
+    await waitFor('the old claude to be killed', () => !alive(first.agent), 3000)
+  } finally {
+    runtime.dispose()
+    reap(pids.length > 0 ? pids : pidsIn(dir))
+  }
 })
 
 test('an attached image goes to Claude inline, as base64 content before the text', () => {

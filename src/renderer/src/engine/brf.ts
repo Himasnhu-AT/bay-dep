@@ -26,6 +26,8 @@ import { sourceTimeAt, type Asset, type Item } from '@shared/project'
 import { clampToAsset } from './compositionPool'
 import { variationFaces } from './brfFonts'
 import { importedFonts } from './importedFonts'
+import { glassPatches, type GlassPatch } from './glass'
+import { scene3dRuntime } from './scene3dRuntime'
 
 type Ctx = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D
 
@@ -197,11 +199,18 @@ function paintText(ctx: Ctx, op: TextOp, lineHeightPx: number): void {
   })
 }
 
+type Scene3dOp = Extract<DrawOp, { kind: 'scene3d' }>
+
+/** Renders a 3D layer at a device size, for `paintBrf` to draw: the engine's is `scene3dRuntime`. */
+export type Draw3d = (op: Scene3dOp, width: number, height: number) => { canvas: OffscreenCanvas } | { error: string }
+
 /**
  * Paints `ops` onto `ctx`, with `base` mapping document pixels to the context's pixels.
- * Exported apart from the surfaces so it can be driven with any context.
+ * Exported apart from the surfaces so it can be driven with any context. Returns what could not
+ * be painted — a 3D layer whose render failed — so the caller reports it rather than a gap.
  */
-export function paintBrf(ctx: Ctx, ops: DrawOp[], base: Matrix): void {
+export function paintBrf(ctx: Ctx, ops: DrawOp[], base: Matrix, draw3d?: Draw3d): string[] {
+  const errors: string[] = []
   for (const op of ops) {
     if (op.kind === 'clip') {
       // Left open until the matching `unclip`, so every op between is clipped by it.
@@ -231,7 +240,7 @@ export function paintBrf(ctx: Ctx, ops: DrawOp[], base: Matrix): void {
     }
     // A path has no box to wipe across; it reveals with `draw`. Text wipes inside `paintText`,
     // where its block has been measured.
-    if (op.wipe < 1 && (op.kind === 'rect' || op.kind === 'ellipse')) {
+    if (op.wipe < 1 && (op.kind === 'rect' || op.kind === 'ellipse' || op.kind === 'glass' || op.kind === 'scene3d')) {
       ctx.beginPath()
       ctx.rect(0, 0, op.w * op.wipe, op.h)
       ctx.clip()
@@ -274,9 +283,61 @@ export function paintBrf(ctx: Ctx, ops: DrawOp[], base: Matrix): void {
       case 'text':
         paintText(ctx, op, op.size * op.lineHeight)
         break
+      case 'glass':
+        paintGlassPane(ctx, op, unit)
+        break
+      case 'scene3d': {
+        if (op.w <= 0 || op.h <= 0) break
+        // Rendered at the size it lands on the surface — the transform's scale on each axis —
+        // then drawn into its box, where alpha, blur, shadow and the wipe above apply to it.
+        const out = draw3d ? draw3d(op, op.w * Math.hypot(m[0], m[1]), op.h * Math.hypot(m[2], m[3])) : { error: 'no 3D renderer here' }
+        if ('error' in out) errors.push(out.error)
+        else ctx.drawImage(out.canvas, 0, 0, out.canvas.width, out.canvas.height, 0, 0, op.w, op.h)
+        break
+      }
     }
     ctx.restore()
   }
+  return errors
+}
+
+/**
+ * The pane's own paint, over the backdrop the compositor draws under it (`engine/glass.ts`): the
+ * tint, a sheen falling off from the top, and a rim lit from the upper left — quick-liquid's
+ * default light angle — drawn on the inside of the edge so it never widens the pane. Without the
+ * backdrop (a cropped-away canvas, no OffscreenCanvas) this alone is still a legible tinted pane.
+ */
+function paintGlassPane(ctx: Ctx, op: Extract<DrawOp, { kind: 'glass' }>, unit: number): void {
+  const { w, h } = op
+  const r = Math.max(0, Math.min(op.radius, w / 2, h / 2))
+  const pane = (): void => {
+    ctx.beginPath()
+    if (r > 0) ctx.roundRect(0, 0, w, h, r)
+    else ctx.rect(0, 0, w, h)
+  }
+  pane()
+  ctx.fillStyle = op.look.tint
+  ctx.fill()
+  ctx.shadowColor = 'transparent'
+  const light = Math.max(0, Math.min(1, op.look.edgeHighlight))
+  if (light <= 0) return
+  const sheen = ctx.createLinearGradient(0, 0, 0, h)
+  sheen.addColorStop(0, `rgba(255,255,255,${(0.14 * light).toFixed(3)})`)
+  sheen.addColorStop(0.45, 'rgba(255,255,255,0)')
+  ctx.fillStyle = sheen
+  ctx.fill()
+  // Clipped to the pane and stroked at twice the width, so only the inner half shows.
+  ctx.save()
+  ctx.clip()
+  const rim = ctx.createLinearGradient(0, 0, w, h)
+  rim.addColorStop(0, `rgba(255,255,255,${(0.8 * light).toFixed(3)})`)
+  rim.addColorStop(0.5, `rgba(255,255,255,${(0.12 * light).toFixed(3)})`)
+  rim.addColorStop(1, `rgba(255,255,255,${(0.4 * light).toFixed(3)})`)
+  ctx.strokeStyle = rim
+  ctx.lineWidth = (2 * 1.5) / unit
+  pane()
+  ctx.stroke()
+  ctx.restore()
 }
 
 /**
@@ -365,7 +426,7 @@ export class BrfSurfaces {
     box: { width: number; height: number },
     px: { width: number; height: number },
     values: BrfValues
-  ): { surface: OffscreenCanvas } | { pending: true } | { error: string } {
+  ): { surface: OffscreenCanvas; glass: GlassPatch[] } | { pending: true } | { error: string } {
     const width = Math.max(1, Math.round(px.width))
     const height = Math.max(1, Math.round(px.height))
     const where = placement(doc, box, { width, height })
@@ -382,6 +443,14 @@ export class BrfSurfaces {
       if ('pending' in face) return { pending: true }
       if ('error' in face) return { error: face.error }
       op.font = face.font
+    }
+    // A 3D layer waits for its renderer and fonts the same way, and one that cannot be drawn at
+    // all (a font it cannot read, a glyph it lacks) is the item's error — never a gap in the picture.
+    for (const op of ops) {
+      if (op.kind !== 'scene3d') continue
+      const ready = scene3dRuntime.prepare(op.scene)
+      if ('pending' in ready) return { pending: true }
+      if ('error' in ready) return { error: ready.error }
     }
 
     let surface = this.#surfaces.get(item.id)
@@ -402,8 +471,11 @@ export class BrfSurfaces {
       ctx.fillRect(0, 0, where.width, where.height)
       ctx.restore()
     }
-    paintBrf(ctx, ops, where.base)
-    return { surface }
+    const failed = paintBrf(ctx, ops, where.base, (op, w, h) => scene3dRuntime.render(op.scene, w, h))
+    if (failed.length > 0) return { error: failed.join('; ') }
+    // The panes, in surface pixels, for the compositor's backdrop pass: the surface cannot see
+    // what is under it, so the frost is drawn by whoever can (`engine/glass.ts`).
+    return { surface, glass: glassPatches(ops, where.base, where) }
   }
 
   reset(): void {

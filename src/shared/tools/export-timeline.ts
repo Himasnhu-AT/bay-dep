@@ -1,17 +1,20 @@
 import type { ToolSpec } from './spec'
-import { frames } from './fields'
+import { WAIT_TOOL_TIMEOUT_MS, frames } from './fields'
 
 export const order = 320
 
 export const tool: ToolSpec = {
   name: 'export_timeline',
   description:
-    'Render the timeline to a file. Returns a job id immediately — encoding a long timeline ' +
-    'takes minutes, so poll track_export rather than waiting. Check the result before ' +
+    'Render the timeline to a file, and wait for it: the call returns when the export is done, ' +
+    'failed or cancelled (up to 30 minutes), with the final result — stage, outputPath, ' +
+    '`complete`, `incompleteFrames`, `findings`, `deliveredLoudness`. There is nothing to check ' +
+    'on afterwards. wait: false returns the jobId at once instead. Check the result before ' +
     'telling the user it is done: an export can finish with no frames if the timeline is ' +
     'empty over the range you asked for.',
   category: 'submit',
   readOnly: false,
+  timeoutMs: WAIT_TOOL_TIMEOUT_MS,
   dryRunRefusal:
     'export_timeline starts an encode that writes a file, which a dry run cannot take ' +
     'back. Check the range with preview_frame at its first and last frames instead.',
@@ -20,6 +23,12 @@ export const tool: ToolSpec = {
     properties: {
       outputPath: { type: 'string', description: 'Absolute path, with extension.' },
       format: { type: 'string', enum: ['mp4', 'mov', 'webm', 'wav', 'mp3'] },
+      wait: {
+        type: 'boolean',
+        description:
+          'Default true: wait until the export finishes and return its final result. false returns ' +
+          'the jobId at once, for a caller that has other work to do meanwhile.'
+      },
       fromFrame: frames('First frame. Defaults to 0.'),
       toFrame: frames('Last frame, inclusive. Defaults to the end of the timeline.'),
       quality: {
@@ -33,10 +42,13 @@ export const tool: ToolSpec = {
       loudness: {
         description:
           'Master the audio to a loudness target, verified on the encoded file: a preset ' +
-          '("streaming" −14 LUFS / −1 dBTP, "podcast" −16 / −1, "broadcast" −23 / −1), "off", ' +
-          'or { integratedLufs, truePeakDb }. Off by default, so the file plays at the level ' +
-          'the preview did. Linear gain plus a true-peak limiter, never a compressor; ' +
-          'track_export reports what the delivered file measures.'
+          '("streaming" −14 LUFS / −1 dBTP, "podcast" −16 / −1, "broadcast" −23 / −1), ' +
+          'or { integratedLufs, truePeakDb }. A mastered export is remembered on the timeline: ' +
+          'leave loudness out and the next export uses the same target (the result says ' +
+          '"remembered from the last export"). "off" exports unmastered and forgets it. With ' +
+          'nothing remembered, omitted means unmastered — the level the preview played. Linear ' +
+          'gain plus a true-peak limiter, never a compressor. track_export reports the delivered ' +
+          "file's loudness either way, and warns when an unmastered file is below −20 or above −9 LUFS."
       }
     },
     required: ['outputPath', 'format']

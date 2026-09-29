@@ -233,7 +233,7 @@ export function SectionReset({ show, label, onReset }: SectionResetProps): React
 }
 
 export interface FieldProps {
-  label: string
+  label: ReactNode
   children: ReactNode
   /** Right-hand readout, e.g. the numeric value beside a slider. */
   hint?: ReactNode

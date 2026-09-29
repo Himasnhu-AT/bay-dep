@@ -158,7 +158,10 @@ beforeEach(() => {
   seed()
 })
 
-const call = (tool: string, args: Record<string, unknown>) => executeToolCall({ id: tool, tool, args })
+// Each track_dub here is one look (`waitSeconds: 0`), so a case can step the jobs between looks;
+// the waiting itself is `wait.test.ts`'s.
+const call = (tool: string, args: Record<string, unknown>) =>
+  executeToolCall({ id: tool, tool, args: tool === 'track_dub' && args.dubId !== undefined ? { waitSeconds: 0, ...args } : args })
 const value = (result: Awaited<ReturnType<typeof call>>): Record<string, unknown> => {
   assert.ok(result.ok, result.ok ? '' : result.error)
   return result.value as Record<string, unknown>

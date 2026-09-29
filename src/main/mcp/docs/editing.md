@@ -301,8 +301,10 @@ LUT → halation → vignette → grain. Fields merge; `null` removes the grade 
 
 bay renders HyperFrames compositions as clips. Write an HTML file whose root carries
 `data-composition-id`, `data-duration` in seconds, and an explicit pixel size, and which registers
-one **paused** GSAP timeline at `window.__timelines["<that id>"]`. bay seeks that timeline and
-photographs the result, so the picture must be a function of time and nothing else.
+one timeline at `window.__timelines["<that id>"]`: an object with `time(seconds)` and
+`duration()`, written in plain JavaScript — bay ships no animation library and loads nothing from
+the network. bay calls `time(t)` and photographs the result, so the picture must be a function of
+time and nothing else.
 
 Read the composition resources beside this one before writing one, and check what you wrote with
 `read_composition` before placing it — it lists every fault, including the ones that still
@@ -311,7 +313,8 @@ collected there, but three are worth repeating here because each renders as a *w
 rather than an error:
 
 - **Nothing may reach the network.** bay blocks remote origins with no message on the page, so a
-  CDN script tag renders as a still frame and a remote font silently substitutes. Vendor
+  CDN script tag (GSAP from jsDelivr, say) never runs — `write_composition` refuses one — and a
+  remote font silently substitutes. Vendor
   everything next to the composition and reference it by relative path.
 - **The root must have an explicit width and height in pixels**, or it collapses and you get an
   empty frame.
@@ -322,8 +325,10 @@ as they do on video.
 
 ## Exporting
 
-`export_timeline` renders the timeline to a file and returns a job id at once; poll
-`track_export` on a sensible interval until it reports the output path. Check that result before
+`export_timeline` renders the timeline to a file and returns when the export has finished (up to
+30 minutes), with the final result: stage, output path, `complete`, `findings` and the delivered
+loudness. `wait: false` returns the job id at once instead; `track_export { jobId }` then waits
+for the same result. Check that result before
 telling the user it is done. `complete: false` means some frames of the file are wrong: written
 before a graphic on them (a `.brf`, a composition) had rendered, or with a clip whose grade could
 not be applied. The `warning` names the frames and what is wrong on them, and

@@ -3,12 +3,13 @@
  *
  * The feed is a generic-provider URL: a folder served over https that holds `latest-mac.yml`
  * and the zip it names. `script/release-signed` writes both. The shipped URL is
- * `UPDATE_FEED` in `@shared/update-feed`, and it is unset until there is somewhere to publish.
- * Then the app checks nothing, contacts nothing, and Settings says "Updates: releasing soon".
+ * `UPDATE_FEED` in `@shared/update-feed`: the latest release of a public GitHub repo. Unset,
+ * the app checks nothing, contacts nothing, and Settings says "Updates: releasing soon".
  *
  * `updater.ts` enforces `allowUpdateRequest` on electron-updater's own session
  * (`session.fromPartition('electron-updater')`), which carries every request the updater makes,
- * redirects included. The only host it allows is the feed's own origin. The editor's session
+ * redirects included. The only host it allows is the feed's own origin, plus GitHub's asset
+ * hosts when the feed is a GitHub release (`GITHUB_ASSET_HOSTS`). The editor's session
  * is untouched and stays offline (`offline.ts`).
  */
 
@@ -68,8 +69,35 @@ export function updaterMode(isPackaged: boolean, env: Record<string, string | un
   return { kind: 'feed', url: feed.url, canInstall: true, local: false }
 }
 
-/** Whether the updater's session may make this request: the feed's own origin, nothing else. */
-export function allowUpdateRequest(url: string, feed: string): { ok: true } | { ok: false; reason: string } {
+/**
+ * Where a GitHub Releases feed hands its files off to. Measured 2026-09-28 with `curl -sIL`
+ * against two public repos' `releases/latest/download/<asset>` (cli/cli, electron/electron):
+ * github.com answers 302 to `github.com/<owner>/<repo>/releases/download/<tag>/<asset>` (the feed's
+ * own origin), which answers 302 to a signed URL on `release-assets.githubusercontent.com`, which
+ * answers 200. `objects.githubusercontent.com` is where the same redirect pointed before; it is
+ * kept so a rollback on GitHub's side does not switch updates off. Exact hosts, https, GET only,
+ * and only when the feed itself is on https://github.com — for any other feed they are refused
+ * like any other host.
+ */
+const GITHUB_FEED_ORIGIN = 'https://github.com'
+const GITHUB_ASSET_HOSTS: ReadonlySet<string> = new Set(['release-assets.githubusercontent.com', 'objects.githubusercontent.com'])
+
+/**
+ * On github.com the origin is everyone's, so a GitHub feed's own-origin hops must also stay inside
+ * the feed's repo releases: `/<owner>/<repo>/releases/`, read from the feed URL itself (both hops
+ * measured above are under it). Null when the feed names no repo, and then no github.com hop passes.
+ */
+function githubReleasesPrefix(feed: URL): string | null {
+  const [, owner, repo] = feed.pathname.split('/')
+  return owner && repo ? `/${owner}/${repo}/releases/` : null
+}
+
+/**
+ * Whether the updater's session may make this request: the feed's own origin (on github.com, only
+ * inside the feed repo's releases), and — for a feed on GitHub Releases only — a GET to one of
+ * GitHub's asset hosts (`GITHUB_ASSET_HOSTS`). Nothing else.
+ */
+export function allowUpdateRequest(url: string, feed: string, method = 'GET'): { ok: true } | { ok: false; reason: string } {
   let parsed: URL
   try {
     parsed = new URL(url)
@@ -77,7 +105,22 @@ export function allowUpdateRequest(url: string, feed: string): { ok: true } | { 
     return { ok: false, reason: 'bay refused an update request to a malformed URL.' }
   }
   const allowed = new URL(feed)
-  if (parsed.origin === allowed.origin) return { ok: true }
+  if (parsed.origin === allowed.origin) {
+    if (allowed.origin !== GITHUB_FEED_ORIGIN) return { ok: true }
+    // `URL` has already resolved `..` and `%2e%2e` segments, so the prefix is judged on the real path.
+    const prefix = githubReleasesPrefix(allowed)
+    if (prefix && parsed.pathname.startsWith(prefix)) return { ok: true }
+    return { ok: false, reason: `bay refused to contact ${parsed.host}${parsed.pathname} for an update: on github.com updates come only from ${prefix ?? 'the feed repo'}.` }
+  }
+  if (
+    allowed.origin === GITHUB_FEED_ORIGIN &&
+    parsed.protocol === 'https:' &&
+    parsed.port === '' &&
+    GITHUB_ASSET_HOSTS.has(parsed.hostname) &&
+    method.toUpperCase() === 'GET'
+  ) {
+    return { ok: true }
+  }
   return { ok: false, reason: `bay refused to contact ${parsed.host || url} for an update: updates come only from ${allowed.host}.` }
 }
 

@@ -13,7 +13,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { AGENT_SYSTEM_PROMPT, GUIDE_ROUTES, SKILLS_SECTION } from './prompt'
+import { AGENT_SYSTEM_PROMPT, GUIDE_ROUTES, SKILLS_SECTION, skillsSection } from './prompt'
 import { BAY_SKILLS } from '@shared/skills'
 import { findResource } from '@shared/resources'
 import { TOOLS } from '@shared/mcp'
@@ -125,6 +125,17 @@ test('the skills paragraph is one block, in the prompt once', () => {
   assert.equal(AGENT_SYSTEM_PROMPT.split(SKILLS_SECTION).length, 2)
   assert.equal(AGENT_SYSTEM_PROMPT.match(/Skill\s+tool/g)?.length, 1)
   for (const skill of BAY_SKILLS) assert.ok(SKILLS_SECTION.includes(`\`${skill.slug}\``), skill.slug)
+})
+
+test('the Claude agent loads the skills a task needs; Codex, which cannot, asks for them', () => {
+  // A skill that only loads when the user types its name is a skill most users never get: the
+  // launch-film brief that needed it named /motion-graphics instead. Written from that miss.
+  assert.match(SKILLS_SECTION, /whenever the task matches its description/)
+  assert.match(SKILLS_SECTION, /does not have to name it/)
+  for (const skill of BAY_SKILLS) assert.ok(SKILLS_SECTION.includes(skill.description), `${skill.slug} description`)
+  const codex = skillsSection('codex')
+  assert.doesNotMatch(codex, /whenever the task matches its description/)
+  assert.match(codex, /cannot load a skill/)
 })
 
 test('the prompt keeps its standing sections', () => {

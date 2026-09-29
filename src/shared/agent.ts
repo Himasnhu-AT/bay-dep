@@ -39,6 +39,66 @@ export type AgentProvider = 'claude' | 'codex'
 
 export const AGENT_PROVIDERS: readonly AgentProvider[] = ['claude', 'codex']
 
+/**
+ * How hard Claude thinks per turn — `claude --effort <level>` and the Agent SDK's `effort`.
+ * The values are the CLI's own (claude 2.1.283 `--help`: "low, medium, high, xhigh, max").
+ * Codex has no equivalent here; it runs at its own default.
+ */
+export type AgentEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+export const AGENT_EFFORTS: readonly AgentEffort[] = ['low', 'medium', 'high', 'xhigh', 'max']
+/** High, not the CLI's own default: bay's work is long creative turns (a film written as code). */
+export const DEFAULT_AGENT_EFFORT: AgentEffort = 'high'
+
+/**
+ * Which Claude model, by the CLI's alias (`--model`, "an alias for the latest model"). `default`
+ * passes nothing, so the CLI's own choice — and the user's plan — decides.
+ */
+export type ClaudeModelChoice = 'default' | 'fable' | 'opus' | 'sonnet'
+export const CLAUDE_MODEL_CHOICES: readonly ClaudeModelChoice[] = ['default', 'fable', 'opus', 'sonnet']
+
+/** "Longest agent turn", in minutes. Never shorter than the slowest tool's budget — see `cli.ts`. */
+export type TurnLimitMinutes = 40 | 90 | 180
+export const TURN_LIMITS: readonly TurnLimitMinutes[] = [40, 90, 180]
+export const DEFAULT_TURN_LIMIT: TurnLimitMinutes = 90
+
+/** Preferences › Agent's knobs on a turn, as main receives them. Applied from the next turn. */
+export interface AgentTuning {
+  effort: AgentEffort
+  model: ClaudeModelChoice
+  turnMinutes: TurnLimitMinutes
+}
+
+export const DEFAULT_AGENT_TUNING: AgentTuning = {
+  effort: DEFAULT_AGENT_EFFORT,
+  model: 'default',
+  turnMinutes: DEFAULT_TURN_LIMIT
+}
+
+/** A remembered or received value, or the default: anything else would be an argv entry. */
+export function parseAgentEffort(value: unknown): AgentEffort {
+  return AGENT_EFFORTS.find((effort) => effort === value) ?? DEFAULT_AGENT_EFFORT
+}
+
+export function parseClaudeModel(value: unknown): ClaudeModelChoice {
+  return CLAUDE_MODEL_CHOICES.find((model) => model === value) ?? 'default'
+}
+
+/** Accepts the number or its string form (localStorage holds strings). */
+export function parseTurnLimit(value: unknown): TurnLimitMinutes {
+  const minutes = typeof value === 'string' ? Number(value) : value
+  return TURN_LIMITS.find((limit) => limit === minutes) ?? DEFAULT_TURN_LIMIT
+}
+
+/** Whatever crossed IPC, as a tuning main can use: each field checked, each fallback its default. */
+export function parseAgentTuning(value: unknown): AgentTuning {
+  const record = typeof value === 'object' && value !== null ? (value as Record<string, unknown>) : {}
+  return {
+    effort: parseAgentEffort(record['effort']),
+    model: parseClaudeModel(record['model']),
+    turnMinutes: parseTurnLimit(record['turnMinutes'])
+  }
+}
+
 /** Whether a provider's CLI was found on this machine — what Preferences › Agent shows. */
 export interface AgentProviderStatus {
   provider: AgentProvider
@@ -284,6 +344,14 @@ export interface ApprovalVerdict {
 }
 
 /**
+ * What a gated write tool does when that is not "changes the project" — so the refusal says what
+ * the call would really do. write_style saves a file outside the project, for later sessions.
+ */
+const OUTSIDE_PROJECT: Record<string, string> = {
+  write_style: 'saves a style file that later conversations will follow (outside the project)'
+}
+
+/**
  * May this call run?
  *
  * Pure, and takes the approval rather than reading it from anywhere, so the whole gate is
@@ -312,7 +380,7 @@ export function checkApproval(
     return {
       allowed: false,
       refusal:
-        `"${toolName}" changes the project, and nothing has been approved in this ` +
+        `"${toolName}" ${OUTSIDE_PROJECT[toolName] ?? 'changes the project'}, and nothing has been approved in this ` +
         `conversation yet. Propose it first: call propose_edit with what you intend and the ` +
         `exact calls it needs, then end your turn and wait for the user to approve. Reading tools ` +
         `(${readableToolNames()}) need no approval — use them to plan.`

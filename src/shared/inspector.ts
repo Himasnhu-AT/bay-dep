@@ -151,6 +151,13 @@ export function formatPan(pan: number | undefined | null): string {
   return `${p < 0 ? 'L' : 'R'} ${percent}`
 }
 
+/** A pan as a screen reader should say it: "Left 30", "Centre", "Right 100" (`formatPan` spelled out). */
+export function spokenPan(pan: number | undefined | null): string {
+  const text = formatPan(pan)
+  if (text === 'C') return 'Centre'
+  return text.replace(/^L /, 'Left ').replace(/^R /, 'Right ')
+}
+
 // ---------------------------------------------------------------------------
 // Editing one key of a property's list
 // ---------------------------------------------------------------------------

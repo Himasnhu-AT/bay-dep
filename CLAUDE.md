@@ -122,7 +122,7 @@ something saves, and nothing a probe does should.
   `--strict-mcp-config` isolates the agent to bay's tools.
 - An allow-list governs what needs approval, not what exists: with one alone, `Bash` ran `id`.
 - `--tools ListMcpResourcesTool,ReadMcpResourceTool,Skill` makes every other built-in *absent* —
-  the session's tool list is bay's catalog (56 tools as of this writing — `src/shared/tools/index.ts` is the count) plus those three, and a request to run `id` had nothing to
+  the session's tool list is bay's catalog (59 tools as of this writing — `src/shared/tools/index.ts` is the count) plus those three, and a request to run `id` had nothing to
   run it with. MCP tools are not built-ins, so bay's are unaffected. `--allowedTools` narrows
   `Skill` to `Skill(<slug>)` for bay's own skills, never the bare name, which would permit every
   bundled skill (`cli.test.ts` pins both).
@@ -211,8 +211,10 @@ CLI loads them with `--setting-sources project` from that directory (nothing els
 the user's own skills stay out; their CLAUDE.md files stay out by the switch above). The CLI
 itself expands only a `/skill` at the very start of a message, so the agent has the `Skill` tool:
 a `/name` anywhere in the message, several at once, is loaded by the model, and the system prompt
-(`src/main/agent/prompt.ts`) tells it to load only bay's skills the user named. Skills are still
-user-invoked.
+(`src/main/agent/prompt.ts`) lists every bay skill with its description and tells it to load the
+ones the task matches, not only the ones the user names. A skill's description is therefore how the
+agent decides to use it. Codex cannot load skills itself, so it gets only the ones named and says
+which it would have wanted.
 
 **The in-app agent reaches files only through `src/main/mcp/policy.ts`.** It has no filesystem
 tools, so a path argument is its only way to a file, and text it reads (a transcript, an asset
@@ -387,6 +389,25 @@ screened in RGB: in YUV it casts violet. A render target created while its textu
 for reading is a WebGL feedback loop — the first halation draw of every new size failed until
 `target()` unbound it; `test/app/grade.mjs` caught it as an export/preview mismatch.
 
+**Text behind the subject is a subject matte, a linked cut-out and one shared element**
+(`@shared/matte`, `@shared/behind-subject`, `main/matte/`, `engine/subjectMatte.ts`,
+`engine/subjectMask.ts`, `put_behind_subject`). Apple Vision person segmentation runs in one
+long-lived `osascript -l JavaScript` process (no addon, no new binary; killed on quit and after two
+idle minutes), fed RGBA frames by bay's ffmpeg: measured ~9 ms/frame inside Vision at `.balanced`,
+~11–15 ms/frame of wall time for the whole job. Its mask is 4:3 whatever the frame is, stored as it
+comes and stretched over the source rect at draw time. Packs (`<cache>/mattes-<scheme>/<key>.bmat`,
+keyed by content + source range + engine) hold raw-deflated 8-bit alpha per frame after OFD
+smoothing and near-lossless quantisation: ~12–15 MB per minute of footage, against ~160 MB/min for
+the 1080p PNGs the research first sized. `item.masks` is applied in `#drawSource` after the grade;
+a matte frame not decoded yet is *pending*, a missing one a named placeholder, never an unmasked
+draw. The cut-out is silent (`audioDetached`) and `elementSlots` gives a silent drawing of the same
+moment of the same file the same element — two elements drift up to ~160 ms apart in playback —
+so preroll and `awaitSources` share it too. The cut-out draws with its clip's layout, crop, keys, fades,
+grade and adjustments, read at draw time (`cutoutPartner`/`cutoutAsDrawn`), so a punch-in on the clip
+moves the cut-out; picture edits aimed at the cut-out go to the clip (store) or are refused naming it
+(`edit_item`). `test/app/mask.mjs` needs `MASK_CLIP` (a clip with a
+person; the repo has none). MODNet is a documented seam (`MatteEngine`), not built.
+
 **An export that wrote a wrong frame says so; it never finishes as a plain `done`.** The exporter
 waits for pending items for a bounded time and then writes the frame anyway. That frame is a wrong
 picture: a `.brf` or composition still missing, or a clip whose grade failed and was drawn
@@ -523,6 +544,17 @@ when a restart is safe (`restartPlan`/`runRestart` in `@shared/update`): it save
 writes the autosave sidecar while locked, and installs only if that succeeded. The update
 channels are open while locked (`OPEN_WHILE_LOCKED`), because an update is how a build that
 cannot sign in gets fixed.
+
+**No downgrades, judged by the bundle, not the feed** (`main/update/bundle-version.ts`). Squirrel
+installs any bay signed by the same Developer ID, older ones included, and `allowDowngrade` reads
+only `latest-mac.yml`'s `version:`. So bay reads `CFBundleShortVersionString` from the downloaded
+zip (the file electron-updater's proxy hands Squirrel) when the download finishes and again right
+before `quitAndInstall`, and anything not strictly newer is the `refused` status, shown in the
+banner and Preferences › About. That needs `autoInstallOnAppQuit = false`: with it on,
+electron-updater gives Squirrel the zip the moment it lands and Squirrel installs it at any quit,
+with no hook between. An update therefore installs only from Restart to update. The unit tests
+cover the verdict and the zip reading; the wiring in `updater.ts` imports Electron and is
+typecheck-only.
 
 **A grant comes from the owner or a referral.** The owner approves a waitlist entry or grants an
 email directly on the website's `/admin`; an entitled user refers one from inside bay
@@ -1037,7 +1069,11 @@ projects — indexing an array yields `T | undefined` and you must handle it.
   model runs on onnxruntime-node in a utility process (`vision/worker.js`, nice 10). The third is **updates**
   (`src/main/update/`): electron-updater's own session (`electron-updater` partition, never the
   editor's) may reach only the origin of the feed in `@shared/update-feed`, enforced in
-  `onBeforeRequest` by `allowUpdateRequest`, redirects included. The feed is **unset**, so a
+  `onBeforeRequest` by `allowUpdateRequest`, redirects included. The feed is the latest release
+  of the public repo `Himasnhu-AT/Himasnhu-AT` (release assets only, never this repo's source),
+  so it may also follow a GET over https to exactly `release-assets.githubusercontent.com` or
+  `objects.githubusercontent.com` — GitHub's asset redirect, measured with `curl -sIL` — and only
+  because the feed's origin is `https://github.com` (`GITHUB_ASSET_HOSTS`). Set to null, a
   shipped bay contacts nothing and Preferences › About says "Updates: releasing soon".
   `BAY_UPDATE_FEED` points it at a loopback feed for testing, and nothing else. The fourth is
   **AI generation** (`src/main/generate/`, `@shared/generation`, `@shared/speech`, `generate_image`/

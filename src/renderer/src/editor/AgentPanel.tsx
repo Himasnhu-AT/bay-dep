@@ -41,6 +41,7 @@ import { AGENT_STARTERS, STARTERS_SHOWN, type AgentStarter } from './agentStarte
 import { GeneratePanel } from './ai/GeneratePanel'
 import { bay } from '@/lib/bay'
 import { PROVIDER_LABELS, useAgentProvider } from '@/lib/agentProvider'
+import { currentAgentTuning } from '@/lib/agentTuning'
 import { revertImpact, selectFps, useEditor } from '@/store/editor'
 import { composeMessage, pinLabel, type Pin } from '@shared/pins'
 import { insertSkill, skillSegments } from '@shared/skills'
@@ -48,6 +49,7 @@ import { estimateToolCallUsd } from '@shared/generation'
 import { estimateSpeechToolCallUsd } from '@shared/speech'
 import { toolPreview } from '@shared/tool-preview'
 import { Composer } from './Composer'
+import { ReadStyleTile, StyleSearchTiles, refreshUserStyles } from './StyleTiles'
 import { ASSET_DRAG_TYPE } from './AssetTile'
 import { findAsset } from '@shared/project'
 import { isAttachableFile, manyImagesNote, splitDrop, type AgentAttachmentView } from '@shared/agent-attachments'
@@ -83,7 +85,16 @@ import { cn } from '@/lib/cn'
  * it names the ids to use or the range that is occupied — and the whole point of writing that
  * is that somebody reads it.
  */
-export function AgentPanel(): ReactNode {
+export interface AgentPanelProps {
+  /**
+   * One-click starters shown as a row above the composer once a conversation is under way (the
+   * empty conversation already shows them as a grid). The AI layout passes its tool palette here;
+   * the dock passes nothing. A starter fills the composer, it never sends.
+   */
+  palette?: readonly AgentStarter[]
+}
+
+export function AgentPanel({ palette }: AgentPanelProps = {}): ReactNode {
   const log = useEditor((state) => state.agentLog)
   const running = useEditor((state) => state.agentRunning)
   const logUserMessage = useEditor((state) => state.logUserMessage)
@@ -176,7 +187,10 @@ export function AgentPanel(): ReactNode {
   // draft: which clip, whose name, what style are theirs to add, and sending on click would
   // start a paid turn from a single mis-click.
   const pickStarter = (starter: AgentStarter): void => {
-    setDraft(insertSkill(draft, starter.skill))
+    if (starter.draft) {
+      const body = draft.replace(/\s+$/, '')
+      setDraft(body ? `${body} ${starter.draft}` : starter.draft)
+    } else setDraft(insertSkill(draft, starter.skill))
     focusComposer()
   }
 
@@ -244,7 +258,10 @@ export function AgentPanel(): ReactNode {
         // start" rather than as a model that ignored the message.
         start: async () => {
           if (useEditor.getState().agentSessionActive) return { ok: true }
-          const started = await api.agent.start({ provider: useAgentProvider.getState().provider })
+          const started = await api.agent.start({
+            provider: useAgentProvider.getState().provider,
+            tuning: currentAgentTuning()
+          })
           if (started.ok) startAgentSession()
           return started.ok ? { ok: true } : started
         },
@@ -357,11 +374,11 @@ export function AgentPanel(): ReactNode {
       )}
       <ScrollArea className="flex-1">
         {log.length === 0 ? (
-          <Starters onPick={pickStarter} />
+          <Starters onPick={pickStarter} starters={palette} />
         ) : (
           <div className="flex flex-col gap-2 p-2">
             {log.map((entry) => (
-              <Entry key={entry.id} entry={entry} deliver={deliver} />
+              <Entry key={entry.id} entry={entry} deliver={deliver} onDraft={pickQuickAction} />
             ))}
             <ThinkingNow />
             <div ref={bottom} />
@@ -379,6 +396,8 @@ export function AgentPanel(): ReactNode {
       {manyPictures && (
         <p className="border-t border-line px-2 py-1.5 text-[11px] leading-relaxed text-ink-2">{manyPictures}</p>
       )}
+
+      {palette && palette.length > 0 && log.length > 0 && <PaletteRow palette={palette} onPick={pickStarter} />}
 
       <Composer
         running={running}
@@ -549,10 +568,42 @@ function UserEntry({ entry }: { entry: Extract<AgentEntry, { kind: 'user' }> }):
   )
 }
 
-/** The empty conversation: a question and a grid of places to start. */
-function Starters({ onPick }: { onPick: (starter: AgentStarter) => void }): ReactNode {
+/** The tool palette mid-conversation: one scrolling row of starters above the composer. */
+function PaletteRow({ palette, onPick }: { palette: readonly AgentStarter[]; onPick: (starter: AgentStarter) => void }): ReactNode {
+  return (
+    <div role="group" aria-label="Quick actions" className="flex gap-1 overflow-x-auto border-t border-line px-2 py-1.5">
+      {palette.map((starter) => {
+        const Icon = starter.icon
+        return (
+          <button
+            key={starter.id ?? starter.skill}
+            type="button"
+            onClick={() => onPick(starter)}
+            className="t-fast flex shrink-0 items-center gap-1 rounded-full border border-line bg-surface-2 py-0.5 pr-2 pl-1 text-[11px] font-medium text-ink-1 hover:border-line-hover hover:bg-surface-3 hover:text-ink-0"
+          >
+            <Icon aria-hidden="true" className="size-3.5" />
+            {starter.title}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+/**
+ * The empty conversation: a question and a grid of places to start. The AI layout's palette
+ * (footage actions first, then the skills) replaces the fixed list here too — the empty
+ * conversation is where a one-click action is most wanted.
+ */
+function Starters({
+  onPick,
+  starters = AGENT_STARTERS
+}: {
+  onPick: (starter: AgentStarter) => void
+  starters?: readonly AgentStarter[]
+}): ReactNode {
   const [all, setAll] = useState(false)
-  const shown = all ? AGENT_STARTERS : AGENT_STARTERS.slice(0, STARTERS_SHOWN)
+  const shown = all ? starters : starters.slice(0, STARTERS_SHOWN)
   return (
     <div className="@container flex min-h-full flex-col justify-center px-3 py-6">
       <h3 className="mb-3 text-center text-[14px] font-medium text-balance text-ink-0">
@@ -563,7 +614,7 @@ function Starters({ onPick }: { onPick: (starter: AgentStarter) => void }): Reac
           const Icon = starter.icon
           return (
             <button
-              key={starter.skill}
+              key={starter.id ?? starter.skill}
               type="button"
               onClick={() => onPick(starter)}
               className="t-fast flex min-w-0 items-center gap-2 rounded-lg border border-line bg-surface-2 p-1.5 text-left hover:border-line-hover hover:bg-surface-3"
@@ -589,7 +640,7 @@ function Starters({ onPick }: { onPick: (starter: AgentStarter) => void }): Reac
           )
         })}
       </div>
-      {AGENT_STARTERS.length > STARTERS_SHOWN && (
+      {starters.length > STARTERS_SHOWN && (
         <button
           type="button"
           onClick={() => setAll((value) => !value)}
@@ -609,7 +660,7 @@ function Starters({ onPick }: { onPick: (starter: AgentStarter) => void }): Reac
   )
 }
 
-function Entry({ entry, deliver }: { entry: AgentEntry; deliver: Deliver }): ReactNode {
+function Entry({ entry, deliver, onDraft }: { entry: AgentEntry; deliver: Deliver; onDraft: (text: string) => void }): ReactNode {
   switch (entry.kind) {
     case 'user':
       return <UserEntry entry={entry} />
@@ -633,7 +684,7 @@ function Entry({ entry, deliver }: { entry: AgentEntry; deliver: Deliver }): Rea
       // would be the same thing twice. One that was refused keeps its card, because the refusal
       // is what the reader needs.
       if (entry.tool === 'propose_edit' && entry.state === 'done') return null
-      return <ToolCard entry={entry} />
+      return <ToolCard entry={entry} onDraft={onDraft} />
     case 'proposal':
       return <ProposalCard entry={entry} deliver={deliver} />
     case 'changes':
@@ -678,7 +729,7 @@ function ThinkingNow(): ReactNode {
   )
 }
 
-function ToolCard({ entry }: { entry: Extract<AgentEntry, { kind: 'tool' }> }): ReactNode {
+function ToolCard({ entry, onDraft }: { entry: Extract<AgentEntry, { kind: 'tool' }>; onDraft: (text: string) => void }): ReactNode {
   const [open, setOpen] = useState(false)
   const hasArgs = Object.keys(entry.args).length > 0
   // A failed call opens itself. Its text is the recovery instruction, and hiding that behind a
@@ -686,6 +737,11 @@ function ToolCard({ entry }: { entry: Extract<AgentEntry, { kind: 'tool' }> }): 
   const expanded = open || entry.state === 'failed'
   // A paid call says what it costs where the user already looks: on the card, not in its result.
   const costUsd = estimateToolCallUsd(entry.tool, entry.args) ?? estimateSpeechToolCallUsd(entry.tool, entry.args)
+  // A saved style is in the next search's tiles, which list the user's styles once per panel.
+  const savedStyle = entry.tool === 'write_style' && entry.state === 'done'
+  useEffect(() => {
+    if (savedStyle) refreshUserStyles()
+  }, [savedStyle])
 
   return (
     <div className="rounded border border-line bg-surface-2 text-[11px]">
@@ -721,6 +777,9 @@ function ToolCard({ entry }: { entry: Extract<AgentEntry, { kind: 'tool' }> }): 
         )}
       </button>
       {entry.state === 'running' && entry.input && <StreamingInput tool={entry.tool} input={entry.input} />}
+      {/* Styles are looks: shown as tiles the user can see and pick, not only as JSON. */}
+      {entry.state === 'done' && entry.tool === 'search_styles' && <StyleSearchTiles result={entry.result} onUse={onDraft} />}
+      {entry.state === 'done' && entry.tool === 'read_style' && <ReadStyleTile args={entry.args} onUse={onDraft} />}
       {expanded && (
         <div className="border-t border-line px-2 py-1.5">
           {hasArgs && (

@@ -333,6 +333,43 @@
 }
 
 /*
+ * Chrome glass: quick-liquid's `regular` material (MIT, NOTICE; the numbers are `GLASS_PRESETS`
+ * in @shared/glass) as a plain `blur() saturate()` backdrop — no SVG displacement, which costs
+ * more per frame and bends text behind a panel people read. Used on the AI layout's side
+ * drawers only; never on inspector rows, the timeline, fields or meters, which are read
+ * continuously.
+ *
+ * The tint's share is the legibility guard, not a taste: ink-2 text on the glass keeps 4.5:1
+ * against the worst backdrop — a white frame in the dark theme, a black one in the light — in both
+ * themes (`glass-contrast.test.ts` computes it from these tokens). That takes 95% of surface-1.
+ * So the glass is subtle by design: context shows through as colour and blur, never as detail
+ * competing with the text. Popovers do not carry it: on surface-2, ink-2 is already 4.66:1 opaque,
+ * and the guard would need more than 98.5% tint — glass in name only.
+ *
+ * While the timeline plays (`html[data-playing]`, set by `PlayingMark`) glass is solid: a
+ * backdrop-filter over the playing viewer re-filters every composited frame, and that cost was
+ * not measured in the running app.
+ */
+.bay-glass {
+  --glass-tint: var(--color-surface-1);
+  --glass-tint-share: 95%;
+  background-color: color-mix(in srgb, var(--glass-tint) var(--glass-tint-share), transparent);
+  -webkit-backdrop-filter: blur(14px) saturate(1.7);
+  backdrop-filter: blur(14px) saturate(1.7);
+}
+
+/* A glass drawer's own panels let its glass through; fields and controls keep their fills. */
+.bay-glass-panels :where(.bg-surface-1, .bg-chrome, .bg-chrome-raised) {
+  background-color: transparent;
+}
+
+html[data-playing] .bay-glass {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  background-color: var(--glass-tint);
+}
+
+/*
  * A video editor that animates against the user's stated wishes is a video editor they
  * stop trusting. Motion here is decoration on top of instant state changes, so removing
  * it costs nothing.

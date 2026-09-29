@@ -2,12 +2,12 @@ import type { ReactNode } from 'react'
 import { AlertTriangle } from 'lucide-react'
 import type { Item, Project, Timeline } from '@shared/project'
 import { resolveAudioOffsets, MAX_DUCK_DB } from '@shared/audio-gain'
-import { asSentences, audioNoteForPerson, commonValue, dbToGain, formatDb, formatPan, gainToDb, MAX_VOLUME_DB, VOLUME_DB_FLOOR } from '@shared/inspector'
-import { Field, NumberField, Section, SectionReset, Select, SliderField, Switch } from '@/components'
+import { asSentences, audioNoteForPerson, commonValue, dbToGain, formatDb, formatPan, gainToDb, MAX_VOLUME_DB, spokenPan, VOLUME_DB_FLOOR } from '@shared/inspector'
+import { Field, Knob, NumberField, Section, SectionReset, Select, SliderField, Switch, TimecodeField } from '@/components'
 import { useEditor } from '@/store/editor'
 import { editItems } from './inspectorEdit'
 import { Keyed } from './KeyframeControls'
-import { timecodeField } from './timecodeField'
+import { LIVE } from './liveGesture'
 
 /**
  * A clip's sound: level in dB (keyable), pan, the J/L cut, and ducking under another track.
@@ -38,7 +38,6 @@ export function AudioSection({
   const first = items[0]
   if (!first) return null
   const fps = timeline.fps
-  const tc = timecodeField(fps)
   const ids = items.map((item) => item.id)
 
   const pan = commonValue(items.map((item) => (Number.isFinite(item.pan) ? (item.pan as number) : 0)))
@@ -95,18 +94,14 @@ export function AudioSection({
           mixed={volume.mixed}
           format={formatDb}
           onCommit={(next) => onVolume(dbToGain(next))}
+          defaultValue={0}
+          gesture={LIVE}
         />
       </Keyed>
-      {/* Double-click anywhere on the row centres it, as on a mixer's pan knob. Static, not keyed. */}
-      <div
-        className="mt-1.5"
-        onDoubleClick={() => {
-          if (pan.mixed || pan.value !== 0) editItems(ids, () => ({ pan: 0 }))
-        }}
-      >
-        <SliderField
-          label="Pan"
-          ariaLabel="Pan, left to right. Double-click to centre"
+      {/* A knob, as on a mixer's channel strip. Static, not keyed. Double-click to centre. */}
+      <Field label="Pan" className="mt-1.5">
+        <Knob
+          label="Pan, left to right"
           min={-1}
           max={1}
           step={0.01}
@@ -114,9 +109,14 @@ export function AudioSection({
           value={pan.value ?? 0}
           mixed={pan.mixed}
           format={formatPan}
+          valueText={spokenPan}
           onCommit={(next) => editItems(ids, () => ({ pan: next }))}
+          defaultValue={0}
+          gesture={LIVE}
+          size={24}
+          readout="side"
         />
-      </div>
+      </Field>
 
       <h4
         className="mt-3 mb-1.5 text-[11px] font-medium text-ink-1"
@@ -125,24 +125,26 @@ export function AudioSection({
         J/L cut
       </h4>
       <div className="space-y-1.5">
-        <NumberField
+        <TimecodeField
           row
           label="Sound early"
           ariaLabel="J-cut: sound starts before the picture"
           value={lead.value ?? 0}
           mixed={lead.mixed}
           min={0}
-          {...tc}
+          defaultValue={0}
+          fps={fps}
           onCommit={(next) => editItems(ids, () => ({ audioLeadFrames: Math.max(0, Math.round(next)) }))}
         />
-        <NumberField
+        <TimecodeField
           row
           label="Sound late"
           ariaLabel="L-cut: sound runs on after the picture"
           value={trail.value ?? 0}
           mixed={trail.mixed}
           min={0}
-          {...tc}
+          defaultValue={0}
+          fps={fps}
           onCommit={(next) => editItems(ids, () => ({ audioTrailFrames: Math.max(0, Math.round(next)) }))}
         />
       </div>
@@ -204,26 +206,29 @@ export function AudioSection({
             step={0.5}
             precision={1}
             suffix="dB"
+            defaultValue={6}
             onCommit={(next) => editItems(ids, (id) => ({ duck: { keyTrackId: keyOf(items, id, suggested?.id), amountDb: next } }))}
           />
-          <NumberField
+          <TimecodeField
             row
             label="Attack"
             ariaLabel="Duck attack: ramp down before the key starts"
             value={attack.value ?? 0}
             mixed={attack.mixed}
             min={0}
-            {...tc}
+            defaultValue={Math.round(fps * 0.25)}
+            fps={fps}
             onCommit={(next) => editItems(ids, (id) => ({ duck: { keyTrackId: keyOf(items, id, suggested?.id), attackFrames: Math.round(next) } }))}
           />
-          <NumberField
+          <TimecodeField
             row
             label="Release"
             ariaLabel="Duck release: ramp back up after the key ends"
             value={release.value ?? 0}
             mixed={release.mixed}
             min={0}
-            {...tc}
+            defaultValue={Math.round(fps * 0.5)}
+            fps={fps}
             onCommit={(next) => editItems(ids, (id) => ({ duck: { keyTrackId: keyOf(items, id, suggested?.id), releaseFrames: Math.round(next) } }))}
           />
         </div>

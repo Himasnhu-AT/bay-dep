@@ -8,7 +8,7 @@
 import { useState, type ReactNode } from 'react'
 import { PASTE_ATTRIBUTES, type PasteAttribute } from '@shared/clipboard'
 import { allItems, findAsset, findItem, itemEnd, type Item } from '@shared/project'
-import { speedNote } from '@shared/speed'
+import { CLIP_SPEED_RANGE, speedNote } from '@shared/speed'
 import { formatTimecode } from '@shared/timecode'
 import { Button, Checkbox, Modal, NumberField, Popover, type MenuEntry } from '@/components'
 import { runCommand, shortcutOf, type CommandId } from '@/lib/commands'
@@ -209,7 +209,7 @@ function SpeedPopover({ itemId, at, onClose }: { itemId: string; at: { x: number
     const store = useEditor.getState()
     // The same plan `edit_item({ speed })` runs: the clip keeps its footage, so its length
     // changes; a linked sound follows.
-    const plan = store.setClipSpeed(itemId, Math.max(0.1, next), { ripple })
+    const plan = store.setClipSpeed(itemId, Math.max(CLIP_SPEED_RANGE.min, next), { ripple })
     const timeline = selectTimeline(useEditor.getState())
     if (!plan || !timeline) return
     const note = speedNote(store.project, timeline, plan, (frame) => formatTimecode(frame, timeline.fps))
@@ -228,8 +228,9 @@ function SpeedPopover({ itemId, at, onClose }: { itemId: string; at: { x: number
           label="Speed"
           value={item.speed}
           step={0.05}
-          min={0.1}
-          max={16}
+          min={CLIP_SPEED_RANGE.min}
+          max={CLIP_SPEED_RANGE.max}
+          defaultValue={1}
           precision={2}
           suffix="×"
           onCommit={apply}

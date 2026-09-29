@@ -17,6 +17,10 @@
 import type { BrfDocument } from '@shared/brf'
 import type { BrfMeta } from '@shared/brf-code'
 import { variationFaces, variationRequests } from './brfFonts'
+import { importedFonts } from './importedFonts'
+import { resolveText3dFont, scene3dLayers, text3dFontRequests } from './scene3dFonts'
+import { scene3dRuntime, type Scene3dRuntime } from './scene3dRuntime'
+import { resolveScene3d } from '@shared/scene3d'
 
 export type BrfWorkerRequest =
   | { id: number; type: 'load'; source: string; fps: number; width: number; height: number }
@@ -81,6 +85,12 @@ const spawnWorker = (): WorkerLike =>
 
 export class BrfCodeRuntime {
   #spawn: (() => WorkerLike) | null = typeof Worker === 'undefined' ? null : spawnWorker
+  #scene3d: Pick<Scene3dRuntime, 'check'> = scene3dRuntime
+
+  /** Replaces what `verify` asks whether a 3D layer can be drawn. The seam the tests use. */
+  useScene3d(checker: Pick<Scene3dRuntime, 'check'>): void {
+    this.#scene3d = checker
+  }
 
   /** Replaces how workers are started. The seam the tests use to run modules in-process. */
   useWorkers(spawn: () => WorkerLike): void {
@@ -140,6 +150,27 @@ export class BrfCodeRuntime {
         }
         if ('error' in face) return { ok: false, error: `text cannot be drawn: ${face.error}` }
         if ('pending' in face) return { ok: false, error: `text cannot be drawn: font "${want.font}" was still loading after ${(TIMEOUT_MS * 3) / 1000}s` }
+      }
+      // 3D text extrudes outlines, which only the built-in face and imported files have.
+      for (const want of text3dFontRequests(reply.scenes)) {
+        const font = resolveText3dFont(want.font, want.weight, importedFonts.files())
+        if ('error' in font) return { ok: false, error: `3D text cannot be drawn: ${font.error}` }
+      }
+      // And each 3D layer as the renderer will build it: a glyph the font lacks, a font file that
+      // will not read or geometry over budget is refused here, with its frame and field, rather
+      // than exported as a grey card. Geometry is cached, so a text checked once costs nothing more.
+      for (const [index, doc] of reply.scenes.entries()) {
+        for (const { at, layer } of scene3dLayers(doc)) {
+          const scene = resolveScene3d(layer, {
+            color: (value) => value,
+            text: (value) => (value.startsWith('$') ? String(doc.vars?.[value.slice(1)] ?? '') : value)
+          })
+          const problem = await this.#scene3d.check(scene, TIMEOUT_MS * 3)
+          if (problem) {
+            const field = problem.object !== undefined ? `${at}.objects[${problem.object}]` : at
+            return { ok: false, error: `frame ${frames[index] ?? index}, ${field}: ${problem.error}` }
+          }
+        }
       }
     }
     return loaded

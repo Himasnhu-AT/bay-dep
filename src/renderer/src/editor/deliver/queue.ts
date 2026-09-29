@@ -8,6 +8,7 @@
 
 import type { ExportProgress, IncompleteFrames } from '@shared/ipc'
 import { hasBlocking } from '@shared/findings'
+import { unmasteredLevelWarning } from '@shared/loudness'
 
 export interface RenderRecord {
   jobId: string
@@ -105,7 +106,7 @@ export function recordStatus(record: RenderRecord): { tone: RecordTone; label: s
       detail: findings.filter((finding) => finding.severity === 'blocking').map((finding) => finding.message).join(' ')
     }
   }
-  const notes = [progress.loudness?.summary, ...findings.map((finding) => finding.message)].filter(Boolean)
+  const notes = [progress.loudness?.summary, unmasteredLevelWarning(progress), ...findings.map((finding) => finding.message)].filter(Boolean)
   return { tone: 'complete', label: 'Complete', detail: notes.length > 0 ? notes.join(' ') : null }
 }
 

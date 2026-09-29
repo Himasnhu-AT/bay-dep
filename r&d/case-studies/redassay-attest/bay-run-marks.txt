@@ -1,0 +1,23 @@
+10.8	start
+13.8	projects screen
+17.1	new project
+31.6	renamed
+42.2	drop assets
+63.5	typing prompt
+80.3	sent prompt
+98.4	WORKING dur=00:01:00:00 export
+453.5	stopped to rename
+458.8	IDLE dur=00:01:00:00 export
+459.0	sent rename
+478.6	WORKING dur=00:01:00:00 | No text measurement is exposed, so I'm checking whethe
+538.7	WORKING dur=00:01:00:00 | Hook reads cleanly with natural word spacing. Next is
+598.8	WORKING dur=00:01:00:00 | Lockup reads well; the \Attest\ width is a touch narro
+658.9	WORKING dur=00:01:00:00 | Now the closing lockup on a transparent background (so
+778.9	WORKING dur=00:01:00:00 | The swing settles at about 2.55 s into the take, so th
+839.0	WORKING dur=00:01:00:00 | Sound is in (the click file is a hair under 2 frames l
+899.1	WORKING dur=00:01:00:00 | Still exporting: 19% done. The 4K footage renders at r
+959.2	WORKING dur=00:01:00:00 | Export is at 29% and slow through this section. It's p
+1019.3	WORKING dur=00:01:00:00 | Export is at 33% and nearly past the slow why shot. St
+1079.2	IDLE dur=00:01:00:00 | UI in the first few seconds: your storyboard puts two car
+1960.8	playback start
+2140.5	stopped (user took over bay)

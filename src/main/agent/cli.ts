@@ -36,7 +36,7 @@ import { spawn, spawnSync, type ChildProcessWithoutNullStreams } from 'node:chil
 import { randomUUID } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
 import { setPriority } from 'node:os'
-import type { AgentEvent } from '@shared/agent'
+import { DEFAULT_TURN_LIMIT, parseAgentTuning, parseTurnLimit, type AgentEvent, type AgentTuning } from '@shared/agent'
 import { TOOLS } from '@shared/mcp'
 import { BAY_SKILLS } from '@shared/skills'
 import { newStreamState, parseLine, toAgentEvents } from './stream'
@@ -144,8 +144,25 @@ export function childEnv(base: NodeJS.ProcessEnv = process.env): Record<string, 
     if (value !== undefined && key !== 'ELECTRON_RUN_AS_NODE') env[key] = value
   }
   env['CLAUDE_CODE_DISABLE_CLAUDE_MDS'] = '1'
+  // Claude Code's own ceiling on one MCP tool call — "a hard wall-clock limit per call; progress
+  // notifications do not extend it" (the CLI's own help text for the per-server `timeout`, which
+  // overrides this variable). Set, not left to the CLI's default, because `export_timeline` and the
+  // track tools wait up to 30 minutes by design, and a client that gave up first would report a
+  // failure for an export that was still rendering.
+  env['MCP_TOOL_TIMEOUT'] = String(MCP_TOOL_TIMEOUT_MS)
+  // And its *idle* ceiling: a stdio call with "no response or progress" for this long is aborted.
+  // Read out of the bundled CLI (claude-agent-sdk 0.3.280): the stdio default is 1,800,000 ms —
+  // exactly the 30-minute wait, so a wait that ran to its ceiling would lose the race to it.
+  env['CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT'] = String(MCP_TOOL_TIMEOUT_MS)
   return env
 }
+
+/**
+ * The agent's timeout for one bay tool call: the slowest tool's own budget (`timeoutMs`, which is
+ * what main waits in `server.ts`) plus a minute, so main's answer — its own timeout message
+ * included — always arrives before the client stops listening.
+ */
+export const MCP_TOOL_TIMEOUT_MS = Math.max(60_000, ...TOOLS.map((tool) => tool.timeoutMs ?? 0)) + 60_000
 
 /**
  * How long a turn may run before it is abandoned. A stuck turn must not be a stuck panel.
@@ -155,10 +172,23 @@ export function childEnv(base: NodeJS.ProcessEnv = process.env): Record<string, 
  * allowed 15 (a first run downloads a model), so on a slow link the panel killed a turn whose
  * tool was still inside its own budget, and the transcription ran on with nobody waiting.
  */
-export const TURN_TIMEOUT_MS = Math.max(
+export const TURN_TIMEOUT_FLOOR_MS = Math.max(
   10 * 60 * 1000,
   ...TOOLS.map((tool) => (tool.timeoutMs ?? 0) + 5 * 60 * 1000)
 )
+
+/**
+ * The turn timeout for Preferences › Agent › "Longest agent turn", never below the floor above.
+ * A value that is not one of the choices reads as the default. The choice exists because a turn
+ * that writes and iterates a 1,000-line composition, checking frames between passes, can
+ * legitimately outlast the floor; the floor exists so no choice can undercut a tool's own budget.
+ */
+export function turnTimeoutFor(minutes: unknown, floorMs: number = TURN_TIMEOUT_FLOOR_MS): number {
+  return Math.max(parseTurnLimit(minutes) * 60 * 1000, floorMs)
+}
+
+/** The turn timeout at the default "Longest agent turn". */
+export const TURN_TIMEOUT_MS = turnTimeoutFor(DEFAULT_TURN_LIMIT)
 
 export interface CliOptions {
   /** The `claude` binary. Found on PATH when not given. */
@@ -170,8 +200,10 @@ export interface CliOptions {
   /** Where the agent's own files live. Never the project directory. */
   cwd: string
   systemPrompt: string
-  /** How long a turn may run. `TURN_TIMEOUT_MS` unless a test needs to see one run out. */
+  /** How long a turn may run. From `tuning` unless a test needs to see one run out. */
   turnTimeoutMs?: number
+  /** Preferences › Agent: effort, model, longest turn. The defaults when absent. */
+  tuning?: AgentTuning
 }
 
 /** Bay's tools, namespaced the way the CLI reports them. */
@@ -189,7 +221,7 @@ export function allowedToolNames(): string[] {
 
 /**
  * The only built-in tools the in-app agent has: reading bay's MCP resources (its guides), and
- * `Skill`, so it can load a bay skill the user names anywhere in a message. Everything else built
+ * `Skill`, so it can load a bay skill the user names, or one the task calls for. Everything else built
  * in — shell, files, web, subagents — does not exist in the session at all. MCP tools are not
  * built-ins, so bay's own are unaffected.
  *
@@ -238,6 +270,8 @@ export function mcpConfig(options: CliOptions): string {
  * the CLI refuses to *create* a session under an id it already has.
  */
 export function cliArgs(options: CliOptions, sessionId: string, resume = false): string[] {
+  // Parsed here, not trusted: a stale or hand-edited preference must not become an argv entry.
+  const tuning = parseAgentTuning(options.tuning)
   return [
     '--print',
     '--output-format', 'stream-json',
@@ -256,6 +290,10 @@ export function cliArgs(options: CliOptions, sessionId: string, resume = false):
     // repository would put that repository's rules into a video edit.
     '--setting-sources', 'project',
     '--system-prompt', options.systemPrompt,
+    // Without it every turn runs at the CLI's default effort — too little for a film as code.
+    '--effort', tuning.effort,
+    // `default` passes nothing, so the CLI (and the user's plan) chooses.
+    ...(tuning.model === 'default' ? [] : ['--model', tuning.model]),
     ...(resume ? ['--resume', sessionId] : ['--session-id', sessionId])
   ]
 }
@@ -317,9 +355,26 @@ export class CliAgentRuntime implements HostedAgentRuntime {
   #spawned = false
 
   readonly #options: CliOptions
+  #tuning: AgentTuning
+  /** The effort and model the running process was spawned with. */
+  #spawnedWith: string | null = null
 
   constructor(options: CliOptions) {
     this.#options = options
+    this.#tuning = parseAgentTuning(options.tuning)
+  }
+
+  /**
+   * Preferences › Agent changed. Effort and model are spawn flags, so a process started with
+   * others is replaced at the next `send` (resuming the session) — never mid-turn. The turn
+   * limit is read per turn.
+   */
+  configure(tuning: AgentTuning): void {
+    this.#tuning = parseAgentTuning(tuning)
+  }
+
+  #spawnKey(): string {
+    return `${this.#tuning.effort}/${this.#tuning.model}`
   }
 
   onEvent(listener: (event: AgentEvent) => void): () => void {
@@ -332,8 +387,15 @@ export class CliAgentRuntime implements HostedAgentRuntime {
   }
 
   #ensure(): ChildProcessWithoutNullStreams {
-    if (this.#child && !this.#child.killed) return this.#child
-    const args = cliArgs(this.#options, this.id, this.#spawned)
+    if (this.#child && !this.#child.killed) {
+      if (this.#spawnedWith === this.#spawnKey()) return this.#child
+      // Started with another effort or model: replaced, and its successor resumes the session.
+      killTree(this.#child.pid)
+      this.#child = null
+      this.#buffer = ''
+    }
+    const args = cliArgs({ ...this.#options, tuning: this.#tuning }, this.id, this.#spawned)
+    this.#spawnedWith = this.#spawnKey()
     const child = spawn(this.#options.binary ?? 'claude', args, {
       cwd: this.#options.cwd,
       env: childEnv(),
@@ -437,7 +499,10 @@ export class CliAgentRuntime implements HostedAgentRuntime {
     // Stopped means killed. Failing the turn alone told the panel it had stopped while the
     // process carried on calling tools against the timeline, its later output landing on
     // whatever turn came next.
-    const timeout = this.#options.turnTimeoutMs ?? TURN_TIMEOUT_MS
+    const timeout = this.#options.turnTimeoutMs ?? turnTimeoutFor(this.#tuning.turnMinutes)
+    // A message sent while a turn is still counted as running must not leave that turn's timer
+    // armed: it would fire later and abort whichever turn is running then.
+    if (this.#timer) clearTimeout(this.#timer)
     this.#timer = setTimeout(
       () => this.#abort(`The turn ran past ${Math.round(timeout / 60000)} minutes and was stopped.`),
       timeout

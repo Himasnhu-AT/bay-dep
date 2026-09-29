@@ -53,6 +53,14 @@ export const tool: ToolSpec = {
         type: 'string',
         enum: ['left', 'right', 'up', 'down'],
         description: 'For wipe, push and slide. Ignored by the others.'
+      },
+      ease: {
+        description:
+          'How the transition travels across its window, as a keyframe ease: "linear" (the ' +
+          'default), "in", "out", "inOut", "hold", or a CSS cubic-bezier [x1, y1, x2, y2] with all ' +
+          'four in 0..1 (a transition cannot overshoot its ends; y outside 0..1 is refused). It ' +
+          'shapes the picture and the audio cross-fade alike. ' +
+          'A push with "inOut" eases off the cut instead of sliding at one speed.'
       }
     },
     required: ['fromItemId', 'toItemId', 'kind']

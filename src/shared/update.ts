@@ -20,6 +20,9 @@
  *   ready        "bay 0.1.1 is downloaded. Restart bay to finish updating." (+ Restart to update)
  *   error        says what failed (checking / downloading / installing), why, and offers Retry,
  *                which repeats that same step. That is why `during` is a field.
+ *   refused      "bay did not install the downloaded update." + "the download contains bay 0.1.0,
+ *                which is not newer than this bay (0.1.0)…" (+ Check now). Not an error to retry:
+ *                installing the same file again would be refused again (`main/update/bundle-version.ts`).
  */
 
 export type UpdateStep = 'check' | 'download' | 'install'
@@ -33,6 +36,8 @@ export type UpdateStatus =
   | { state: 'downloading'; current: string; feed: string; next: string; notes: string; percent: number; transferred: number; total: number }
   | { state: 'ready'; current: string; feed: string; next: string; notes: string }
   | { state: 'error'; current: string; feed: string; during: UpdateStep; message: string; next: string | null; notes: string }
+  /** The downloaded bundle is not strictly newer than this bay (or its version is unreadable). */
+  | { state: 'refused'; current: string; feed: string; next: string; message: string }
 
 /** Launch, then every six hours. */
 export const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000
@@ -170,7 +175,7 @@ export function describeUpdate(status: UpdateStatus): { title: string; detail: s
       return { title: `bay ${status.next} is available.`, detail: `You have ${status.current}. Nothing downloads until you press Update.` }
     case 'downloading': {
       // At 100% the file is here and macOS is unpacking it and checking its signature.
-      if (status.percent >= 100) return { title: `Preparing bay ${status.next}…`, detail: 'macOS is checking the update. You can keep working.' }
+      if (status.percent >= 100) return { title: `Preparing bay ${status.next}…`, detail: 'bay is checking the update. You can keep working.' }
       const size = status.total > 0 ? ` (${megabytes(status.transferred)} of ${megabytes(status.total)})` : ''
       return { title: `Downloading bay ${status.next}: ${Math.floor(status.percent)}%${size}.`, detail: 'You can keep working.' }
     }
@@ -178,6 +183,8 @@ export function describeUpdate(status: UpdateStatus): { title: string; detail: s
       return { title: `bay ${status.next} is downloaded.`, detail: 'Restart bay to finish updating. Your project is saved first.' }
     case 'error':
       return { title: `bay could not ${STEP[status.during]}.`, detail: status.message }
+    case 'refused':
+      return { title: 'bay did not install the downloaded update.', detail: status.message }
   }
 }
 
@@ -220,6 +227,8 @@ export function bannerVisible(status: UpdateStatus | null, dismissedVersion: str
       return status.next !== dismissedVersion
     case 'downloading':
     case 'ready':
+    // The user pressed Update and nothing will install: they must hear why.
+    case 'refused':
       return true
     case 'error':
       // A failed background check is not worth interrupting anyone for. The user sees it in

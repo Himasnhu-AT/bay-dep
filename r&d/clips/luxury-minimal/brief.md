@@ -1,0 +1,1 @@
+Cut a luxury, minimal film of about 20 seconds from these four watch clips, in the luxury/minimal style. There's no music, so let the picture carry it. Keep any brand names or logos out of frame. When it's done and checked, export it to /Users/himanshu/Movies/bay-rnd/luxury/after.mp4.

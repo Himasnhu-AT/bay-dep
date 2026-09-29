@@ -9,6 +9,7 @@
 
 import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import type {
+  AudioSpan,
   BayApi,
   ExportFormat,
   ExportFrame,
@@ -23,7 +24,7 @@ import type {
   ThumbnailRequest
 } from '@shared/ipc'
 import { IPC } from '@shared/ipc'
-import type { AgentEntry, AgentEvent, AgentProvider } from '@shared/agent'
+import type { AgentEntry, AgentEvent, AgentProvider, AgentTuning } from '@shared/agent'
 import type { AgentAttachmentInput } from '@shared/agent-attachments'
 import type { McpToolCall, McpToolResult } from '@shared/mcp'
 import type { Project } from '@shared/project'
@@ -78,6 +79,10 @@ const api: BayApi = {
       ipcRenderer.invoke(IPC.mediaWaveform, assetId, path, buckets) as Promise<number[]>,
     beats: (path: string, options?: { beatsPerBar?: number }) => ipcRenderer.invoke(IPC.mediaBeats, path, options),
     cuts: (path: string, options?: { threshold?: number }) => ipcRenderer.invoke(IPC.mediaCuts, path, options),
+    levels: (path: string, span: AudioSpan, windowUs: number) => ipcRenderer.invoke(IPC.mediaLevels, path, span, windowUs),
+    silences: (path: string, span: AudioSpan, thresholdDb: number, minSilenceSec: number) =>
+      ipcRenderer.invoke(IPC.mediaSilences, path, span, thresholdDb, minSilenceSec),
+    loudness: (path: string, span: AudioSpan) => ipcRenderer.invoke(IPC.mediaLoudness, path, span),
     revealInFolder: (path: string) =>
       ipcRenderer.invoke(IPC.mediaReveal, path) as Promise<void>,
     stat: (paths: string[]) => ipcRenderer.invoke(IPC.mediaStat, paths) as Promise<(number | null)[]>,
@@ -90,6 +95,8 @@ const api: BayApi = {
     saveCaptions: (defaultName: string, text: string) =>
       ipcRenderer.invoke(IPC.mediaSaveCaptions, defaultName, text) as Promise<string | null>,
     freezeFrame: (request) => ipcRenderer.invoke(IPC.mediaFreezeFrame, request),
+    subjectMatte: (request) => ipcRenderer.invoke(IPC.mediaSubjectMatte, request),
+    subjectMatteIndex: (key) => ipcRenderer.invoke(IPC.mediaSubjectMatteIndex, key),
     pathForFile: (file: File) => {
       // A `File` is one of the few complex objects contextBridge passes through intact
       // rather than proxying, which is what makes this work at all. It throws for a File
@@ -146,8 +153,14 @@ const api: BayApi = {
     setLimits: (limits) => ipcRenderer.invoke(IPC.generationSetLimits, limits)
   },
 
+  styles: {
+    list: () => ipcRenderer.invoke(IPC.stylesList),
+    write: (style, options) => ipcRenderer.invoke(IPC.stylesWrite, style, options)
+  },
+
   agent: {
-    start: (options?: { provider?: AgentProvider }) => ipcRenderer.invoke(IPC.agentStart, options),
+    start: (options?: { provider?: AgentProvider; tuning?: AgentTuning }) => ipcRenderer.invoke(IPC.agentStart, options),
+    configure: (tuning: AgentTuning) => ipcRenderer.invoke(IPC.agentConfigure, tuning),
     providers: () => ipcRenderer.invoke(IPC.agentProviders),
     send: (text: string, attachments?: AgentAttachmentInput[]) => ipcRenderer.invoke(IPC.agentSend, text, attachments),
     stop: () => ipcRenderer.invoke(IPC.agentStop),
@@ -244,6 +257,14 @@ const api: BayApi = {
       return () => {
         ipcRenderer.removeListener(IPC.mcpToolCall, wrapped)
         ipcRenderer.send(IPC.mcpExecutorReady, false)
+      }
+    },
+    onToolCancel: (listener: (callId: string) => void) => {
+      const wrapped = (_event: unknown, callId: string): void => listener(callId)
+      ipcRenderer.removeAllListeners(IPC.mcpToolCancel)
+      ipcRenderer.on(IPC.mcpToolCancel, wrapped)
+      return () => {
+        ipcRenderer.removeListener(IPC.mcpToolCancel, wrapped)
       }
     }
   },

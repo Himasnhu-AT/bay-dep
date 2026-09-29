@@ -47,7 +47,8 @@ import { validateSpeech } from '@shared/speech'
 import type { SpeechPace } from '@shared/speech-duration'
 import { segmentsToCues } from '@shared/transcribe'
 import { bay } from '@/lib/bay'
-import { fail, project, resolveItem, store, timeline, type Handlers } from './helpers'
+import { fail, project, resolveItem, store, timeline, type CallContext, type Handlers } from './helpers'
+import { stillWorking, waitSecondsOf, waitUntil } from './wait'
 import { transcribeSource } from './transcribe'
 
 function api(): NonNullable<ReturnType<typeof bay>> {
@@ -148,7 +149,7 @@ async function planDub(args: Record<string, unknown>): Promise<Record<string, un
 // ---------------------------------------------------------------------------
 
 interface DubRecord extends DubRecordData {
-  /** Serialises polls, so two at once cannot start a queued line twice or place twice. Not saved. */
+  /** Serialises looks at the dub, so two at once cannot start a queued line twice or place twice. Not saved. */
   busy: Promise<unknown>
 }
 
@@ -378,13 +379,15 @@ async function applyDub(args: Record<string, unknown>): Promise<Record<string, u
     ...common,
     ...counts,
     ...sessionSpend(await bridge.generation.spending()),
-    next: `Call track_dub { dubId: "${record.id}" } every 15–30 seconds until it says the dub is placed, before your final answer.`
+    next:
+      `Call track_dub { dubId: "${record.id}" } before your final answer — it waits until every line has landed ` +
+      'and the dub is placed.'
   }
 }
 
 /**
  * Starts queued lines while main's jobs-at-once limit has room. Main's guard still decides each
- * one: a refusal for room leaves the line queued for the next poll; any other refusal fails it
+ * one: a refusal for room leaves the line queued for the next look; any other refusal fails it
  * and the rest. Once nothing is left to start, main's hold on the budget is released.
  */
 async function startQueued(record: DubRecord): Promise<void> {
@@ -396,7 +399,7 @@ async function startQueued(record: DubRecord): Promise<void> {
     const started = await bridge.generation.start(line.request, record.reservationId ? { reservationId: record.reservationId } : undefined)
     if (!started.ok) {
       // Room taken between the look and the start (another generation got there first): not a
-      // failure, the same line starts on a later poll.
+      // failure, the same line starts on a later look.
       if (started.reason === 'room') break
       // Refused for another reason (the budget moved under us, a row that could not be written):
       // this line fails and says why, and the rest are not attempted, so one refusal cannot
@@ -595,7 +598,10 @@ async function place(record: DubRecord): Promise<Record<string, unknown>> {
   }
 }
 
-async function trackDub(args: Record<string, unknown>): Promise<Record<string, unknown>> {
+/** How often a waiting `track_dub` looks: each look asks main about every running line. */
+const DUB_CHECK_MS = 3000
+
+async function trackDub(args: Record<string, unknown>, context?: CallContext): Promise<Record<string, unknown>> {
   await ensureLoaded()
   if (args.dubId === undefined) {
     return {
@@ -613,9 +619,28 @@ async function trackDub(args: Record<string, unknown>): Promise<Record<string, u
         (known.length > 0 ? `Dubs: ${known.join(', ')}.` : 'None has been started — call apply_dub first. (Its jobs, if any, are listed by track_generation.)')
     )
   }
-  const run = record.busy.then(async () => {
+  // One look at a time per dub, so two calls at once cannot start a queued line twice or place
+  // twice. Only the looks are serialised — the sleeps between them are not — so a second call
+  // waiting on the same dub, and every other tool, runs beside this one.
+  const serial = <T>(work: () => Promise<T>): Promise<T> => {
+    const run = record.busy.then(work)
+    record.busy = run.catch(() => undefined)
+    return run
+  }
+  // Each look lands what finished and starts queued lines as slots free up, as a call always did.
+  const outcome = await waitUntil(
+    () =>
+      serial(async () => {
+        if (record.result) return true
+        await refresh(record)
+        const counts = countLines(record)
+        return counts.running === 0 && counts.queued === 0
+      }),
+    { seconds: waitSecondsOf(args), everyMs: DUB_CHECK_MS, context }
+  )
+  return serial(async (): Promise<Record<string, unknown>> => {
     if (record.result) {
-      // Placed, and still standing — or undone since. An undo takes the lines away, and polling
+      // Placed, and still standing — or undone since. An undo takes the lines away, and tracking
       // again puts them back from the files already generated: nothing is generated or paid again.
       const placedIds = record.placedItemIds ?? []
       const present = itemIdsNow()
@@ -630,7 +655,6 @@ async function trackDub(args: Record<string, unknown>): Promise<Record<string, u
         note: 'Its placed lines were gone from the timeline (an undo, or deleted), so they were placed again from the files already generated — nothing was generated or paid for again.'
       }
     }
-    await refresh(record)
     const counts = countLines(record)
     if (counts.running! > 0 || counts.queued! > 0) {
       await persist(record)
@@ -639,19 +663,18 @@ async function trackDub(args: Record<string, unknown>): Promise<Record<string, u
         status: 'generating',
         ...counts,
         of: record.lines.length,
-        next: 'Still generating. Call track_dub again in 15–30 seconds.'
+        waited: outcome.waited,
+        next: stillWorking(`track_dub { dubId: "${record.id}" }`, `generating (${counts.done} of ${record.lines.length} lines done)`, outcome)
       }
     }
     record.result = await place(record)
     await persist(record)
     return record.result
   })
-  record.busy = run.catch(() => undefined)
-  return run
 }
 
 export const handlers: Handlers = {
   plan_dub: (args) => planDub(args),
   apply_dub: (args) => applyDub(args),
-  track_dub: (args) => trackDub(args)
+  track_dub: (args, context) => trackDub(args, context)
 }

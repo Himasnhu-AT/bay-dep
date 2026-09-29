@@ -1,6 +1,6 @@
 # Design
 
-The visual system for bay.everholt.com. It exists so a page nobody has built yet already
+The visual system for bay.himanshuat.com. It exists so a page nobody has built yet already
 looks like it belongs. If you are writing the words rather than the layout, read
 [VOICE.md](./VOICE.md) as well.
 
@@ -237,11 +237,47 @@ only other place the plate's colours appear (the frame's ground before a poster 
   and `touch-action: pan-y` so a vertical swipe still scrolls the page. The same control is
   a range input for the keyboard and screen readers (arrows, Home, End), which takes no
   pointer events and draws an accent focus ring inside the frame.
-- **The two videos keep one clock.** The after video leads; on each frame it presents
-  (`requestVideoFrameCallback`), the before video is re-seeked only if it has drifted more
-  than two frames.
-- **Labels are not laid over the picture.** Which side is which is said in the caption
-  under it. "Hear the edit" unmutes the after video; nothing plays sound unasked.
+- **The two videos keep one clock.** The after video leads. On every animation frame while
+  it plays (drawn or not, so the hidden side of a phone's toggle counts too), the before's
+  offset from it, taken across the loop point, is corrected: past a quarter second by a
+  seek, past half a frame by running the before up to 10% fast or slow, since a seek stalls
+  it. A pause or seek of the after is copied to the before at once, and when either side
+  runs out of data (`waiting`) the other is paused until both can play.
+- **Labels are not laid over the picture.** In the wipe, which side is which is said in the
+  caption under it; in the split, each frame has its label on the line above it (see below).
+  "Hear the edit" unmutes the after video; nothing plays sound unasked.
+
+**It is one component with two uses.** The home page passes `HOME_PAIR` and `seam`; `/compare`
+passes one pair per entry in `src/lib/comparisons.ts`, always as a split. The props: `pair`
+(each side's AV1 and H.264 `.mp4`, its AVIF and WebP poster, and its aspect, `16:9` or
+`9:16`), `caption` (the line beside Play that says which side is which; the wipe needs it),
+`notes` (anything more, in the `figcaption`), `layout`, `sides` (the split's quiet clause after
+each label), `sound` (whether to offer "Hear the edit") and `label` (the control's name).
+
+- **`layout="wipe"`** is the frame above, for a pair in one aspect. A `9:16` wipe is capped at
+  78% of the window's height, centred in the column, so its bottom is on screen when its top is.
+- **`layout="split"`** is two frames side by side from `sm`, at one height: each column's share
+  is its aspect's width. **The whole pair fits one screen**, which is the point of it: the
+  height is capped at `min(68svh, 560px)` and the row is never wider than that height allows,
+  so at 1280×720 two vertical frames are 490px tall and a 16:9 pair is two 500px frames. Over
+  each frame, not on it, its label: "Before" or "After" in `ink` at 600, then the quiet clause
+  (`sides`) in `muted`, `text-sm`, sentence case like every label on the site. Under the pair,
+  Play, "Hear the edit" and "How it was made" as text buttons.
+  - **The notes move out of the pair's way.** With two vertical frames on a screen from `lg`,
+    the `figcaption` stands beside the pair, always open. Otherwise it sits under the pair,
+    closed, behind "How it was made" (`aria-expanded`), so the next figure is not pushed a
+    screen further down.
+  - **On a phone**, two 16:9 frames stack, labelled, and still fit. When either frame is
+    vertical, both share one cell and a **toggle** picks the one shown: a 1px `line` pill
+    holding two pill buttons, the chosen one `ink` with `paper` text (`aria-pressed`), the
+    shown side's quiet clause beside it. The hidden side keeps playing at opacity 0, so
+    switching is instant and on the same clock. This toggle is the only segmented control on
+    the site; do not reuse it as a tab bar.
+
+On `/compare` the figures are on paper, so there is no seam: each is opened by its title
+(`text-section` `h2`) and the style's title and the length in `muted`. Its `figcaption` carries
+`Prompt` (what it was told), `StepList` (what ran), a sentence on hand retouching and the
+footage credits, in one column capped at `62ch`. Figures are separated by `Rule`.
 
 The plate and the before-and-after frame have 12px corners and no shadow. The plate's
 window is edged in `app-line-strong` (`#333`), one step lighter than the app's own
@@ -320,10 +356,18 @@ is interactive by nature.
 - **`Command`** is a line you would actually type, set on night with 12px corners in the
   app's monospace, the `$` in the accent. The only night on a paper page. One command
   each; stack them with `space-y-2.5`.
+- **`Prompt`** is the words a person gave the agent, verbatim: a `text-xs` `muted` label ("The
+  prompt, verbatim") over a blockquote in `ink-soft`, behind a 1px `line` rule on its left,
+  line breaks kept. It is a person's sentence, not the machine's, so it stays on paper and is
+  never a `Command`. `/compare`.
+- **`StepList`** is what ran, in order: one `text-sm` line per step, a tool's name in the app's
+  monospace and `accent-ink` (the "feature's tool name" mark above), the rest in `ink-soft`.
+  `/compare`.
 - **`PullQuote`** is the closing statement, set at `text-quote` in `ink`, at most one per
   page.
 - **`AppPlate` / `AgentPanel` / `ScrollSequence`** are the figure, its agent panel and the
-  scroll driver; **`BeforeAfter`** is the comparison under it. Home page only.
+  scroll driver, home page only; **`BeforeAfter`** is the comparison under it, and every
+  figure on `/compare`.
 - **`Reveal`** wraps anything that should arrive when it is scrolled to.
 - **`Rule`** is a standalone 1px line that draws itself in from the left.
 
@@ -518,3 +562,15 @@ Other standing rules:
    page inherits it instead of reinventing it.
 4. Content that repeats or grows goes in `src/lib/`, not inline in the page.
 5. Read [VOICE.md](./VOICE.md) before writing the words.
+
+## Adding a comparison
+
+1. Keep the run's `.bay`, its tool log and the exported file. The raw and the edit must be one
+   length and cut on the same frames.
+2. `scripts/encode-compare.sh <slug> <before.mp4> <after.mp4>` (add `--before-audio` if the raw
+   keeps its sound). It writes `public/compare/<slug>/`, prints each file's size, refuses any
+   over 8 MB and prints `durationSec`. Its header says which encoders it needs.
+3. In `src/lib/comparisons.ts`, fill the entry from the run (the fields are documented at the
+   top of the file) and set `status: "ready"`. Add its footage to `CREDITS.md`.
+4. `pnpm build` refuses a ready entry with the pending prompt, no steps, no length, a wipe across
+   two aspects, a credit missing a field, or a missing media file, and names which.

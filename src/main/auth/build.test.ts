@@ -31,15 +31,15 @@ test('BAY_ACCESS=dev skips the check only in an unpackaged build', () => {
 })
 
 test('a packaged build accepts the handoff only from the real site', () => {
-  assert.deepEqual(allowedOrigins(true), ['https://bay.everholt.com'])
+  assert.deepEqual(allowedOrigins(true), ['https://bay.himanshuat.com'])
   // Positive control: dev builds also take the site's dev server.
-  assert.deepEqual(allowedOrigins(false), ['https://bay.everholt.com', 'http://localhost:3000'])
+  assert.deepEqual(allowedOrigins(false), ['https://bay.himanshuat.com', 'http://localhost:3000'])
 })
 
 test('BAY_SITE=local points the browser at the dev server only when unpackaged', () => {
   assert.equal(siteOrigin({ BAY_SITE: 'local' }, false), 'http://localhost:3000')
-  assert.equal(siteOrigin({ BAY_SITE: 'local' }, true), 'https://bay.everholt.com')
-  assert.equal(siteOrigin({}, false), 'https://bay.everholt.com')
+  assert.equal(siteOrigin({ BAY_SITE: 'local' }, true), 'https://bay.himanshuat.com')
+  assert.equal(siteOrigin({}, false), 'https://bay.himanshuat.com')
 })
 
 test('the no-browser test hook is unpackaged only', () => {

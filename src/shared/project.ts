@@ -14,10 +14,13 @@
  */
 
 import { formatTimecode as formatTimecodeShared } from './timecode'
+import { easeProgress } from './ease'
 import type { CompositionVariable } from './composition'
 import type { BrfDocument } from './brf'
 import type { BeatGrid } from './beats'
 import type { Grade, LutData } from './grade'
+import type { Mask, SubjectMatte } from './matte'
+import type { DeliverySettings } from './loudness'
 
 /**
  * `lut` is a colour look-up table (`.cube`): it has no picture of its own and is never placed on a
@@ -125,6 +128,14 @@ export interface Asset {
    * and speed. Derived data like the poster: written silently, and recomputable from the file.
    */
   beats?: BeatGrid
+  /**
+   * Subject mattes computed for stretches of this source (`@shared/matte`), once
+   * `put_behind_subject` has asked for one: which source range, which engine, and the key of the
+   * pack in main's cache. Derived data like `beats` — written silently, recomputable — and in
+   * source time, so every placement maps it through its own in-point and speed. Optional and
+   * additive.
+   */
+  subjectMattes?: SubjectMatte[]
   createdAt: number
   /** Set when probing failed; the asset still lists, but cannot be placed. */
   error?: string
@@ -540,6 +551,13 @@ export interface Item {
    * `playableTimeline`. Absent or false is enabled, which is every project written before this.
    */
   disabled?: boolean
+  /**
+   * Masks on this clip's picture (`@shared/matte`): today one `{ kind: 'subject' }`, which keeps only
+   * the person — the cut-out copy `put_behind_subject` puts over a title. Applied by the compositor
+   * inside `#drawSource`, after the grade, from the same media element as any other drawing of this
+   * clip at the same source time. Absent is the fast path. Optional and additive.
+   */
+  masks?: Mask[]
 }
 
 /**
@@ -676,6 +694,25 @@ export interface Transition {
   direction?: TransitionDirection
   /** Kind-specific extras — feather width, iris shape. Absent means the kind's default. */
   params?: Record<string, number | string>
+  /**
+   * How the transition travels across its window: a name or a CSS cubic-bezier, exactly as a
+   * keyframe's ease (`KeyframeEase`, sampled by `easeProgress`). It shapes `progress` itself, so
+   * the picture and the audio cross-fade follow one curve in preview and export alike. Absent is
+   * linear — every transition written before the field existed. Additive and optional, so an older
+   * build loads a file carrying it and writes it back untouched (it just plays linear).
+   */
+  ease?: KeyframeEase
+}
+
+/**
+ * A transition's progress at `frame`: 0 at its first frame, 1 at its last, shaped by its ease.
+ * The one place the window becomes a progress — the compositor's picture (`transitionAtFrame`) and
+ * every sound's gain (`transitionOfItemAt`) both read it, so they cannot disagree about the curve.
+ */
+export function transitionProgress(resolved: ResolvedTransition, frame: Frames): number {
+  const span = resolved.lastFrame - resolved.firstFrame + 1
+  const linear = span <= 1 ? 1 : (frame - resolved.firstFrame) / (span - 1)
+  return easeProgress(resolved.transition.ease, Math.max(0, Math.min(1, linear)))
 }
 
 /**
@@ -750,6 +787,13 @@ export interface Timeline {
    * existed still loads; absent rather than `[]` once the last one is removed.
    */
   comments?: ReviewComment[]
+  /**
+   * The delivery decision the last successful mastered export of this timeline made, so the next
+   * export without a `loudness` argument keeps it instead of silently dropping it
+   * (`chooseExportLoudness`). Written when a mastered export finishes; cleared by an export with
+   * loudness "off". Optional, absent until then, so every earlier `.bay` loads unchanged.
+   */
+  delivery?: DeliverySettings
 }
 
 export interface Project {
@@ -1182,9 +1226,7 @@ export function transitionAtFrame(
       if (!track || track.kind !== kind || (kind === 'video' && track.hidden)) continue
     }
     if (frame < resolved.firstFrame || frame > resolved.lastFrame) continue
-    const span = resolved.lastFrame - resolved.firstFrame + 1
-    const progress = span <= 1 ? 1 : (frame - resolved.firstFrame) / (span - 1)
-    return { resolved, progress: Math.max(0, Math.min(1, progress)) }
+    return { resolved, progress: transitionProgress(resolved, frame) }
   }
   return null
 }

@@ -76,3 +76,22 @@ test('a write stranded by a reload fails at once and says to check before retryi
 test('an unknown tool is treated as a write, never resent', () => {
   assert.equal(strandedCall('no_such_tool', readOnly).action, 'fail')
 })
+
+test('a stranded export fails saying it was lost and how to restart; a stranded wait on a main-side job says to wait again', () => {
+  const exported = strandedCall('export_timeline', readOnly)
+  assert.equal(exported.action, 'fail')
+  const exportError = exported.action === 'fail' ? exported.error : ''
+  assert.match(exportError, /lost with the reload/)
+  assert.match(exportError, /Start it again with export_timeline/)
+  assert.doesNotMatch(exportError, /may or may not have been applied/)
+  for (const [tool, id] of [['track_generation', 'jobId'], ['track_dub', 'dubId']] as const) {
+    const verdict = strandedCall(tool, readOnly)
+    assert.equal(verdict.action, 'fail', `${tool} is a write and must not be resent`)
+    const error = verdict.action === 'fail' ? verdict.error : ''
+    assert.match(error, /still running/)
+    assert.match(error, new RegExp(`call ${tool} with the same ${id} and waitSeconds`))
+    assert.doesNotMatch(error, /may or may not have been applied/)
+  }
+  // The control: any other write keeps the check-first answer.
+  assert.match((strandedCall('split_at', readOnly) as { error: string }).error, /may or may not have been applied/)
+})
