@@ -26,7 +26,7 @@ fake DOM whose fidelity is itself the thing under test.
 
 ## Launch the app with the throttling flags
 
-**And with `BAY_ACCESS=dev`.** bay is invite-only: without it a build shows the sign-in screen and
+**And with `BAY_ACCESS=dev`.** signing in is mandatory: without it a build shows the sign-in screen and
 refuses every MCP tool call with "bay is locked" (`src/main/auth/`). `./run.sh` sets it; a hand
 launch must too. It is honoured only by an unpackaged build — see `docs/testing.md`.
 

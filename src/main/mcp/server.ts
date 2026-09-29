@@ -28,6 +28,7 @@ import { homedir, tmpdir } from 'node:os'
 import { EXECUTOR_READY_TIMEOUT_MS, ExecutorReadiness, strandedCall } from './executor-ready'
 import { gateToolRunner } from '../auth/gate'
 import { accessStatus } from '../auth/access'
+import { track } from '../telemetry/service'
 
 // ---------------------------------------------------------------------------
 // The main ↔ renderer round trip
@@ -240,6 +241,8 @@ export async function runTool(
   }
 
   const result = await callRenderer(tool, resolved, origin, signal)
+  // The tool's name and whether it worked — never its arguments or its answer.
+  if (findTool(tool)) track('tool_call', { tool, ok: result.ok })
   return result.ok ? { ok: true, value: result.value } : { ok: false, value: result.error }
 }
 

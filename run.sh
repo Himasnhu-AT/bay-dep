@@ -17,7 +17,7 @@
 #   ./run.sh --stop       stop every instance and exit
 #   ./run.sh --gate       run WITHOUT the dev access bypass (see below), to see the sign-in screen
 #
-# bay is invite-only: a build shows its access screen until an account with access signs in, and
+# Signing in is mandatory: a build shows its access screen until a Google account signs in, and
 # refuses every MCP tool call until then. This script launches with BAY_ACCESS=dev, which skips
 # that check — honoured only by an unpackaged build (`electron .`), never by an installed app — so
 # the probes in test/app/ drive the editor as before. `--gate` leaves it off.

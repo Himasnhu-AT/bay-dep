@@ -74,7 +74,7 @@ Environment switches worth knowing: `BAY_AGENT_RUNTIME=sdk` hosts the in-app age
 SDK instead of the `claude` CLI (default), and `=codex` on OpenAI's `codex` CLI — either overrides
 the Preferences › Agent › Model choice; `BAY_MCP_MODE=gateway` makes the proxy list three tools
 (`get_active_project`, `get_guidelines`, `execute`) instead of the whole catalog. `BAY_ACCESS=dev` skips the
-invite-only access check — **unpackaged builds only** — and `./run.sh` sets it (`--gate` does not).
+sign-in check — **unpackaged builds only** — and `./run.sh` sets it (`--gate` does not).
 `BAY_MCP_CLIENTS=1` opens `bay-mcp.sock` for the run even though MCP clients are off by default
 (Preferences › Agent); `./run.sh` sets it too, because the socket probes need it. `BAY_GENERATION_BASE`
 points generation at a loopback stub (unpackaged only; see the generation paragraph).
@@ -511,14 +511,15 @@ nothing is gated. `validateOnly: true` on a dry-runnable tool passes the gate, b
 nothing — and on a `selfValidating` one (the generate tools, whose handler receives the flag,
 checks and prices the call, and starts no paid job), for the same reason.
 
-**bay is invite-only, and main is the lock** (`src/main/auth/`, `src/shared/access.ts`). A Mac
-is `entitled` when a sign-in (system browser → the site's `/desktop/sign-in` → a one-shot POST to a
-127.0.0.1 loopback server that checks Origin and `state`) was verified against `access/{email}` in
-Firestore. Until then `ipc.ts` refuses every channel outside `OPEN_WHILE_LOCKED` and both sockets
-answer tool calls with the unlock instructions (`auth/gate.ts`); the access screen is only UI.
-Offline it keeps working for 14 days from the last successful check; a 404 on the access doc, an
-unverified email, or a refresh token Google refuses locks at once; ages run from the latest time
-bay has seen, so winding the clock back buys nothing. The refresh token is stored only through
+**Signing in is mandatory, and main is the lock** (`src/main/auth/`, `src/shared/access.ts`). A
+Mac is `entitled` when a sign-in (system browser → the site's `/desktop/sign-in` → a one-shot POST
+to a 127.0.0.1 loopback server that checks Origin and `state`) refreshes at Google's securetoken
+with a verified email. Any Google account qualifies: there is no grant, no waitlist and no referral,
+and nothing reads Firestore. Until then `ipc.ts` refuses every channel outside `OPEN_WHILE_LOCKED`
+and both sockets answer tool calls with the unlock instructions (`auth/gate.ts`); the access screen
+is only UI. Offline it keeps working for 14 days from the last successful check; an unverified
+email, or a refresh token Google refuses, locks at once; ages run from the latest time bay has
+seen, so winding the clock back buys nothing. The refresh token is stored only through
 `safeStorage` — without a keychain it stays in memory until quit, never in plaintext.
 
 **Releases are signed by `script/release-signed`, and every Mach-O is checked by content, not by
@@ -556,12 +557,14 @@ with no hook between. An update therefore installs only from Restart to update. 
 cover the verdict and the zip reading; the wiring in `updater.ts` imports Electron and is
 typecheck-only.
 
-**A grant comes from the owner or a referral.** The owner approves a waitlist entry or grants an
-email directly on the website's `/admin`; an entitled user refers one from inside bay
-(`accessRefer`, five each). The `no-access` screen therefore shows the email with a Copy button
-(the referrer must type it exactly), *Join the waitlist* (`accessRequestAccess` opens the site's
-`/waitlist`), *Use a different account* and *Check again*. There is no public download yet; the
-site says "Releasing soon" and points at the waitlist.
+**Revoking an account is disabling it in Firebase Auth.** The owner disables the user (project
+`bay-editor-app`, Authentication › Users); the next refresh answers `USER_DISABLED`, which is the
+`revoked` state and locks at once — within six hours on a running bay (the reverify timer), at the
+next launch otherwise, and never later than the 14-day grace offline. The only `no-access` reason
+left is an unverified email, so that screen offers *Use a different account* and *Check again*.
+An `access.json` from the invite-only builds still loads: its `referralsUsed` is ignored, and a
+legacy `no-grant` lock reads as signed-out and re-verifies into `entitled` with the stored token
+(`policy.test.ts`, `token-store.test.ts` hold both with literal old files).
 
 ## graft — read the graph before you grep
 
@@ -1047,13 +1050,12 @@ projects — indexing an array yields `T | undefined` and you must handle it.
 - **The renderer never touches the filesystem.** Media reaches it over the `bay://` protocol, which
   serves only allowlisted paths and must honour HTTP Range requests — `<video>` seeking is broken
   without them, and that is the most common way this goes wrong.
-- **Nothing reaches the network — with five exceptions, all main's.** No telemetry, no
+- **Nothing reaches the network — with six exceptions, all main's.** No third-party
   analytics, no remote fonts or images. The CSP in `src/renderer/index.html` permits no remote
   origin; loosening it is a product decision, not a fix. The first exception is **access**: main
-  (never the renderer) talks to `securetoken.googleapis.com` and `firestore.googleapis.com` only,
-  to refresh the sign-in and read/write the access documents (`src/main/auth/google.ts`, whose
-  `guardedFetch` refuses any other host). What it sends is a refresh token, an ID token and email
-  addresses — never project data, media, paths or usage. It uses Node's `fetch`, because
+  (never the renderer) talks to `securetoken.googleapis.com` only, to refresh the sign-in
+  (`src/main/auth/google.ts`, whose `guardedFetch` refuses any other host). What it sends is the
+  refresh token — never project data, media, paths or usage. It uses Node's `fetch`, because
   Electron's `net.fetch` rides the editor's session, which `offline.ts` (untouched) blocks. The
   second exception is whisper models, fetched
   by main from Hugging Face's `ggerganov/whisper.cpp` repo only when the user clicks Download in
@@ -1119,6 +1121,35 @@ projects — indexing an array yields `T | undefined` and you must handle it.
   already. `url-import.test.ts` runs the real yt-dlp against 127.0.0.1 when it is installed —
   through a test-only allowance (`allowPrivateHostsForTests`) no tool can reach — never the
   internet, including a chunked stream the cap must stop.
+  The sixth is **usage telemetry and crash reports**, to bay's own website only (see the paragraph
+  below).
+
+**bay sends usage counts and crash reports to its website, both on by default, each behind its
+own switch** (`@shared/telemetry` is the contract, written first; `src/main/telemetry/`;
+Preferences › Privacy). The owner's decision. Main only, Node's `fetch` through
+`guardedTelemetryFetch`, which refuses every origin but one and follows no redirect: `SITE_ORIGIN`
+in a packaged build, and in an unpackaged one only `BAY_TELEMETRY_BASE` when it names a literal
+loopback host — otherwise a checkout sends nothing, so development never reports to production.
+`POST /api/telemetry` carries batches (≤100) of events from a fixed list, each with an
+**allow-list of props** (`TELEMETRY_EVENTS`: counts, sizes, times, enums, a tool's *name*) — a prop
+not listed or of the wrong type is dropped before it is queued, and the renderer may ask only for
+`page_view`. `POST /api/crash` carries one crash: main's `uncaughtExceptionMonitor` (so Electron's
+own behaviour is unchanged) and `unhandledRejection` (still logged), `render-process-gone` /
+`child-process-gone` (not `clean-exit` or `killed`), and the renderer's `error` /
+`unhandledrejection` forwarded as text over a send outside the access gate. Messages and stacks
+are redacted in main (`telemetry/redact.ts`): home → `~`, every directory of an absolute path →
+`…`, a non-code file name → `<file>.ext`, emails → `<email>`; an identical crash goes at most once
+per 10 minutes. **Never sent:** email, account id, project names, paths, asset names, prompts,
+transcripts, tool arguments, media. The install id is a random v4 UUID in `userData/install-id`,
+derived from nothing. Unsent reports wait in `userData/telemetry-queue.json` (≤500 events, ≤50
+crashes, oldest dropped), written when a crash arrives, after a failed send and at quit; 400 is
+dropped, 429/5xx/no answer backs off 1 min → 1 h. Flushed every 60 s and at quit (≤2 s; not while
+Squirrel quits to install an update). **A switch turned off sends nothing and deletes what of it
+was queued**; a database that will not open reads as off. Electron's `crashReporter` runs with
+`uploadToServer: false`: minidumps stay in `crashDumps`, named in Preferences › Privacy. The
+one-time notice (`settings/TelemetryNotice.tsx`, dismissal kept in main's database) says what is
+sent and links there. Tests: `src/shared/telemetry.test.ts` and `src/main/telemetry/*.test.ts`,
+mutation-checked (12 guards, 12 caught).
 - **Subscribe narrowly to the store** (`useEditor((s) => s.playhead)`), never wholesale, or every
   component re-renders at the frame rate during playback.
 - **Playback is driven by wall-clock elapsed time, not by counting rAF callbacks**, and composites at

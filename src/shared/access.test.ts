@@ -7,17 +7,16 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { describeAccess, lockedMessage, normaliseEmail, looksLikeEmail, type AccessStatus } from './access'
+import { describeAccess, lockedMessage, normaliseEmail, type AccessStatus } from './access'
 
 const at = Date.UTC(2026, 8, 1)
 const states: AccessStatus[] = [
   { state: 'signed-out' },
   { state: 'waiting', url: 'https://bay.himanshuat.com/desktop/sign-in?port=1&state=s', expiresAt: at },
   { state: 'checking', email: 'a@example.com' },
-  { state: 'entitled', email: 'a@example.com', lastVerifiedAt: at, lockAt: at, offline: false, persisted: true, referralsLeft: 5, bypass: false },
-  { state: 'entitled', email: 'a@example.com', lastVerifiedAt: at, lockAt: at, offline: true, persisted: true, referralsLeft: 5, bypass: false },
-  { state: 'entitled', email: 'dev', lastVerifiedAt: at, lockAt: at, offline: false, persisted: true, referralsLeft: null, bypass: true },
-  { state: 'no-access', email: 'a@example.com', reason: 'no-grant' },
+  { state: 'entitled', email: 'a@example.com', lastVerifiedAt: at, lockAt: at, offline: false, persisted: true, bypass: false },
+  { state: 'entitled', email: 'a@example.com', lastVerifiedAt: at, lockAt: at, offline: true, persisted: true, bypass: false },
+  { state: 'entitled', email: 'dev', lastVerifiedAt: at, lockAt: at, offline: false, persisted: true, bypass: true },
   { state: 'no-access', email: 'a@example.com', reason: 'unverified-email' },
   { state: 'locked-offline', email: 'a@example.com', lastVerifiedAt: at },
   { state: 'revoked', email: 'a@example.com', code: 'USER_DISABLED' },
@@ -37,32 +36,29 @@ test('every state has its own sentence', () => {
 })
 
 test('the sentences carry what the person needs: the email, the date, the code', () => {
-  assert.match(describeAccess(states[6]!).title, /a@example\.com/)
+  assert.match(describeAccess(states[6]!).title, /a@example\.com is not verified/)
   assert.match(describeAccess(states[4]!).detail, /offline until/)
-  assert.match(describeAccess(states[8]!).detail, /14 days/)
-  assert.match(describeAccess(states[9]!).title, /disabled/)
+  assert.match(describeAccess(states[7]!).detail, /14 days/)
+  assert.match(describeAccess(states[8]!).title, /disabled/)
 })
 
-test('no grant: the sentence names both ways in, a referral of this email and the waitlist', () => {
-  const { title, detail } = describeAccess(states[6]!)
-  assert.match(title, /a@example\.com does not have access/)
-  assert.match(detail, /invite-only/)
-  assert.match(detail, /refer this email/)
-  assert.match(detail, /join the waitlist/)
-  // Positive control: the unverified reason is the other sentence, and offers neither.
-  assert.doesNotMatch(describeAccess(states[7]!).detail, /refer|waitlist/)
+test('no sentence promises a waitlist, a referral or an invitation: signing in is the whole check', () => {
+  const signedOut = describeAccess(states[0]!)
+  assert.equal(signedOut.title, 'Sign in to use bay')
+  assert.equal(signedOut.detail, 'Sign in with your Google account.')
+  for (const status of states) {
+    const { title, detail } = describeAccess(status)
+    assert.doesNotMatch(`${title} ${detail} ${lockedMessage(status)}`, /invite|waitlist|refer|grant/i, status.state)
+  }
 })
 
 test('the locked message says it is locked, why, and how to unlock', () => {
-  const message = lockedMessage({ state: 'no-access', email: 'a@example.com', reason: 'no-grant' })
-  assert.match(message, /^bay is locked: a@example\.com does not have access/)
+  const message = lockedMessage({ state: 'signed-out' })
+  assert.match(message, /^bay is locked: Sign in to use bay\./)
   assert.match(message, /open the bay window and sign in/)
   assert.match(message, /retry this call/)
 })
 
-test('emails are normalised the contract\'s way', () => {
+test('emails are normalised: trimmed and lowercased', () => {
   assert.equal(normaliseEmail('  Pal@Example.COM '), 'pal@example.com')
-  assert.equal(looksLikeEmail('pal@example.com'), true)
-  assert.equal(looksLikeEmail('pal@example'), false)
-  assert.equal(looksLikeEmail('two words@example.com'), false)
 })

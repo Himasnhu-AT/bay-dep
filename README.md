@@ -135,11 +135,20 @@ Settings (⌘,) holds the agent switch above, the theme, debug mode, and transcr
 Captions and transcript-driven cuts are transcribed **on this Mac** with
 [whisper.cpp](https://github.com/ggerganov/whisper.cpp); the audio never leaves it. Settings can
 install the engine through Homebrew (`brew install whisper-cpp`) and download, verify and delete
-speech models. **This is the one place bay reaches the network**: models come from Hugging Face
-(and Homebrew fetches the engine, when you ask it to). "Download models when needed" is on by
+speech models. Models come from Hugging Face (and Homebrew fetches the engine, when you ask it
+to). "Download models when needed" is on by
 default, so the first transcription on a Mac with no model fetches one (~148 MB for the default)
 before it starts; turn it off and a transcription with no model stops and says to download one in
 Settings.
+
+## Privacy
+
+bay sends its website anonymous usage counts (the app opening, project and export sizes, which
+page and tools are used) and crash reports with paths and emails removed. Both are on by default,
+and each has its own switch in Preferences › Privacy; off means nothing is sent and anything
+waiting is deleted. Never sent: your email, projects, file or asset names, prompts, transcripts or
+media. Crash dumps stay on your Mac. A development build (`electron .`) sends nothing unless
+`BAY_TELEMETRY_BASE` points it at a stub on this Mac. The contract is `src/shared/telemetry.ts`.
 
 ## Gates
 
@@ -227,6 +236,10 @@ unpackaged build, with `BAY_SITE=local`). Outside the code, the owner must:
   `auth/unauthorized-domain`;
 - add `bay.himanshuat.com` as a domain of the website's Vercel project, and point its DNS at
   Vercel (a `CNAME` to the target Vercel shows).
+
+Any Google account with a verified email can sign in to bay; there is no waitlist or grant. To
+take access away from someone, disable the user in Firebase Authentication (Authentication ›
+Users): bay's next refresh of that sign-in answers `USER_DISABLED` and locks.
 
 The site's contact address (`product.email`, in the footer and every mailto link) is
 `hyattherate2005@gmail.com`.

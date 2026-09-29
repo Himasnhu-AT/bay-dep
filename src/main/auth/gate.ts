@@ -24,7 +24,6 @@ export const OPEN_WHILE_LOCKED: ReadonlySet<string> = new Set([
   'accessCancelSignIn',
   'accessSignOut',
   'accessRecheck',
-  'accessRequestAccess',
   // Losing access mid-session must not cost the user their work: the renderer writes the open
   // project to its autosave sidecar at the moment it locks. The sidecar is crash recovery — it
   // never overwrites a project file and opens no dialog — so allowing it opens nothing else.

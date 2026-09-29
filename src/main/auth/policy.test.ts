@@ -1,7 +1,8 @@
 /**
  * The offline policy, written from the owner's rules rather than from the code:
  * works offline; a network failure never locks before 14 days; 14 consecutive unverified days
- * lock; a definitive "no" (no grant, unverified email, revoked/disabled token) locks at once.
+ * lock; a definitive "no" (unverified email, revoked/disabled token) locks at once. Any verified
+ * account is entitled — there is no grant.
  *
  *   node --import ./src/test-hooks.mjs --test src/main/auth/policy.test.ts
  */
@@ -21,15 +22,14 @@ function verifiedAt(at: number, extra: Partial<AccessRecord> = {}): AccessRecord
     lastVerifiedAt: at,
     highWaterAt: at,
     lastAttemptFailed: false,
-    referralsUsed: 1,
     lock: null,
     ...extra
   }
 }
 
-const granted: VerifyOutcome = { kind: 'granted', email: 'a@example.com', uid: 'u1', referralsUsed: 2 }
+const granted: VerifyOutcome = { kind: 'granted', email: 'a@example.com', uid: 'u1' }
 const network: VerifyOutcome = { kind: 'network', message: 'getaddrinfo ENOTFOUND' }
-const noGrant: VerifyOutcome = { kind: 'no-grant', email: 'a@example.com', uid: 'u1' }
+const unverified: VerifyOutcome = { kind: 'unverified-email', email: 'a@example.com', uid: 'u1' }
 
 test('age table: entitled strictly before 14 days, locked from 14 days on', () => {
   const table: [number, string][] = [
@@ -71,16 +71,22 @@ test('a success resets the 14 days (positive control for the table above)', () =
   assert.equal(statusOf(next, now + 14 * DAY, true).state, 'locked-offline')
 })
 
-test('404 (no grant) locks at once, at any age — even one hour after verification', () => {
-  const now = T0 + HOUR
-  const next = applyVerification(verifiedAt(T0), noGrant, now, 'background')
-  const status = statusOf(next, now, true)
-  assert.deepEqual(status, { state: 'no-access', email: 'a@example.com', reason: 'no-grant' })
+test('an unverified email locks at once, at any age — even one hour after verification', () => {
+  const next = applyVerification(verifiedAt(T0), unverified, T0 + HOUR, 'background')
+  assert.deepEqual(statusOf(next, T0 + HOUR, true), { state: 'no-access', email: 'a@example.com', reason: 'unverified-email' })
 })
 
-test('an unverified email locks at once', () => {
-  const next = applyVerification(verifiedAt(T0), { kind: 'unverified-email', email: 'a@example.com', uid: 'u1' }, T0 + HOUR, 'background')
-  assert.deepEqual(statusOf(next, T0 + HOUR, true), { state: 'no-access', email: 'a@example.com', reason: 'unverified-email' })
+test('a first sign-in with a verified email is entitled at once: nothing else is asked for', () => {
+  const next = applyVerification(null, granted, T0, 'sign-in')
+  assert.deepEqual(statusOf(next, T0, true), {
+    state: 'entitled',
+    email: 'a@example.com',
+    lastVerifiedAt: T0,
+    lockAt: T0 + 14 * DAY,
+    offline: false,
+    persisted: true,
+    bypass: false
+  })
 })
 
 test('a revoked or disabled account locks at once, naming the code', () => {
@@ -90,12 +96,12 @@ test('a revoked or disabled account locks at once, naming the code', () => {
   }
 })
 
-test('network vs 404 vs revoked, side by side at the same age', () => {
+test('network vs unverified vs revoked, side by side at the same age', () => {
   const now = T0 + 2 * DAY
   const outcomes: [VerifyOutcome, string][] = [
     [network, 'entitled'],
-    [{ kind: 'error', message: 'Firestore answered 400.' }, 'entitled'],
-    [noGrant, 'no-access'],
+    [{ kind: 'error', message: 'Google refused the sign-in (400 INVALID_GRANT_TYPE).' }, 'entitled'],
+    [unverified, 'no-access'],
     [{ kind: 'revoked', code: 'USER_DISABLED' }, 'revoked']
   ]
   for (const [outcome, expected] of outcomes) {
@@ -111,9 +117,10 @@ test('past 14 days a background success does not unlock; a fresh sign-in does', 
   assert.equal(statusOf(signIn, now, true).state, 'entitled')
 })
 
-test('a no-access lock lifts when a later check finds a grant; a revoked one does not', () => {
+test('a no-access lock lifts when a later check finds the account entitled; a revoked one does not', () => {
   const now = T0 + DAY
-  const waiting = verifiedAt(0, { lock: { kind: 'no-access', reason: 'no-grant' } })
+  const waiting = verifiedAt(0, { lock: { kind: 'no-access', reason: 'unverified-email' } })
+  assert.equal(statusOf(waiting, now, true).state, 'no-access')
   assert.equal(statusOf(applyVerification(waiting, granted, now, 'background'), now, true).state, 'entitled')
   const revoked = verifiedAt(T0, { lock: { kind: 'revoked', code: 'TOKEN_EXPIRED' } })
   assert.equal(statusOf(applyVerification(revoked, granted, now, 'background'), now, true).state, 'revoked')
@@ -139,9 +146,14 @@ test('setting the clock back does not buy offline time', () => {
   assert.equal(statusOf(verifiedAt(T0, { highWaterAt: T0 + DAY }), T0 + DAY, true).state, 'entitled')
 })
 
-test('referrals left is 5 minus referralsUsed', () => {
-  const status = statusOf(verifiedAt(T0, { referralsUsed: 3 }), T0, true)
-  assert.equal(status.state === 'entitled' && status.referralsLeft, 2)
+test('a legacy no-grant lock (written while bay was invite-only) reads as signed-out and re-verifies into entitled', () => {
+  const now = T0 + DAY
+  const legacy = parseRecord({ ...verifiedAt(0), lock: { kind: 'no-access', reason: 'no-grant' } })
+  assert.ok(legacy, 'an old record with a no-grant lock still decodes')
+  // Not "no-access": that sentence would say the email is unverified, which is not what happened.
+  assert.deepEqual(statusOf(legacy, now, true), { state: 'signed-out' })
+  // The background check with the stored token lets the account in without the browser.
+  assert.equal(statusOf(applyVerification(legacy, granted, now, 'background'), now, true).state, 'entitled')
 })
 
 test('parseRecord refuses malformed records rather than trusting them', () => {

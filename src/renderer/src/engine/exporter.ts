@@ -234,7 +234,7 @@ export class FrameExporter {
         return { framesWritten, cancelled: true, incomplete: this.incomplete }
       }
 
-      await bay.export.finish(jobId)
+      await bay.export.finish(jobId, { incomplete: this.incomplete !== null })
       return { framesWritten, cancelled: false, incomplete: this.incomplete }
     } catch (error) {
       // The encoder rejects a frame of the wrong size, the wrong dimensions or out of

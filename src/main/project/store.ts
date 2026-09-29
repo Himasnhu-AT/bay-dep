@@ -16,6 +16,7 @@ import { posterFor, uniqueProjectName } from './library'
 import { thumbnailFile } from '../media/thumbnails'
 import type { RecentProject } from '@shared/ipc'
 import type { Project } from '@shared/project'
+import type { TelemetrySwitch } from '@shared/telemetry'
 import { appDbPath, autosaveDir, projectsDir } from '../paths'
 import {
   WINDOW_BOUNDS_KEY,
@@ -131,6 +132,38 @@ export function mcpClientsEnabled(): boolean {
 
 export function setMcpClientsEnabled(on: boolean): void {
   database()?.setState(MCP_CLIENTS_KEY, on ? '1' : '0')
+}
+
+const TELEMETRY_KEYS: Record<TelemetrySwitch, string> = { telemetry: 'telemetry', crash: 'crashReports' }
+const TELEMETRY_NOTICE_KEY = 'telemetryNotice'
+
+/**
+ * Whether usage telemetry / crash reports are on (Preferences › Privacy). **On unless the user
+ * turned it off** — the owner's decision — so a key never written reads as on. Kept in main's
+ * database, like the MCP switch, because main starts sending before any window exists. A database
+ * that will not open reads as off: bay cannot tell whether the user turned it off, and sending
+ * against a choice it cannot read is the wrong way to be wrong.
+ */
+export function telemetrySwitches(): Record<TelemetrySwitch, boolean> {
+  const db = database()
+  return {
+    telemetry: db !== null && db.getState(TELEMETRY_KEYS.telemetry) !== '0',
+    crash: db !== null && db.getState(TELEMETRY_KEYS.crash) !== '0'
+  }
+}
+
+export function setTelemetrySwitchStored(which: TelemetrySwitch, on: boolean): void {
+  database()?.setState(TELEMETRY_KEYS[which], on ? '1' : '0')
+}
+
+/** The first-launch notice about what is sent: pending until dismissed once. */
+export function telemetryNoticePending(): boolean {
+  const db = database()
+  return db !== null && db.getState(TELEMETRY_NOTICE_KEY) !== '1'
+}
+
+export function dismissTelemetryNotice(): void {
+  database()?.setState(TELEMETRY_NOTICE_KEY, '1')
 }
 
 /** For the UI's degraded-state indicator, beside the ffmpeg warning. */

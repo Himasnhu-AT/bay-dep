@@ -1,5 +1,5 @@
 /**
- * bay's access state in the running app: load it, verify it, sign in, refer — and tell everyone.
+ * bay's access state in the running app: load it, verify it, sign in — and tell everyone.
  *
  * The decisions live in the Electron-free modules beside this one (`policy`, `handoff`, `google`,
  * `token-store`, `gate`, `build`), each unit-tested. This file is the wiring: timers, the disk,
@@ -13,21 +13,12 @@
 import { app, BrowserWindow, safeStorage, shell } from 'electron'
 import { readFile, rm, writeFile, rename } from 'node:fs/promises'
 import { join } from 'node:path'
-import {
-  HANDOFF_TIMEOUT_MS,
-  REFERRAL_LIMIT,
-  REVERIFY_INTERVAL_MS,
-  isEntitled,
-  looksLikeEmail,
-  normaliseEmail,
-  type AccessStatus,
-  type ReferralResult
-} from '@shared/access'
+import { HANDOFF_TIMEOUT_MS, REVERIFY_INTERVAL_MS, isEntitled, type AccessStatus } from '@shared/access'
 import { IPC } from '@shared/ipc'
 import { applyVerification, canReverify, statusOf, type AccessRecord } from './policy'
 import { accessBypass, allowedOrigins, browserSuppressed, siteOrigin } from './build'
 import { startHandoff, type Handoff } from './handoff'
-import { commit, readGrant, readReferralsUsed, referralCommitBody, refreshIdToken, userCreateBody, verifyAccess, type Fetch } from './google'
+import { verifyAccess, type Fetch } from './google'
 import { decodeAccessFile, encodeAccessFile, type Cipher } from './token-store'
 
 const cipher: Cipher = {
@@ -63,7 +54,6 @@ export function accessStatus(): AccessStatus {
       lockAt: Number.MAX_SAFE_INTEGER,
       offline: false,
       persisted: true,
-      referralsLeft: null,
       bypass: true
     }
   }
@@ -262,91 +252,4 @@ export async function recheck(): Promise<AccessStatus> {
   if (transient?.state === 'error') transient = null
   await verifyInBackground()
   return publish()
-}
-
-export function requestAccess(): void {
-  openInBrowser(`${siteOrigin(process.env, app.isPackaged)}/waitlist`)
-}
-
-// -- referrals ----------------------------------------------------------------------------
-
-export async function refer(input: string): Promise<ReferralResult> {
-  const friend = normaliseEmail(input)
-  if (bypass) {
-    return { ok: false, reason: 'not-approved', error: 'Referrals need a signed-in account; this bay is running with BAY_ACCESS=dev.' }
-  }
-  if (!looksLikeEmail(friend)) return { ok: false, reason: 'invalid-email', error: `“${input}” is not an email address.` }
-  if (!record || !refreshToken || !accessEntitled()) {
-    return { ok: false, reason: 'not-approved', error: 'Only an account with access can refer someone. Sign in first.' }
-  }
-  if (friend === record.email) return { ok: false, reason: 'self', error: 'That is your own address — it already has access.' }
-
-  const refreshed = await refreshIdToken(netFetch, refreshToken)
-  if (refreshed.kind === 'network') {
-    return { ok: false, reason: 'offline', error: `bay could not reach Google (${refreshed.message}). Try again when you are online.` }
-  }
-  if (refreshed.kind !== 'ok') {
-    if (refreshed.kind === 'revoked') {
-      record = applyVerification(record, refreshed, Date.now(), 'background')
-      await save()
-      publish()
-    }
-    return { ok: false, reason: 'failed', error: refreshed.kind === 'revoked' ? `Your sign-in is no longer valid (${refreshed.code}). Sign in again.` : refreshed.message }
-  }
-  refreshToken = refreshed.refreshToken
-  const { idToken, claims } = refreshed
-
-  let used = await readReferralsUsed(netFetch, idToken, claims.uid)
-  if (used === null) return { ok: false, reason: 'offline', error: 'bay could not read your referral count. Try again.' }
-  if (used === 'missing') {
-    const created = await commit(netFetch, idToken, userCreateBody({ uid: claims.uid, email: record.email }))
-    if (created.kind !== 'ok' && created.kind !== 'exists') {
-      return { ok: false, reason: 'failed', error: 'bay could not set up your referral count, so nothing was granted. Try again.' }
-    }
-    used = 0
-  }
-  if (used >= REFERRAL_LIMIT) {
-    await rememberReferrals(used)
-    return { ok: false, reason: 'quota-used', error: `You have used all ${REFERRAL_LIMIT} of your referrals.` }
-  }
-
-  const result = await commit(netFetch, idToken, referralCommitBody({ friendEmail: friend, referrerEmail: record.email, uid: claims.uid }))
-  switch (result.kind) {
-    case 'ok':
-      await rememberReferrals(used + 1)
-      return { ok: true, email: friend, referralsLeft: REFERRAL_LIMIT - (used + 1) }
-    case 'exists':
-      return { ok: false, reason: 'already-has-access', error: `${friend} already has access to bay. No referral was used.` }
-    case 'network':
-      return { ok: false, reason: 'offline', error: `bay could not reach Firestore (${result.message}). No referral was used.` }
-    case 'denied': {
-      // The rules refused the pair. Find out which of the named reasons it was.
-      const verified = await verifyAccess(netFetch, refreshToken)
-      if (verified.outcome.kind === 'no-grant' || verified.outcome.kind === 'unverified-email') {
-        record = applyVerification(record, verified.outcome, Date.now(), 'background')
-        await save()
-        publish()
-        return { ok: false, reason: 'not-approved', error: 'Your account no longer has access, so it cannot refer anyone.' }
-      }
-      // The rules answer 403 for an existing grant too (it is evaluated as an update). A grant
-      // this account made is readable by it; one someone else made is not.
-      const grant = await readGrant(netFetch, idToken, friend)
-      return grant === 'mine'
-        ? { ok: false, reason: 'already-has-access', error: `You already referred ${friend}; they have access. No referral was used.` }
-        : {
-            ok: false,
-            reason: 'already-has-access',
-            error: `Firestore refused the referral: ${friend} may already have access through someone else, or the grant was refused. No referral was used.`
-          }
-    }
-    case 'error':
-      return { ok: false, reason: 'failed', error: `${result.message} No referral was used.` }
-  }
-}
-
-async function rememberReferrals(used: number): Promise<void> {
-  if (!record) return
-  record = { ...record, referralsUsed: used }
-  await save()
-  publish()
 }

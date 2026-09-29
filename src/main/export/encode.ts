@@ -39,6 +39,8 @@ import { audioCodecArgs, containerArgs, extensionFor, tailOf, videoCodecArgs } f
 import { deliveredLoudness, masterAudio, verifyDelivered } from './master'
 import type { LoudnessMeasurement, LoudnessReport } from '@shared/loudness'
 import { deliveredFindings } from './delivered'
+import { track } from '../telemetry/service'
+import type { ExportFailStage } from '@shared/telemetry'
 
 const AUDIO_ONLY: ReadonlySet<ExportFormat> = new Set<ExportFormat>(['wav', 'mp3'])
 
@@ -77,6 +79,11 @@ interface Job {
   exited: Promise<void> | null
   /** When this job last sent progress. Per job, so two exports do not throttle each other. */
   lastEmitMs: number
+  /** For the usage event: when the job started, and the last stage it reached before any failure. */
+  startedAt: number
+  stage: ExportFailStage
+  /** The renderer said a written frame was wrong (pending or placeholder); see `finish`. */
+  incomplete: boolean
 }
 
 const jobs = new Map<string, Job>()
@@ -94,6 +101,21 @@ export function wasDelivered(outputPath: string): boolean {
 function emit(job: Job, progress: Omit<ExportProgress, 'jobId'>): void {
   // Recorded here, the one place every `done` passes, rather than at each of its three sites.
   if (progress.stage === 'done' && progress.outputPath) delivered.add(progress.outputPath)
+  // The usage events, from the same place: sizes and times only — never the path or the project.
+  if (progress.stage === 'preparing' || progress.stage === 'rendering' || progress.stage === 'encoding') job.stage = progress.stage
+  if (progress.stage === 'done') {
+    track('export_done', {
+      durationSec: job.fps > 0 ? job.framesTotal / job.fps : 0,
+      width: job.width,
+      height: job.height,
+      fps: job.fps,
+      ok: (progress.findings ?? []).every((finding) => finding.severity !== 'blocking'),
+      incomplete: job.incomplete,
+      elapsedMs: Math.max(0, Math.round(Date.now() - job.startedAt))
+    })
+  } else if (progress.stage === 'failed') {
+    track('export_failed', { stage: job.stage })
+  }
   if (job.sender.isDestroyed()) return
   job.sender.send(IPC.exportProgress, { jobId: job.id, ...progress } satisfies ExportProgress)
 }
@@ -210,7 +232,10 @@ export async function start(request: ExportRequest, sender: WebContents): Promis
     failed: false,
     failureReason: null,
     exited: null,
-    lastEmitMs: 0
+    lastEmitMs: 0,
+    startedAt: Date.now(),
+    stage: 'unknown',
+    incomplete: false
   }
   jobs.set(job.id, job)
 
@@ -551,9 +576,10 @@ async function moveInto(source: string, target: string): Promise<void> {
   }
 }
 
-export async function finish(jobId: string): Promise<void> {
+export async function finish(jobId: string, summary?: { incomplete: boolean }): Promise<void> {
   const job = jobs.get(jobId)
   if (!job || job.cancelled) return
+  if (summary?.incomplete) job.incomplete = true
   if (job.failed) {
     jobs.delete(jobId)
     throw new Error(job.failureReason ?? 'This export has already failed.')

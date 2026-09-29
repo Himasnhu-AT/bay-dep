@@ -3,11 +3,15 @@ import { createRoot } from 'react-dom/client'
 import { App } from './App'
 import { AccessGate } from './access/AccessGate'
 import { UpdateBanner } from './update/UpdateBanner'
+import { installErrorReports } from './lib/errorReports'
 // Bundled, not fetched: the CSP permits no remote origin, and Vite emits the woff2 files
 // beside the stylesheet where `font-src 'self'` covers them.
 import '@fontsource-variable/inter'
 import '@fontsource-variable/jetbrains-mono'
 import './styles.css'
+
+// Before anything renders, so an error in the first render is reported too (if crash reports are on).
+installErrorReports()
 
 const container = document.getElementById('root')
 if (!container) throw new Error('#root is missing from index.html')

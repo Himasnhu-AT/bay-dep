@@ -25,8 +25,8 @@ exported file, a window reload that stranded a call — was invisible to the uni
 ./run.sh --stop
 ```
 
-**The access gate, and the dev bypass.** bay is invite-only (`src/main/auth/`, `src/shared/access.ts`):
-until an account with access signs in, the window shows the access screen, main refuses every
+**The access gate, and the dev bypass.** signing in is mandatory (`src/main/auth/`, `src/shared/access.ts`):
+until a Google account with a verified email signs in, the window shows the access screen, main refuses every
 editor IPC channel, and both MCP sockets answer every tool call with *"bay is locked: … open the bay
 window and sign in …"*. `./run.sh` launches with `BAY_ACCESS=dev`, which skips the check so the
 probes work unchanged; launching `electron .` by hand needs it too:

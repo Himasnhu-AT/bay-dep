@@ -12,6 +12,7 @@ import { ProjectsHome } from '@/home/ProjectsHome'
 import { Workspace } from '@/editor/workspace/Workspace'
 import { SettingsDialog } from '@/settings/SettingsDialog'
 import { ProjectSettingsDialog } from '@/settings/ProjectSettingsDialog'
+import { TelemetryNotice, usePageViews } from '@/settings/TelemetryNotice'
 import { Button, Modal } from '@/components'
 import type { Project } from '@shared/project'
 import { IMPORT_FILES_EVENT } from '@/lib/agentAttachments'
@@ -307,12 +308,16 @@ export function App(): ReactNode {
     }
   }, [importPaths, notify])
 
+  // Which workspace page is showing, only while a project is open (`page_view`, usage telemetry).
+  usePageViews(screen === 'editor')
+
   // After every hook, so switching screens never changes the order React sees them in.
   if (screen === 'home') {
     return (
       <>
         <ProjectsHome />
         <SettingsDialog />
+        <TelemetryNotice />
         <ShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
       </>
     )
@@ -326,6 +331,7 @@ export function App(): ReactNode {
       <ProjectSettingsDialog />
       <SettingsDialog />
       <ShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
+      <TelemetryNotice />
 
       <Modal
         open={leaving !== null}

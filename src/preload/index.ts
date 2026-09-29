@@ -216,7 +216,7 @@ const api: BayApi = {
       ipcRenderer.invoke(IPC.exportStart, request) as Promise<ExportJob>,
     pushFrame: (frame: ExportFrame) =>
       ipcRenderer.invoke(IPC.exportPushFrame, frame) as Promise<void>,
-    finish: (jobId: string) => ipcRenderer.invoke(IPC.exportFinish, jobId) as Promise<void>,
+    finish: (jobId: string, summary?: { incomplete: boolean }) => ipcRenderer.invoke(IPC.exportFinish, jobId, summary) as Promise<void>,
     cancel: (jobId: string) => ipcRenderer.invoke(IPC.exportCancel, jobId) as Promise<void>,
     chooseOutputPath: (defaultName: string, format: ExportFormat) =>
       ipcRenderer.invoke(IPC.exportChoosePath, defaultName, format) as Promise<string | null>,
@@ -275,8 +275,6 @@ const api: BayApi = {
     cancelSignIn: () => ipcRenderer.invoke(IPC.accessCancelSignIn),
     signOut: () => ipcRenderer.invoke(IPC.accessSignOut),
     recheck: () => ipcRenderer.invoke(IPC.accessRecheck),
-    requestAccess: () => ipcRenderer.invoke(IPC.accessRequestAccess),
-    refer: (email: string) => ipcRenderer.invoke(IPC.accessRefer, email),
     onChange: (listener: (status: AccessStatus) => void) => {
       const handler = (_event: unknown, payload: AccessStatus): void => listener(payload)
       ipcRenderer.on(IPC.accessChanged, handler)
@@ -296,6 +294,13 @@ const api: BayApi = {
     }
   },
 
+  telemetry: {
+    status: () => ipcRenderer.invoke(IPC.telemetryStatus) as ReturnType<BayApi['telemetry']['status']>,
+    set: (which, on) => ipcRenderer.invoke(IPC.telemetrySet, which, on) as ReturnType<BayApi['telemetry']['set']>,
+    dismissNotice: () => ipcRenderer.invoke(IPC.telemetryDismissNotice) as ReturnType<BayApi['telemetry']['dismissNotice']>,
+    track: (name, props) => ipcRenderer.send(IPC.telemetryTrack, name, props),
+    reportError: (report) => ipcRenderer.send(IPC.telemetryReportError, report)
+  },
   window: {
     minimise: () => ipcRenderer.invoke(IPC.windowMinimise) as Promise<void>,
     toggleMaximise: () => ipcRenderer.invoke(IPC.windowToggleMaximise) as Promise<void>,

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Check, Copy, ExternalLink, LoaderCircle, LogIn, UserPlus } from 'lucide-react'
+import { ExternalLink, LoaderCircle, LogIn } from 'lucide-react'
 import { describeAccess, isEntitled, type AccessStatus } from '@shared/access'
 import { BayMark, Button } from '@/components'
 import { bay } from '@/lib/bridge'
@@ -38,7 +38,7 @@ export function useAccess(): AccessStatus | null {
 export function AccessGate({ children }: { children: ReactNode }): ReactNode {
   const status = useAccess()
   const entitled = status !== null && isEntitled(status)
-  // Access can be lost while the editor is open — a revoked grant found by the six-hourly check,
+  // Access can be lost while the editor is open — a disabled account found by the six-hourly check,
   // or fourteen days without one. Unmounting the editor then threw away every unsaved edit. So a
   // session that was working keeps its editor mounted under the access screen (main refuses its
   // calls either way), and the open project is written to its autosave sidecar at the moment it
@@ -154,17 +154,10 @@ function Actions(props: {
   }
 
   if (status.state === 'no-access') {
-    // Two ways in: a referral from someone who has access — who must type this exact address, so
-    // the screen hands it over with a Copy button — or the website's waitlist.
+    // The only refusal left is an unverified email: verify it and check again, or use another account.
     return (
       <div className="flex flex-col gap-3">
-        {status.reason === 'no-grant' && <CopyEmail email={status.email} />}
         <div className="flex flex-wrap items-center gap-2">
-          {status.reason === 'no-grant' && (
-            <Button variant="primary" size="md" icon={<UserPlus className="size-3.5" />} onClick={() => void api?.access.requestAccess()}>
-              Join the waitlist
-            </Button>
-          )}
           <Button size="md" disabled={busy} icon={<LogIn className="size-3.5" />} onClick={() => void signIn()}>
             Use a different account
           </Button>
@@ -180,35 +173,6 @@ function Actions(props: {
     <div className="flex flex-wrap items-center gap-2">
       <Button variant="primary" size="md" disabled={busy} icon={<LogIn className="size-3.5" />} onClick={() => void signIn()}>
         {status.state === 'error' ? 'Try again' : 'Sign in with your browser'}
-      </Button>
-    </div>
-  )
-}
-
-/** The address a referrer must enter, with a Copy button. The copy is confirmed, not assumed. */
-function CopyEmail({ email }: { email: string }): ReactNode {
-  const [copied, setCopied] = useState<'no' | 'yes' | 'failed'>('no')
-  useEffect(() => {
-    if (copied === 'no') return
-    const t = setTimeout(() => setCopied('no'), 2000)
-    return () => clearTimeout(t)
-  }, [copied])
-  return (
-    <div className="flex items-center gap-2 rounded-md border border-line bg-surface-0 py-1 pr-1 pl-2.5" data-access-email>
-      <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-ink-0 select-text" title={email}>
-        {email}
-      </span>
-      <Button
-        size="sm"
-        icon={copied === 'yes' ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
-        onClick={() => {
-          navigator.clipboard.writeText(email).then(
-            () => setCopied('yes'),
-            () => setCopied('failed')
-          )
-        }}
-      >
-        {copied === 'yes' ? 'Copied' : copied === 'failed' ? 'Copy failed' : 'Copy'}
       </Button>
     </div>
   )

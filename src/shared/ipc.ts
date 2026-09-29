@@ -27,8 +27,9 @@ import type {
 import type { CompositionFault, CompositionInfo } from './composition'
 import type { McpToolCall, McpToolResult } from './mcp'
 import type { LoudnessMeasurement, LoudnessReport, LoudnessTarget } from './loudness'
-import type { AccessStatus, ReferralResult } from './access'
+import type { AccessStatus } from './access'
 import type { UpdateStatus } from './update'
+import type { RendererErrorReport, TelemetryProps, TelemetryStatus, TelemetrySwitch } from './telemetry'
 import type { Finding } from './findings'
 import type { UrlImportResult } from './url-import'
 import type { EditingStyle } from './styles/types'
@@ -785,8 +786,11 @@ export interface BayApi {
     start(request: ExportRequest): Promise<ExportJob>
     /** Renderer pushes one composited frame; resolves when the encoder has taken it. */
     pushFrame(frame: ExportFrame): Promise<void>
-    /** Tells the encoder no more frames are coming. */
-    finish(jobId: string): Promise<void>
+    /**
+     * Tells the encoder no more frames are coming. `summary.incomplete`: some written frame was
+     * wrong (pending or placeholder) — only the renderer knows, and the export's usage event says so.
+     */
+    finish(jobId: string, summary?: { incomplete: boolean }): Promise<void>
     cancel(jobId: string): Promise<void>
     chooseOutputPath(defaultName: string, format: ExportFormat): Promise<string | null>
     /**
@@ -833,10 +837,6 @@ export interface BayApi {
     signOut(): Promise<AccessStatus>
     /** Verify now, instead of waiting for the next scheduled check. */
     recheck(): Promise<AccessStatus>
-    /** Opens the website's waitlist in the browser. */
-    requestAccess(): Promise<void>
-    /** Grant `email` access as a referral from this account (entitled only). */
-    refer(email: string): Promise<ReferralResult>
     /** Every status change, pushed. Returns an unsubscribe function. */
     onChange(listener: (status: AccessStatus) => void): () => void
   }
@@ -859,6 +859,20 @@ export interface BayApi {
     install(): Promise<UpdateStatus>
     /** Every status change, pushed. Returns an unsubscribe function. */
     onChange(listener: (status: UpdateStatus) => void): () => void
+  }
+
+  /**
+   * Usage telemetry and crash reports (`@shared/telemetry`): Preferences › Privacy's switches and
+   * the first-launch notice. Main sends; the renderer only asks it to record a page view or its
+   * own uncaught error — fire-and-forget, so neither can fail a caller.
+   */
+  telemetry: {
+    status(): Promise<TelemetryStatus>
+    /** Turn one switch; remembered in main's database. Off deletes what of it was queued. */
+    set(which: TelemetrySwitch, on: boolean): Promise<TelemetryStatus>
+    dismissNotice(): Promise<TelemetryStatus>
+    track(name: 'page_view', props: TelemetryProps<'page_view'>): void
+    reportError(report: RendererErrorReport): void
   }
 
   window: {
@@ -1006,8 +1020,6 @@ export const IPC = {
   accessCancelSignIn: 'access:cancel-sign-in',
   accessSignOut: 'access:sign-out',
   accessRecheck: 'access:recheck',
-  accessRequestAccess: 'access:request-access',
-  accessRefer: 'access:refer',
   /** main -> renderer: the new `AccessStatus`, whenever it changes. */
   accessChanged: 'access:changed',
 
@@ -1020,5 +1032,13 @@ export const IPC = {
 
   windowMinimise: 'window:minimise',
   windowToggleMaximise: 'window:toggle-maximise',
-  windowClose: 'window:close'
+  windowClose: 'window:close',
+
+  telemetryStatus: 'telemetry:status',
+  telemetrySet: 'telemetry:set',
+  telemetryDismissNotice: 'telemetry:dismiss-notice',
+  /** renderer -> main, sent (not invoked): one allow-listed event. */
+  telemetryTrack: 'telemetry:track',
+  /** renderer -> main, sent (not invoked): the renderer's own uncaught error, text only. */
+  telemetryReportError: 'telemetry:report-error'
 } as const
