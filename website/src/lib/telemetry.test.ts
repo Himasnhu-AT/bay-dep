@@ -13,7 +13,7 @@ import {
   checkTelemetry,
   crashSignature,
   EXPORT_EVENTS,
-  scrubPaths,
+  scrub,
   type TelemetryBatch,
   topFrame,
 } from "@/lib/telemetry";
@@ -31,8 +31,8 @@ const good = () => ({
   osVersion: "15.6.1",
   arch: "arm64",
   events: [
-    { name: "app.launch", at: 1_790_000_000_000 },
-    { name: "export.completed", at: 1_790_000_001_000, props: { format: "mp4", seconds: 42.5, gpu: true } },
+    { name: "app_open", at: 1_790_000_000_000 },
+    { name: "export_done", at: 1_790_000_001_000, props: { durationSec: 42.5, width: 1920, ok: true } },
   ],
 });
 
@@ -65,7 +65,7 @@ describe("checkTelemetry", () => {
     if (!r.ok) return;
     assert.equal("extra" in r.value, false);
     assert.deepEqual(Object.keys(r.value.events[0]).sort(), ["at", "name", "props"]);
-    assert.deepEqual(r.value.events[0].props, { format: "mp4", seconds: 42.5, gpu: true });
+    assert.deepEqual(r.value.events[0].props, { durationSec: 42.5, width: 1920, ok: true });
   });
 
   test("the body must be an object", () => {
@@ -103,8 +103,10 @@ describe("checkTelemetry", () => {
     refuses(at({ name: "ok", at: 1, props: { note: "x".repeat(201) } }), "events[1].props.note", /200/);
     assert.equal(at({ name: "ok", at: 1, props: { note: "x".repeat(200) } }).ok, true);
     refuses(at({ name: "ok", at: 1, props: { nested: { a: 1 } } }), "events[1].props.nested", /string, number or boolean/);
-    refuses(at({ name: "ok", at: 1, props: { __name__: 1 } }), "events[1].props key");
-    refuses(at({ name: "ok", at: 1, props: { "has space": 1 } }), "events[1].props key");
+    // A key the allow-list does not name is dropped, not refused: it never becomes a field.
+    const odd = at({ name: "app_open", at: 1, props: { __name__: 1, "has space": 1, launchMs: 5 } });
+    assert.ok(odd.ok);
+    if (odd.ok) assert.deepEqual(odd.value.events[1].props, { launchMs: 5 });
   });
 });
 
@@ -142,8 +144,8 @@ describe("checkCrash", () => {
     assert.equal(r.value.message, "ENOENT: open '<path>'");
     assert.equal(r.value.stack?.includes("ada"), false);
     assert.match(r.value.stack ?? "", /<path>\/bay\.app\/Contents\/Resources\/app\.asar\/out\/main\/index\.js:3:9/);
-    assert.equal(scrubPaths("/private/var/folders/xy/T/bay-1/a.wav failed"), "<path> failed");
-    assert.equal(scrubPaths("no path here"), "no path here");
+    assert.equal(scrub("/private/var/folders/xy/T/bay-1/a.wav failed"), "<path> failed");
+    assert.equal(scrub("no path here"), "no path here");
   });
 
   test("one fault is one signature across builds; a different fault is another", () => {
@@ -158,24 +160,52 @@ describe("checkCrash", () => {
 });
 
 describe("what is written", () => {
-  test("one event doc each, a daily rollup whose keys keep their dots, an install doc, and no IP", () => {
+  test("one batch doc, a daily shard whose keys keep their dots, an install doc, and no IP", () => {
     const r = checkTelemetry(good());
     assert.ok(r.ok);
     if (!r.ok) return;
-    const writes = telemetryWrites(r.value, Date.UTC(2026, 8, 29, 12)) as {
+    // Dotted names pass the shape but not the allow-list; the rollup must still quote them if one ever does.
+    const dotted = { ...r.value, events: [...r.value.events, { name: "export.completed", at: 1 }] };
+    const writes = telemetryWrites(dotted, Date.UTC(2026, 8, 29, 12), 3) as {
       update: { name: string; fields: Record<string, unknown> };
       updateTransforms?: { fieldPath: string }[];
     }[];
-    assert.equal(writes.length, 4);
-    assert.match(writes[0].update.name, /\/telemetry_events\/[0-9a-f-]{36}$/);
+    assert.equal(writes.length, 3);
+    assert.match(writes[0].update.name, /\/telemetry_batches\/[0-9a-f-]{36}$/);
     assert.deepEqual(writes[0].update.fields.day, { stringValue: "2026-09-29" });
-    assert.match(writes[2].update.name, /\/telemetry_daily\/2026-09-29$/);
+    assert.match(writes[1].update.name, /\/telemetry_daily\/2026-09-29_3$/);
     assert.deepEqual(
-      writes[2].updateTransforms?.map((t) => t.fieldPath),
-      ["events", "counts.`app.launch`", "counts.`export.completed`"],
+      writes[1].updateTransforms?.map((t) => t.fieldPath),
+      ["events", "counts.`app_open`", "counts.`export_done`", "counts.`export.completed`"],
     );
-    assert.match(writes[3].update.name, new RegExp(`/telemetry_installs/2026-09-29_${INSTALL}$`));
+    assert.match(writes[2].update.name, new RegExp(`/telemetry_installs/2026-09-29_${INSTALL}$`));
     assert.doesNotMatch(JSON.stringify(writes), /\bip\b|forwarded|127\.0\.0\.1/i);
+  });
+
+  test("an export_done with ok:false or incomplete:true is counted as finished with problems", () => {
+    const r = checkTelemetry({
+      ...good(),
+      events: [
+        { name: "export_done", at: 1, props: { ok: true } },
+        { name: "export_done", at: 2, props: { ok: false } },
+        { name: "export_done", at: 3, props: { ok: true, incomplete: true } },
+        { name: "export_failed", at: 4, props: { stage: "encoding" } },
+      ],
+    });
+    assert.ok(r.ok);
+    if (!r.ok) return;
+    const daily = telemetryWrites(r.value, Date.UTC(2026, 8, 29), 0)[1] as {
+      updateTransforms: { fieldPath: string; increment?: { integerValue: string } }[];
+    };
+    const by = Object.fromEntries(daily.updateTransforms.map((t) => [t.fieldPath, t.increment?.integerValue]));
+    assert.equal(by.exportProblems, "2");
+    assert.equal(by["counts.`export_done`"], "3");
+    // The positive control: a clean batch writes no problem count at all.
+    const clean = checkTelemetry({ ...good(), events: [{ name: "export_done", at: 1, props: { ok: true } }] });
+    assert.ok(clean.ok);
+    if (!clean.ok) return;
+    const t = (telemetryWrites(clean.value, 0, 0)[1] as { updateTransforms: { fieldPath: string }[] }).updateTransforms;
+    assert.equal(t.some((x) => x.fieldPath === "exportProblems"), false);
   });
 
   test("a crash doc carries its signature and day", () => {
@@ -198,7 +228,11 @@ describe("intake", () => {
   const accept = async (batch: TelemetryBatch) => {
     assert.equal(batch.installId, batch.installId.toLowerCase());
   };
-  const opts = (limit = new RateLimit(100, 60_000), store = accept) => ({ check: checkTelemetry, store, limit });
+  const opts = (limit = new RateLimit(100, 60_000), store = accept) => ({
+    check: checkTelemetry,
+    store,
+    limits: { perInstall: limit, perIp: new RateLimit(1_000, 60_000), global: new RateLimit(1_000, 60_000) },
+  });
 
   test("204 for a good batch; 400 naming the field for a bad one; 400 for non-JSON", async () => {
     assert.equal((await intake(post(JSON.stringify(good())), opts())).status, 204);
@@ -228,13 +262,13 @@ describe("intake", () => {
     assert.equal((await intake(chunked, opts())).status, 413);
   });
 
-  test("429 once an install and IP pass the limit; another install is not held back", async () => {
+  test("429 once an install passes its limit; another install is not held back", async () => {
     const limit = new RateLimit(2, 60_000);
     assert.equal((await intake(post(JSON.stringify(good())), opts(limit))).status, 204);
     assert.equal((await intake(post(JSON.stringify(good())), opts(limit))).status, 204);
     const held = await intake(post(JSON.stringify(good())), opts(limit));
     assert.equal(held.status, 429);
-    assert.match((await held.json()).error, /retry in \d+ seconds/);
+    assert.match((await held.json()).error, /too many requests from this install; retry in \d+ seconds/);
     assert.ok(Number(held.headers.get("retry-after")) > 0);
     const other = { ...good(), installId: "1b6f3c1e-2a4d-4e8f-9a1b-3c5d7e9f1a2b" };
     assert.equal((await intake(post(JSON.stringify(other)), opts(limit))).status, 204);
@@ -261,9 +295,9 @@ describe("dashboard", () => {
     const s = summarize(
       days,
       [
-        { day: "2026-09-28", events: 5, counts: { "app.launch": 3, [EXPORT_EVENTS.ok]: 2 } },
-        { day: "2026-09-29", events: 2, counts: { [EXPORT_EVENTS.failed]: 1, [EXPORT_EVENTS.ok]: 1 } },
-        { day: "2026-09-01", events: 99, counts: { "app.launch": 99 } },
+        { day: "2026-09-28", events: 5, counts: { "app.launch": 3, [EXPORT_EVENTS.ok]: 2 }, exportProblems: 1 },
+        { day: "2026-09-29", events: 2, counts: { [EXPORT_EVENTS.failed]: 1, [EXPORT_EVENTS.ok]: 1 }, exportProblems: 0 },
+        { day: "2026-09-01", events: 99, counts: { "app.launch": 99 }, exportProblems: 9 },
       ],
       [
         { day: "2026-09-28", installId: "a", appVersion: "0.9.2", lastSeen: 1 },
@@ -284,7 +318,7 @@ describe("dashboard", () => {
     ]);
     assert.equal(s.installs, 2);
     assert.deepEqual(s.versions, [{ version: "0.9.3", installs: 2 }]);
-    assert.deepEqual(s.exports, { ok: 3, failed: 1 });
+    assert.deepEqual(s.exports, { finished: 3, problems: 1, failed: 1 });
     assert.deepEqual(s.counts[0], { name: "app.launch", count: 3 });
     assert.equal(s.crashes.length, 2);
     const [top] = s.crashes;

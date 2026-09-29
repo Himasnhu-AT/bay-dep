@@ -109,8 +109,13 @@ export async function standingOf(user: User): Promise<Standing> {
 // The owner's dashboard. The Firestore rules refuse these reads to anyone but
 // the owner; the page only hides them from people who could not use them anyway.
 
-/** Most rows one dashboard load reads from each collection. The page says when it hit one. */
-export const READ_CAP = { installs: 20000, crashes: 2000 } as const;
+/**
+ * Most rows one dashboard load reads from each collection. The page names these
+ * limits, and says when a load hit one. `daily` is ten shards a day, so 400
+ * covers a 30-day window with room to spare; crashes are read newest first, so
+ * a capped read drops the oldest reports, never an arbitrary handful.
+ */
+export const READ_CAP = { daily: 400, installs: 20000, crashes: 2000 } as const;
 
 type Stamp = { toMillis(): number } | undefined;
 
@@ -123,6 +128,20 @@ async function rows(fb: Firebase, name: string, fromDay: string, cap: number) {
   return snap.docs.map((d) => d.data());
 }
 
+/**
+ * Crashes newest first by the moment the site received them. Filtering and
+ * ordering on the same one field keeps this on the automatic single-field
+ * index; `day >=` with `receivedAt` order would need a composite index.
+ */
+async function crashRows(fb: Firebase, fromDay: string, cap: number) {
+  const { collection, getDocs, limit, orderBy, query, where } = fb.fs;
+  const since = new Date(`${fromDay}T00:00:00Z`);
+  const snap = await getDocs(
+    query(collection(fb.db, "crashes"), where("receivedAt", ">=", since), orderBy("receivedAt", "desc"), limit(cap)),
+  );
+  return snap.docs.map((d) => d.data());
+}
+
 export async function loadDashboard(fromDay: string): Promise<{
   daily: DailyRow[];
   installs: InstallRow[];
@@ -130,15 +149,16 @@ export async function loadDashboard(fromDay: string): Promise<{
 }> {
   const fb = await loadFirebase();
   const [daily, installs, crashes] = await Promise.all([
-    rows(fb, "telemetry_daily", fromDay, 400),
+    rows(fb, "telemetry_daily", fromDay, READ_CAP.daily),
     rows(fb, "telemetry_installs", fromDay, READ_CAP.installs),
-    rows(fb, "crashes", fromDay, READ_CAP.crashes),
+    crashRows(fb, fromDay, READ_CAP.crashes),
   ]);
   return {
     daily: daily.map((v) => ({
       day: String(v.day ?? ""),
       events: Number(v.events ?? 0),
       counts: (v.counts ?? {}) as Record<string, number>,
+      exportProblems: Number(v.exportProblems ?? 0),
     })),
     installs: installs.map((v) => ({
       day: String(v.day ?? ""),

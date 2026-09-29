@@ -22,6 +22,8 @@ import {
   doc,
   getDoc,
   getDocs,
+  limit,
+  orderBy,
   query,
   setDoc,
   Timestamp,
@@ -37,7 +39,7 @@ const OWNER = { uid: 'owner-uid', email: 'hyattherate2005@gmail.com' }
 const ALICE = { uid: 'alice-uid', email: 'alice@example.com' }
 const BOB = { uid: 'bob-uid', email: 'bob@example.com' }
 
-const REPORTS = ['telemetry_events', 'telemetry_daily', 'telemetry_installs', 'crashes']
+const REPORTS = ['telemetry_batches', 'telemetry_daily', 'telemetry_installs', 'crashes']
 
 /** @type {import('@firebase/rules-unit-testing').RulesTestEnvironment} */
 let env
@@ -72,14 +74,14 @@ async function seed(fn) {
 /** One doc in each report collection, shaped as the website writes them. */
 async function seedReports() {
   await seed(async (db) => {
-    await setDoc(doc(db, 'telemetry_events', 'e1'), { name: 'app.launch', day: '2026-09-29', installId: 'i1' })
-    await setDoc(doc(db, 'telemetry_daily', '2026-09-29'), { day: '2026-09-29', events: 1, counts: { 'app.launch': 1 } })
+    await setDoc(doc(db, 'telemetry_batches', 'b1'), { day: '2026-09-29', installId: 'i1', count: 1, events: [{ name: 'app_open', at: 1 }] })
+    await setDoc(doc(db, 'telemetry_daily', '2026-09-29_3'), { day: '2026-09-29', shard: 3, events: 1, counts: { app_open: 1 } })
     await setDoc(doc(db, 'telemetry_installs', '2026-09-29_i1'), { day: '2026-09-29', installId: 'i1', appVersion: '0.9.3' })
-    await setDoc(doc(db, 'crashes', 'c1'), { day: '2026-09-29', signature: 's', message: 'boom' })
+    await setDoc(doc(db, 'crashes', 'c1'), { day: '2026-09-29', signature: 's', message: 'boom', receivedAt: Timestamp.fromDate(new Date('2026-09-29T12:00:00Z')) })
   })
 }
 
-const firstId = { telemetry_events: 'e1', telemetry_daily: '2026-09-29', telemetry_installs: '2026-09-29_i1', crashes: 'c1' }
+const firstId = { telemetry_batches: 'b1', telemetry_daily: '2026-09-29_3', telemetry_installs: '2026-09-29_i1', crashes: 'c1' }
 
 // ---------------------------------------------------------------------------
 
@@ -93,6 +95,19 @@ describe('reports', () => {
       const snap = await assertSucceeds(getDocs(query(collection(db, name), where('day', '>=', '2026-09-23'))))
       assert.equal(snap.size, 1, name)
     }
+    // The dashboard reads crashes newest first by receivedAt (website/src/lib/access.ts, crashRows).
+    const since = new Date('2026-09-23T00:00:00Z')
+    const crashes = await assertSucceeds(
+      getDocs(query(collection(db, 'crashes'), where('receivedAt', '>=', since), orderBy('receivedAt', 'desc'), limit(2000))),
+    )
+    assert.equal(crashes.size, 1)
+    await assertFails(getDocs(query(collection(as(ALICE), 'crashes'), where('receivedAt', '>=', since), orderBy('receivedAt', 'desc'))))
+  })
+
+  test('the per-event collection of bbdc12f is closed: nothing writes it now, and nobody reads it', async () => {
+    await seed((db) => setDoc(doc(db, 'telemetry_events', 'e1'), { name: 'app_open', day: '2026-09-29' }))
+    await assertFails(getDoc(doc(as(OWNER), 'telemetry_events', 'e1')))
+    await assertSucceeds(getDoc(doc(as(OWNER), 'telemetry_batches', 'e1')))
   })
 
   test('nobody else reads or lists them: a user, an unverified owner, a signed-out visitor', async () => {

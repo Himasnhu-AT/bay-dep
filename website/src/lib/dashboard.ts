@@ -5,7 +5,18 @@
 
 import { dayOf, EXPORT_EVENTS } from "@/lib/telemetry";
 
-export type DailyRow = { day: string; events: number; counts: Record<string, number> };
+/**
+ * One `telemetry_daily` document. A day is several of them (the counters are
+ * sharded, `{day}_{n}`), and a day written before sharding is one (`{day}`);
+ * every figure below sums whatever rows share a day, so both read the same.
+ */
+export type DailyRow = {
+  day: string;
+  events: number;
+  counts: Record<string, number>;
+  /** export_done events whose props said `ok: false` or `incomplete: true`. */
+  exportProblems: number;
+};
 export type InstallRow = { day: string; installId: string; appVersion: string; lastSeen: number };
 export type CrashRow = {
   signature: string;
@@ -40,7 +51,12 @@ export type Summary = {
   /** Each install counted once, under the newest version it reported in the window. */
   versions: { version: string; installs: number }[];
   counts: { name: string; count: number }[];
-  exports: { ok: number; failed: number };
+  /**
+   * `finished` is every export_done; `problems` is the part of it that said
+   * `ok: false` or `incomplete: true` (counted only since the site began
+   * recording it; older days read 0); `failed` is export_failed.
+   */
+  exports: { finished: number; problems: number; failed: number };
   crashes: CrashGroup[];
 };
 
@@ -77,8 +93,10 @@ export function summarize(
 
   const counts = new Map<string, number>();
   const eventsPerDay = new Map<string, number>();
+  let problems = 0;
   for (const row of daily) {
     if (!inWindow.has(row.day)) continue;
+    problems += Number(row.exportProblems) || 0;
     eventsPerDay.set(row.day, (eventsPerDay.get(row.day) ?? 0) + row.events);
     for (const [name, count] of Object.entries(row.counts)) {
       counts.set(name, (counts.get(name) ?? 0) + Number(count));
@@ -130,7 +148,11 @@ export function summarize(
       .map(([version, n]) => ({ version, installs: n }))
       .sort((a, b) => b.installs - a.installs || b.version.localeCompare(a.version, undefined, { numeric: true })),
     counts: [...counts].map(([name, count]) => ({ name, count })).sort(byCount),
-    exports: { ok: counts.get(EXPORT_EVENTS.ok) ?? 0, failed: counts.get(EXPORT_EVENTS.failed) ?? 0 },
+    exports: {
+      finished: counts.get(EXPORT_EVENTS.ok) ?? 0,
+      problems,
+      failed: counts.get(EXPORT_EVENTS.failed) ?? 0,
+    },
     crashes: [...groups.values()]
       .map(({ ids, vers, ...g }) => ({
         ...g,

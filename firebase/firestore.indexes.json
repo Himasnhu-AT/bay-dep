@@ -1,4 +1,15 @@
 {
   "indexes": [],
-  "fieldOverrides": []
+  "fieldOverrides": [
+    {
+      "collectionGroup": "telemetry_daily",
+      "fieldPath": "counts",
+      "indexes": []
+    },
+    {
+      "collectionGroup": "telemetry_batches",
+      "fieldPath": "events",
+      "indexes": []
+    }
+  ]
 }

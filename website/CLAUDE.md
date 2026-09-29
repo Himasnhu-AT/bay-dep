@@ -49,22 +49,34 @@ section, `/status` and the home page say exactly that and no more; VOICE.md has 
 wording. The site's pages still load nothing from anyone on arrival: the endpoints are
 things the app calls, not things a page calls.
 
-- **The contract is `src/lib/telemetry.ts`.** It checks every field and names the bad
-  one in the 400, ignores unknown keys (so a newer app is not refused), and takes home,
-  volume and temp paths out of a crash's message and stack before anything is stored,
-  whatever the app sent. The desktop app's client is written against it: change a limit
-  there and the app must change with it. `EXPORT_EVENTS` names the two events `/admin`
-  reads as "exports ok vs failed".
-- **The request path is `src/lib/intake.ts`**: 256 KB cap (413), shape (400), a
-  best-effort in-memory rate limit per installId + IP (429; the IP is never stored), then
-  storage. **Storage is `src/lib/telemetry-store.ts`**: Firestore's REST API with a
+- **The contract is `src/lib/telemetry.ts`.** It checks every field's shape and names
+  the bad one in the 400, and ignores unknown keys (so a newer app is not refused). Then
+  it enforces the app's allow-list, `src/lib/telemetry-contract.ts`: a verbatim copy of
+  the `TELEMETRY_EVENTS` section of `../src/shared/telemetry.ts`, which
+  `telemetry-contract.test.ts` compares byte for byte (it skips, loudly, when the app's
+  file is not in the checkout). An unlisted event is dropped, not refused, and so is an
+  unlisted or mistyped prop; a batch with nothing left is a 204 that writes nothing.
+  `scrub` takes paths (spaces included, `~/` too), emails, query strings and token
+  shapes out of a crash's message, stack and reason before anything is stored, whatever
+  the app sent. `EXPORT_EVENTS` names the events `/admin` reads as exports finished and
+  failed; an `export_done` with `ok: false` or `incomplete: true` also counts as
+  finished with problems.
+- **The request path is `src/lib/intake.ts`**: 256 KB cap (413), shape (400), then three
+  in-memory limits (429 with `Retry-After`; the IP is never stored): per caller address
+  (Vercel's `x-vercel-forwarded-for`, else `x-real-ip`, else the last hop of
+  `x-forwarded-for`; an IPv6 address counts as its /64), per installId, and a ceiling
+  across all callers on the instance that fails closed. Each limiter holds at most
+  10,000 keys. **Storage is `src/lib/telemetry-store.ts`**: Firestore's REST API with a
   service account (`FIREBASE_SERVICE_ACCOUNT`, the JSON key, raw or base64), an OAuth
-  token minted from a signed JWT with `node:crypto`, one `:commit` per request. It writes
-  `telemetry_events` (one per event), `telemetry_daily/{day}` and
-  `telemetry_installs/{day}_{installId}` (rollups, so `/admin` reads a doc per install
-  per day rather than every event) and `crashes` (one per crash, with a `signature`).
-  Without the credential the endpoints answer **503 "telemetry storage is not
-  configured"**; they never answer 204 for a write that did not happen.
+  token minted from a signed JWT with `node:crypto`, one `:commit` per request of three
+  writes: `telemetry_batches/{id}` (the request's events as one array),
+  `telemetry_daily/{day}_{n}` (counters in ten random shards, because one document takes
+  about one write a second; `/admin` sums them) and `telemetry_installs/{day}_{installId}`.
+  A crash is one `crashes` doc with a `signature`. Without the credential the endpoints
+  answer **503 "telemetry storage is not configured"**; they never answer 204 for a write
+  that did not happen. A write Firestore refuses as malformed (a 4xx other than 401, 403,
+  429) is **422**, which the app drops; anything else that fails, including not reaching
+  Google at all, is **502**, which the app retries.
 - **The Firestore rules are `../firebase/firestore.rules`**, with their emulator suite and
   mutation proof in `../firebase/`. The report collections are readable by the owner and
   writable by no browser; the service account is not governed by the rules.
@@ -104,7 +116,8 @@ src/lib/product.ts  the name, kind, status, domain, contact, optional download
 src/lib/firebase-config.ts  the project config and the owner's address, as plain data
 src/lib/firebase.ts the lazy loader; the only firebase import
 src/lib/access.ts   everything done with it: sign-in, the dashboard's reads
-src/lib/telemetry.ts        the report contract (validation, path scrubbing, signature)
+src/lib/telemetry.ts        the report contract (validation, scrubbing, signature)
+src/lib/telemetry-contract.ts  the app's event allow-list, copied verbatim
 src/lib/intake.ts           the endpoints' request path; telemetry-store.ts, the writes
 src/lib/dashboard.ts        what /admin makes of the rows it reads
 ```
@@ -153,5 +166,5 @@ constructor parameter properties, so the modules it loads avoid them.
 
 **Deploying the endpoints.** Vercel needs `FIREBASE_SERVICE_ACCOUNT` (a service account
 key for `bay-editor-app` with the Cloud Datastore User role, pasted as its JSON or as
-base64 of it). The rules deploy from `../firebase`: `pnpm run deploy` there (not
-`pnpm deploy`, a pnpm built-in).
+base64 of it). The rules and the index exemptions deploy from `../firebase`:
+`pnpm run deploy` there (not `pnpm deploy`, a pnpm built-in).

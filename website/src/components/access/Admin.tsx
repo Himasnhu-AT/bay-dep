@@ -1,12 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ActionButton, BarList, Stat } from "@/components/layout";
 import { SignIn } from "@/components/access/SignIn";
 import { SignedInAs } from "@/components/access/SignedInAs";
 import { useAccount } from "@/components/access/useAccount";
 import { explain, isAdmin, loadDashboard, READ_CAP } from "@/lib/access";
 import { type CrashGroup, type Summary, summarize, windowDays } from "@/lib/dashboard";
+import { latest } from "@/lib/latest";
 import { EXPORT_EVENTS } from "@/lib/telemetry";
 
 const when = (ms: number) =>
@@ -28,7 +29,8 @@ const shortDay = (day: string) =>
 
 type Loaded =
   | { kind: "loading" }
-  | { kind: "ok"; summary: Summary; capped: string[] }
+  /** `span` is the window these figures were read for, which is what labels them. */
+  | { kind: "ok"; span: number; summary: Summary; capped: string[] }
   | { kind: "error"; message: string };
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -83,18 +85,25 @@ function Crash({ group }: { group: CrashGroup }) {
 function Dashboard() {
   const [span, setSpan] = useState<7 | 30>(7);
   const [loaded, setLoaded] = useState<Loaded>({ kind: "loading" });
+  // Switching 7 → 30 → 7 quickly leaves two reads in flight; only the newest may
+  // write, or one window's figures land under the other's label.
+  const guard = useRef(latest());
 
   const load = useCallback(async (days: number) => {
+    const current = guard.current.begin();
     setLoaded({ kind: "loading" });
     const range = windowDays(days);
     try {
       const { daily, installs, crashes } = await loadDashboard(range[0]);
+      if (!current()) return;
       const capped = [
+        daily.length >= READ_CAP.daily ? `${READ_CAP.daily.toLocaleString("en")} daily counter documents` : "",
         installs.length >= READ_CAP.installs ? `${READ_CAP.installs.toLocaleString("en")} install-days` : "",
         crashes.length >= READ_CAP.crashes ? `${READ_CAP.crashes.toLocaleString("en")} crash reports` : "",
       ].filter(Boolean);
-      setLoaded({ kind: "ok", summary: summarize(range, daily, installs, crashes), capped });
+      setLoaded({ kind: "ok", span: days, summary: summarize(range, daily, installs, crashes), capped });
     } catch (err) {
+      if (!current()) return;
       setLoaded({ kind: "error", message: explain(err) });
     }
   }, []);
@@ -120,7 +129,10 @@ function Dashboard() {
         </div>
       </div>
       <p className="mt-2 text-sm text-muted">
-        Days are UTC, by when this site received the report.
+        Days are UTC, by when this site received the report. Each load reads at
+        most {READ_CAP.installs.toLocaleString("en")} install-days,{" "}
+        {READ_CAP.crashes.toLocaleString("en")} crash reports (newest first) and{" "}
+        {READ_CAP.daily.toLocaleString("en")} daily counter documents.
       </p>
 
       {loaded.kind === "loading" ? (
@@ -132,7 +144,7 @@ function Dashboard() {
           </p>
         </div>
       ) : (
-        <Figures summary={loaded.summary} capped={loaded.capped} span={span} />
+        <Figures summary={loaded.summary} capped={loaded.capped} span={loaded.span} />
       )}
     </div>
   );
@@ -140,7 +152,8 @@ function Dashboard() {
 
 function Figures({ summary, capped, span }: { summary: Summary; capped: string[]; span: number }) {
   const today = summary.days[summary.days.length - 1];
-  const exports = summary.exports.ok + summary.exports.failed;
+  const { finished, problems, failed } = summary.exports;
+  const exports = finished + failed;
   return (
     <>
       {capped.length ? (
@@ -153,16 +166,28 @@ function Figures({ summary, capped, span }: { summary: Summary; capped: string[]
       <div className="mt-10 grid grid-cols-2 gap-x-10 gap-y-8 sm:grid-cols-4">
         <Stat value={summary.installs.toLocaleString("en")} label={`installs active in ${span} days`} />
         <Stat value={(today?.installs ?? 0).toLocaleString("en")} label="installs active today" />
-        <Stat value={summary.exports.ok.toLocaleString("en")} label={`exports finished (${EXPORT_EVENTS.ok})`} />
         <Stat
-          value={summary.exports.failed.toLocaleString("en")}
+          value={finished.toLocaleString("en")}
+          label={
+            problems
+              ? `exports finished (${EXPORT_EVENTS.ok}), ${problems.toLocaleString("en")} of them with problems`
+              : `exports finished (${EXPORT_EVENTS.ok}), none with problems`
+          }
+        />
+        <Stat
+          value={failed.toLocaleString("en")}
           label={
             exports
-              ? `exports failed, ${Math.round((summary.exports.failed / exports) * 100)}% of ${exports.toLocaleString("en")}`
+              ? `exports failed, ${Math.round((failed / exports) * 100)}% of ${exports.toLocaleString("en")}`
               : `exports failed (${EXPORT_EVENTS.failed})`
           }
         />
       </div>
+      <p className="mt-4 text-xs text-muted">
+        Finished with problems means the app reported the export as not ok, or as
+        written with incomplete frames. Only reports received since the site began
+        counting this are included; days before that show none.
+      </p>
 
       <Section title="Active installs per day">
         <BarList

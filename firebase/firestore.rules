@@ -29,11 +29,13 @@ service cloud.firestore {
     // browser writes, the owner's included, so a report on /admin is always one
     // the app sent through the site's checks.
 
-    match /telemetry_events/{id} {
+    // One doc per /api/telemetry request, holding its events as an array.
+    match /telemetry_batches/{id} {
       allow read: if isOwner();
     }
 
-    match /telemetry_daily/{day} {
+    // `{day}_{n}`: a day's counters in shards (and `{day}` from before sharding).
+    match /telemetry_daily/{id} {
       allow read: if isOwner();
     }
 

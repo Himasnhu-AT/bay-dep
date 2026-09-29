@@ -13,14 +13,23 @@ retired by the owner on 2026-09-29; its rules and tests are in git history.
 
 | Collection | What it is | Who writes it | Who reads it |
 |---|---|---|---|
-| `telemetry_events/{id}` | One usage event: the envelope (`v, installId, appVersion, os, osVersion, arch`), `name, at, props?`, `receivedAt, day` | The website's `/api/telemetry`, with a service account (not governed by these rules) | The owner only |
-| `telemetry_daily/{day}` | Per UTC day: `events` and `counts.<event name>` | The same, as increments | The owner only |
+| `telemetry_batches/{id}` | One `/api/telemetry` request: the envelope (`v, installId, appVersion, os, osVersion, arch`), `events` (an array of allow-listed `{name, at, props?}`), `count`, `receivedAt, day` | The website's `/api/telemetry`, with a service account (not governed by these rules) | The owner only |
+| `telemetry_daily/{day}_{n}` | A UTC day's counters in ten shards (`n` 0 to 9, picked at random per request; a day from before sharding is `{day}`): `day, shard, events, counts.<event name>, exportProblems` | The same, as increments | The owner only |
 | `telemetry_installs/{day}_{installId}` | One per install per day it reported, with its version and `events` | The same | The owner only |
 | `crashes/{id}` | One crash report, with `signature`, `receivedAt, day` | The website's `/api/crash`, with the service account | The owner only |
 | `access/{email}` | A grant from the invitation era | Nobody, any more | Its own verified owner, and the owner. Kept only so builds released before open access still let their already-granted users in; delete it once no such build is in use. |
 
 No browser writes anything, the owner's included, so every report on `/admin` came through
 the site's checks (`website/src/lib/telemetry.ts`).
+
+`telemetry_events/{id}` (one doc per event, as the site wrote them before the audit of
+`bbdc12f`) is no longer written and no longer readable, even by the owner; delete the
+collection's documents from the console if any were written.
+
+**Indexes.** `firestore.indexes.json` exempts `telemetry_daily.counts` and
+`telemetry_batches.events` from automatic indexing: nothing queries them, and indexing a map of
+event names or an array of up to 100 events is index writes (and index-entry limits) for
+nothing. `pnpm run deploy` deploys them with the rules.
 
 **Owner** means `token.email == 'hyattherate2005@gmail.com'` and `email_verified == true`.
 

@@ -5,15 +5,24 @@
  *
  * No SDK: the credential is `FIREBASE_SERVICE_ACCOUNT` (the service account's JSON
  * key, raw or base64), an OAuth token is minted from it with a signed JWT
- * (node:crypto), and each accepted request is one `:commit`, so its documents
- * land together or not at all. The service account's writes are not subject to
+ * (node:crypto), and each accepted request is one `:commit` of exactly three
+ * writes (a telemetry batch) or one (a crash), so its documents land together or
+ * not at all. The service account's writes are not subject to
  * the Firestore rules, which give browsers no write to these collections.
  *
  * What is written:
  *
- *   telemetry_events/{id}       one per event: the envelope, name, at, props,
- *                               receivedAt, day
- *   telemetry_daily/{day}       per UTC day: `events` (total) and `counts.<name>`
+ *   telemetry_batches/{id}      one per request, however many events it held:
+ *                               the envelope, `events` (an array of
+ *                               {name, at, props?}, already allow-listed),
+ *                               `count`, receivedAt, day
+ *   telemetry_daily/{day}_{n}   per UTC day, in DAILY_SHARDS shards (n chosen at
+ *                               random per request), each with `day`, `shard`,
+ *                               `events` (total), `counts.<name>` and
+ *                               `exportProblems`; /admin sums a day's shards.
+ *                               Sharded because one document takes about one
+ *                               sustained write a second, and every request
+ *                               increments the day's counters.
  *   telemetry_installs/{day}_{installId}
  *                               one per install per day it sent anything, with
  *                               its version, so /admin counts installs by reading
@@ -24,12 +33,13 @@
  * The client's IP address is never written anywhere.
  */
 
-import { createSign, randomUUID } from "node:crypto";
+import { createSign, randomInt, randomUUID } from "node:crypto";
 import { firebaseConfig } from "@/lib/firebase-config";
 import {
   type CrashReport,
   crashSignature,
   dayOf,
+  EXPORT_EVENTS,
   type PropValue,
   type TelemetryBatch,
 } from "@/lib/telemetry";
@@ -37,7 +47,31 @@ import {
 type ServiceAccount = { client_email: string; private_key: string; token_uri?: string };
 
 export class NotConfigured extends Error {}
+/** Storage could not take the write now (5xx, 401, 403, 429): 502, which the app retries. */
 export class StorageRefused extends Error {}
+/** Google could not be reached at all (DNS, TLS, reset): 502, retried, with its own message. */
+export class StorageUnreachable extends StorageRefused {}
+/**
+ * Firestore refused the write itself (a 4xx other than 401, 403, 429): the same
+ * bytes would be refused again, so the answer is 422, which the app drops
+ * rather than retrying forever.
+ */
+export class StorageRejected extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+/** A fetch that turns "never got an answer" (fetch's TypeError) into StorageUnreachable. */
+async function reach(url: string, init: RequestInit, what: string): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (err) {
+    throw new StorageUnreachable(`could not reach ${what}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
 
 /** Reads the credential, or throws NotConfigured naming what is wrong with it. */
 export function serviceAccount(raw = process.env.FIREBASE_SERVICE_ACCOUNT): ServiceAccount {
@@ -79,14 +113,18 @@ async function accessToken(sa: ServiceAccount): Promise<string> {
   } catch {
     throw new NotConfigured("FIREBASE_SERVICE_ACCOUNT's private_key could not sign");
   }
-  const res = await fetch(aud, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
-      assertion: `${unsigned}.${signature}`,
-    }),
-  });
+  const res = await reach(
+    aud,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+        assertion: `${unsigned}.${signature}`,
+      }),
+    },
+    "Google's token endpoint",
+  );
   const body = (await res.json().catch(() => null)) as { access_token?: string; expires_in?: number } | null;
   if (!res.ok || !body?.access_token) {
     throw new StorageRefused(`Google refused the service account's token request (${res.status})`);
@@ -102,7 +140,8 @@ type Value =
   | { doubleValue: number }
   | { booleanValue: boolean }
   | { timestampValue: string }
-  | { mapValue: { fields: Record<string, Value> } };
+  | { mapValue: { fields: Record<string, Value> } }
+  | { arrayValue: { values: Value[] } };
 
 const s = (v: string): Value => ({ stringValue: v });
 const n = (v: number): Value =>
@@ -129,50 +168,85 @@ function envelopeFields(b: TelemetryBatch | CrashReport): Record<string, Value> 
 async function commit(writes: unknown[]) {
   const sa = serviceAccount();
   const token = await accessToken(sa);
-  const res = await fetch(`https://firestore.googleapis.com/v1/${ROOT}:commit`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ writes }),
-  });
+  const res = await reach(
+    `https://firestore.googleapis.com/v1/${ROOT}:commit`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ writes }),
+    },
+    "Firestore",
+  );
   if (!res.ok) {
     if (res.status === 401) cached = null;
-    throw new StorageRefused(`Firestore refused the write (${res.status})`);
+    const detail = await res.text().catch(() => "");
+    const message = `Firestore refused the write (${res.status})${detail ? `: ${detail.slice(0, 300)}` : ""}`;
+    if (res.status >= 400 && res.status < 500 && ![401, 403, 429].includes(res.status)) {
+      throw new StorageRejected(res.status, message);
+    }
+    throw new StorageRefused(message);
   }
 }
 
-/** The writes for one telemetry batch; exported so the test can read their shape. */
-export function telemetryWrites(batch: TelemetryBatch, receivedMs: number): unknown[] {
+/** How many documents a day's counters are spread over; /admin sums them. */
+export const DAILY_SHARDS = 10;
+
+/** An export_done that finished but says so badly: `ok: false` or `incomplete: true`. */
+const exportHadProblems = (e: TelemetryBatch["events"][number]) =>
+  e.name === EXPORT_EVENTS.ok && (e.props?.ok === false || e.props?.incomplete === true);
+
+/**
+ * The writes for one telemetry batch: always three, whatever the event count.
+ * Exported so the test can read their shape; `shard` is injectable for it.
+ */
+export function telemetryWrites(
+  batch: TelemetryBatch,
+  receivedMs: number,
+  shard = randomInt(DAILY_SHARDS),
+): unknown[] {
   const day = dayOf(receivedMs);
   const receivedAt = { timestampValue: new Date(receivedMs).toISOString() };
   const env = envelopeFields(batch);
-  const writes: unknown[] = batch.events.map((e) => ({
-    update: {
-      name: `${ROOT}/telemetry_events/${randomUUID()}`,
+  const events: Value[] = batch.events.map((e) => ({
+    mapValue: {
       fields: {
-        ...env,
         name: s(e.name),
         at: n(e.at),
         ...(e.props
           ? { props: { mapValue: { fields: Object.fromEntries(Object.entries(e.props).map(([k, v]) => [k, prop(v)])) } } }
           : {}),
-        receivedAt,
-        day: s(day),
       },
     },
-    currentDocument: { exists: false },
   }));
+  const writes: unknown[] = [
+    {
+      update: {
+        name: `${ROOT}/telemetry_batches/${randomUUID()}`,
+        fields: {
+          ...env,
+          events: { arrayValue: { values: events } },
+          count: n(batch.events.length),
+          receivedAt,
+          day: s(day),
+        },
+      },
+      currentDocument: { exists: false },
+    },
+  ];
 
   const perName = new Map<string, number>();
   for (const e of batch.events) perName.set(e.name, (perName.get(e.name) ?? 0) + 1);
+  const problems = batch.events.filter(exportHadProblems).length;
   writes.push({
-    update: { name: `${ROOT}/telemetry_daily/${day}`, fields: { day: s(day) } },
-    updateMask: { fieldPaths: ["day"] },
+    update: { name: `${ROOT}/telemetry_daily/${day}_${shard}`, fields: { day: s(day), shard: n(shard) } },
+    updateMask: { fieldPaths: ["day", "shard"] },
     updateTransforms: [
       { fieldPath: "events", increment: n(batch.events.length) },
       ...[...perName].map(([name, count]) => ({
         fieldPath: `counts.${quoted(name)}`,
         increment: n(count),
       })),
+      ...(problems ? [{ fieldPath: "exportProblems", increment: n(problems) }] : []),
     ],
   });
 
