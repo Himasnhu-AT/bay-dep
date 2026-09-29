@@ -96,6 +96,24 @@ Read it aloud. Then check: any dashes, any triples, any sentence that could desc
 different app if you swapped the name out. The last one is the useful test. If the
 paragraph would work for a competitor's product, it is not saying anything.
 
+## What leaves the Mac
+
+Every page that says what the app keeps to itself says the same thing, because a claim that
+drifts between pages is a claim nobody can check. As of 2026-09-29 (the owner's decision):
+
+- **Stays on the Mac:** projects, media, renders, file paths, prompts and your email address.
+  Say "stays on your Mac", not "private" or "secure".
+- **Leaves it:** anonymous usage events and crash reports, sent to this site. Both are on by
+  default, and each has its own switch in Preferences › Privacy. Say all three parts (what,
+  that it is on by default, where to switch it off) whenever you mention either. They carry
+  a random install ID rather than a name or address.
+- **Never write** "no telemetry", "nothing leaves your machine", "no analytics" about the app.
+  "No analytics" is still true of this website, which loads nothing from anyone on arrival.
+
+Access: anyone can download the app, and it asks you to sign in with Google on first launch;
+any Google account with a verified address gets in. There is no waitlist, invitation or
+referral, so do not write "request access", "by invitation" or "releasing soon".
+
 ## Metadata
 
 Every page exports `metadata` with a `title` and a `description`. The description is one

@@ -15,7 +15,6 @@ import { product } from "@/lib/product";
 const links = [
   { href: "/agents", label: "Agents" },
   { href: "/status", label: "Status" },
-  { href: "/waitlist", label: "Request access" },
 ];
 
 export function SiteNav() {
@@ -55,6 +54,16 @@ export function SiteNav() {
               </Link>
             );
           })}
+          {/* A plain <a>: /download is a redirect to the disk image, not a page to
+              route to on the client. The accent, because it is the site's one ask. */}
+          {product.download ? (
+            <a
+              href={product.download}
+              className="text-[13px] font-medium text-accent transition-colors duration-200 hover:text-on-night"
+            >
+              Download
+            </a>
+          ) : null}
         </div>
       </Wrap>
     </nav>

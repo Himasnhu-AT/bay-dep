@@ -15,7 +15,7 @@ export default function DesktopSignInPage() {
       <PageHeader
         eyebrow="Sign in"
         title={`Sign in to ${product.name}.`}
-        lead="You do this once. After it, the app works offline and checks your access again whenever it is online."
+        lead="You do this once. After it, the app works offline and renews the sign-in whenever it is online."
       />
       <Wrap>
         <div className="mt-16">
@@ -25,10 +25,10 @@ export default function DesktopSignInPage() {
         <div className="mt-24">
           <Block title="What it will not do" delay={0.12}>
             This tab sends your sign-in to one place: the copy of{" "}
-            {product.name} waiting on this Mac, at 127.0.0.1. The app then asks
-            Google&rsquo;s sign-in service itself whether you have access. It
-            does not send your projects, your media or anything about what you
-            edit.
+            {product.name} waiting on this Mac, at 127.0.0.1. The app then
+            checks the sign-in with Google&rsquo;s sign-in service itself.
+            Signing in does not send your projects, your media or anything
+            about what you edit.
           </Block>
         </div>
       </Wrap>

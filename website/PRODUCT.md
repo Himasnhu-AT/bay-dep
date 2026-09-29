@@ -72,8 +72,9 @@ tools, a low-frame-rate proxy for long clips). That engine is deleted; its recor
 `rust-engine-final` tag.
 
 Status is **In development**: real and running, not ready for a stranger. There is a
-notarized download for Macs with Apple silicon (`/download`), and the site says beside it
-that the app is by invitation and needs access to sign in.
+notarized download for Macs with Apple silicon (`/download`). Anyone may download it; the
+site says beside the button that it is for macOS on Apple silicon and that the app asks
+you to sign in with Google on first launch (any verified Google account gets in).
 
 ## Brand Commitments
 
@@ -85,11 +86,13 @@ that the app is by invitation and needs access to sign in.
 - The site must make no third-party requests at runtime: no analytics, no tag manager, no
   session recorder, no remotely fetched fonts, no embedded player. The site is an argument
   that the software minds its own business, so it has to as well. The one exception is
-  access: the app is by invitation. Joining the waitlist sends one request to Firestore
-  when the visitor presses Join, with no account; signing in (Google only, to check
-  access, on /admin and for the desktop app) loads Firebase when its button is pressed.
-  Never on arrival, and the site sends no email. See
+  signing in: Google only, on /admin and for the desktop app, which loads Firebase when
+  its button is pressed. Never on arrival, and the site sends no email. See
   CLAUDE.md, "The one rule".
+- The app sends this site anonymous usage events and crash reports (`/api/telemetry`,
+  `/api/crash`), on by default, each with its own switch in the app's Preferences ›
+  Privacy. Projects, media, renders, file paths, prompts and email addresses never leave
+  the Mac. The site says exactly this wherever it talks about what leaves the machine.
 - Voice rules are binding and live in VOICE.md: no em dashes, no rule of three, no
   promotional adjectives, second person, concrete over abstract.
 - **Honesty is load-bearing.** `/status` is the page the site exists to be able to write.

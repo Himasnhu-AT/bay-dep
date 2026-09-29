@@ -545,3 +545,58 @@ export function PullQuote({
     </Reveal>
   );
 }
+
+/**
+ * One number and what it counts, for the owner's dashboard: the figure at
+ * `text-headline` in ink, tabular, and a `text-sm` muted label under it. Set
+ * several in a row with a grid; they carry no box and no rule of their own.
+ */
+export function Stat({ value, label }: { value: ReactNode; label: ReactNode }) {
+  return (
+    <div>
+      <p className="text-headline font-semibold text-ink tabular-nums">{value}</p>
+      <p className="mt-1 text-sm text-muted">{label}</p>
+    </div>
+  );
+}
+
+/**
+ * Counts as horizontal bars, for the owner's dashboard: the label on the left,
+ * a 6px track in `line` with a bar in `ink-soft` scaled to the largest
+ * value, and the number on the right. Neutral on purpose: a bar is
+ * data, not a button, so it never takes the accent. No axis, no chart library.
+ */
+export function BarList({
+  rows,
+  empty = "Nothing yet.",
+}: {
+  rows: { label: ReactNode; value: number; key: string; note?: ReactNode }[];
+  empty?: string;
+}) {
+  if (!rows.length) return <p className="text-base text-ink-soft">{empty}</p>;
+  const max = Math.max(1, ...rows.map((r) => r.value));
+  return (
+    <ul className="space-y-2.5">
+      {rows.map((r) => (
+        <li
+          key={r.key}
+          className="grid grid-cols-[minmax(0,9rem)_1fr_auto] items-center gap-4 text-sm sm:grid-cols-[minmax(0,14rem)_1fr_auto]"
+        >
+          <span className="truncate text-ink-soft" title={typeof r.label === "string" ? r.label : undefined}>
+            {r.label}
+          </span>
+          <span aria-hidden className="relative h-1.5 bg-line">
+            <span
+              className="absolute inset-y-0 left-0 bg-ink-soft"
+              style={{ width: `${(r.value / max) * 100}%` }}
+            />
+          </span>
+          <span className="text-right text-ink tabular-nums">
+            {r.value.toLocaleString("en")}
+            {r.note ? <span className="ml-2 text-muted">{r.note}</span> : null}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}

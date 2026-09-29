@@ -12,8 +12,8 @@ import { product } from "@/lib/product";
  * The browser half of the desktop sign-in. The app opens this page with a
  * loopback port and a one-time state; the page signs the person in and posts
  * the tokens to that port on 127.0.0.1, and to nothing else. The app does not
- * trust what it receives: it exchanges the refresh token itself and reads the
- * grant itself. See the access contract, "Desktop sign-in handoff".
+ * trust what it receives: it exchanges the refresh token itself and checks the
+ * account itself. See the access contract, "Desktop sign-in handoff".
  */
 
 type Target = { port: number; state: string };
@@ -89,7 +89,8 @@ function Handing({ target, user, auto }: { target: Target; user: User; auto: boo
       setHandoff({ kind: "failed", message: explainStatus(res.status) });
       return;
     }
-    // The app decides access for itself; this is only so the page can say so.
+    // The app decides for itself; this is only so the page can say so. Any
+    // Google account whose address is verified gets in, and nothing is read.
     let access: "yes" | "no" | "unknown" = "unknown";
     try {
       const s = await standingOf(user);
@@ -150,9 +151,10 @@ function Handing({ target, user, auto }: { target: Target; user: User; auto: boo
           </p>
           {handoff.access === "no" ? (
             <p className="mt-4 text-base text-ink-soft">
-              {user.email} does not have access yet. {product.name} will show
-              you how to ask for it, or someone who already uses it can add you
-              from inside the app.
+              Google has not verified {user.email} for this account, so{" "}
+              {product.name} will not accept it. Click Sign in in{" "}
+              {product.name} again and choose an account whose address is
+              verified.
             </p>
           ) : null}
         </div>
@@ -193,7 +195,7 @@ export function DesktopSignIn() {
     case "idle":
       return (
         <SignIn
-          intro={`Sign in with the Google account that has access to ${product.name}. This tab hands the sign-in to the app on this Mac, and only to it.`}
+          intro={`Sign in with your Google account. This tab hands the sign-in to ${product.name} on this Mac, and only to it.`}
           onSignedIn={(user) => {
             setAuto(true);
             signedIn(user);

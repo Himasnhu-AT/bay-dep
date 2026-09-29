@@ -12,7 +12,7 @@ import { explain, signInWithGoogle } from "@/lib/access";
  * this page makes to anyone else.
  *
  * `quiet` makes the button an underlined word, for a page whose main action is
- * something else (the waitlist's join form).
+ * something else.
  */
 export function SignIn({
   onSignedIn,
@@ -52,7 +52,7 @@ export function SignIn({
       <p className="mt-6 text-sm leading-relaxed text-muted">
         The button loads Google&rsquo;s sign-in code, which this site does not
         fetch until you press it. No password is created, and your address is
-        used only to decide who has access.
+        used only to sign you in.
       </p>
     </div>
   );

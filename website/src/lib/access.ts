@@ -1,28 +1,16 @@
 /**
- * Everything the access pages do with Firebase, over firebase.ts.
- * The collection shapes are the access contract's; the Firestore rules check
- * every write, so a mismatch here is refused rather than stored.
- *
- *   waitlist/{email}  someone asking for access; written signed out, read by
- *                     the admin alone
- *   access/{email}    a grant, which is what the desktop app checks
- *
- * Doc ids are the email, lowercased and trimmed. Signing in is Google only.
+ * Everything the site's sign-in pages do with Firebase, over firebase.ts:
+ * signing in with Google (for /desktop/sign-in and /admin), and the owner's
+ * dashboard reads. Anyone with a verified Google account may use the app; there
+ * is no grant to look up any more.
  */
 
 import type { User } from "firebase/auth";
-import {
-  ADMIN_EMAIL,
-  type Firebase,
-  joinWaitlistRequest,
-  loadFirebase,
-  setSessionMark,
-} from "@/lib/firebase";
+import { ADMIN_EMAIL, type Firebase, loadFirebase, setSessionMark } from "@/lib/firebase";
+import type { CrashRow, DailyRow, InstallRow } from "@/lib/dashboard";
 import { product } from "@/lib/product";
 
 export const normalizeEmail = (email: string) => email.trim().toLowerCase();
-
-export const NOTE_LIMIT = 500;
 
 export function isAdmin(user: User | null): boolean {
   return (
@@ -54,8 +42,6 @@ export function explain(err: unknown): string {
       return `Sign-in is not set up for this site yet, so this is our fault, not yours. Please ${write}.`;
     case "auth/operation-not-allowed":
       return `Signing in with Google is switched off for this site, so this is our fault, not yours. Please ${write}.`;
-    case "invalid-email":
-      return "That does not look like an email address. Check it and try again.";
     case "auth/network-request-failed":
     case "unavailable":
       return "Could not reach the sign-in service. Check your connection and try again.";
@@ -66,11 +52,11 @@ export function explain(err: unknown): string {
     case "auth/user-disabled":
       return `This account has been switched off. If that is a mistake, ${write}.`;
     case "permission-denied":
-      return `The access list refused that request. If you think it should not have, ${write}.`;
+      return `Firestore refused that read. This page is for the owner's account; if that is you, ${write}.`;
   }
   if (err instanceof TypeError) {
     // What fetch throws when the request never got an answer.
-    return "Could not reach the access list. Check your connection and try again.";
+    return "Could not reach Google. Check your connection and try again.";
   }
   if (err instanceof Error && /chunk|dynamically imported module|Loading/i.test(err.message)) {
     return "The sign-in code did not load. Check your connection and reload the page.";
@@ -107,176 +93,68 @@ export async function currentUser(): Promise<{ fb: Firebase; user: User | null }
 
 export type Standing =
   | { kind: "approved"; email: string }
-  /** No grant for this address. Whether it is on the waitlist is private to the admin. */
-  | { kind: "none"; email: string }
-  /** A Google account whose address is not verified, which the rules will not accept. */
+  /** A Google account whose address is not verified, which the app will not accept. */
   | { kind: "unverified"; email: string };
 
-/** Whether the signed-in account has access: its own grant is the one thing it may read. */
+/**
+ * Whether the app will let this account in: any Google account whose address
+ * Google has verified. Nothing is read from Firestore; the app decides the same
+ * way from the ID token it is handed.
+ */
 export async function standingOf(user: User): Promise<Standing> {
-  const fb = await loadFirebase();
   const email = normalizeEmail(user.email ?? "");
-  if (!user.emailVerified) return { kind: "unverified", email };
-  const { doc, getDoc } = fb.fs;
-  const grant = await getDoc(doc(fb.db, "access", email));
-  return grant.exists() ? { kind: "approved", email } : { kind: "none", email };
+  return user.emailVerified ? { kind: "approved", email } : { kind: "unverified", email };
 }
 
-/**
- * The same address test the rules apply to a waitlist entry's id, so a visitor
- * is told about a typo here rather than getting a refusal from the server. Keep
- * the two in step: firebase/firestore.rules, `isJoinableEmail`.
- */
-export const isJoinableEmail = (email: string) =>
-  email.length <= 254 &&
-  /^[a-z0-9._%+-]+@[a-z0-9-]+(\.[a-z0-9-]+)*\.[a-z]{2,}$/.test(email);
+// The owner's dashboard. The Firestore rules refuse these reads to anyone but
+// the owner; the page only hides them from people who could not use them anyway.
 
-export class JoinError extends Error {
-  constructor(readonly code: string) {
-    super(code);
-  }
-}
+/** Most rows one dashboard load reads from each collection. The page says when it hit one. */
+export const READ_CAP = { installs: 20000, crashes: 2000 } as const;
 
-/**
- * Puts an address on the waitlist, signed out, in one request. Resolves with
- * the address as stored.
- *
- * A refusal (403) is treated as joined. The rules refuse a well-formed entry
- * for one reason only, that the address is already on the list, and the caller
- * has already checked the address against the same pattern the rules use. The
- * entry is not readable by the visitor (the list is private), so a repeat join
- * cannot be told from a first one, and saying "you're on the list" is true in
- * both cases.
- */
-export async function joinWaitlist(raw: string, note = ""): Promise<string> {
-  const email = normalizeEmail(raw);
-  if (!isJoinableEmail(email)) throw new JoinError("invalid-email");
-  const res = await joinWaitlistRequest(email, note.trim().slice(0, NOTE_LIMIT) || undefined);
-  if (res.ok || res.status === 403) return email;
-  throw new JoinError(res.status === 429 ? "resource-exhausted" : res.status >= 500 ? "unavailable" : `http-${res.status}`);
-}
+type Stamp = { toMillis(): number } | undefined;
 
-// Admin. The rules refuse all of these to anyone but the owner; the page only
-// hides the controls from people who could not use them anyway.
-
-export type WaitlistEntry = {
-  email: string;
-  note: string;
-  status: string;
-  createdAt: Date | null;
-};
-
-export type Grant = {
-  email: string;
-  via: string;
-  referrerEmail: string;
-  grantedAt: Date | null;
-};
-
-type Stamp = { toDate(): Date } | undefined;
-
-export async function listWaitlist(): Promise<WaitlistEntry[]> {
-  const fb = await loadFirebase();
-  const { collection, getDocs, orderBy, query } = fb.fs;
-  // Ordered on one field only, so no composite index is needed; pending is
-  // filtered by the caller.
+async function rows(fb: Firebase, name: string, fromDay: string, cap: number) {
+  const { collection, getDocs, limit, orderBy, query, where } = fb.fs;
+  // One field, so Firestore's automatic single-field index serves it.
   const snap = await getDocs(
-    query(collection(fb.db, "waitlist"), orderBy("createdAt", "desc")),
+    query(collection(fb.db, name), where("day", ">=", fromDay), orderBy("day", "desc"), limit(cap)),
   );
-  return snap.docs.map((d) => {
-    const v = d.data() as { note?: string; status?: string; createdAt?: Stamp };
-    return {
-      email: d.id,
-      note: v.note ?? "",
-      status: v.status ?? "",
-      createdAt: v.createdAt?.toDate() ?? null,
-    };
-  });
+  return snap.docs.map((d) => d.data());
 }
 
-export async function listGrants(): Promise<Grant[]> {
+export async function loadDashboard(fromDay: string): Promise<{
+  daily: DailyRow[];
+  installs: InstallRow[];
+  crashes: CrashRow[];
+}> {
   const fb = await loadFirebase();
-  const { collection, getDocs, orderBy, query } = fb.fs;
-  const snap = await getDocs(
-    query(collection(fb.db, "access"), orderBy("grantedAt", "desc")),
-  );
-  return snap.docs.map((d) => {
-    const v = d.data() as { via?: string; referrerEmail?: string; grantedAt?: Stamp };
-    return {
-      email: d.id,
-      via: v.via ?? "",
-      referrerEmail: v.referrerEmail ?? "",
-      grantedAt: v.grantedAt?.toDate() ?? null,
-    };
-  });
-}
-
-/** Approval is one batch: the grant and the waitlist status change land together or not at all. */
-export async function approve(admin: User, emails: string[]) {
-  const fb = await loadFirebase();
-  const { doc, writeBatch, serverTimestamp } = fb.fs;
-  const batch = writeBatch(fb.db);
-  for (const raw of emails) {
-    const email = normalizeEmail(raw);
-    batch.set(doc(fb.db, "access", email), {
-      email,
-      via: "admin",
-      grantedBy: admin.uid,
-      grantedAt: serverTimestamp(),
-    });
-    batch.update(doc(fb.db, "waitlist", email), { status: "approved" });
-  }
-  await batch.commit();
-}
-
-/** The same test the rules apply to a grant's id: lowercase, no whitespace, one @. */
-export const isGrantableEmail = (email: string) =>
-  /^[^@\s/]+@[^@\s/]+\.[^@\s/]+$/.test(email);
-
-/**
- * A direct grant from the admin page's form, for an address that never joined
- * the waitlist (or did: its entry is marked approved in the same batch, so it
- * leaves the pending list). It reads first, because over an existing grant the
- * write would be an update, which the rules let the admin make, and it would
- * overwrite a referral's record of who referred whom. So an address that
- * already has access is reported, not re-granted.
- */
-export async function grant(admin: User, raw: string): Promise<"granted" | "exists"> {
-  const fb = await loadFirebase();
-  const email = normalizeEmail(raw);
-  const { doc, getDoc, writeBatch, serverTimestamp } = fb.fs;
-  const ref = doc(fb.db, "access", email);
-  if ((await getDoc(ref)).exists()) return "exists";
-  const entry = await getDoc(doc(fb.db, "waitlist", email));
-  const batch = writeBatch(fb.db);
-  batch.set(ref, {
-    email,
-    via: "admin",
-    grantedBy: admin.uid,
-    grantedAt: serverTimestamp(),
-  });
-  if (entry.exists()) batch.update(entry.ref, { status: "approved" });
-  await batch.commit();
-  return "granted";
-}
-
-/** Revoking is deleting the grant. The desktop app notices on its next check. */
-export async function revoke(email: string) {
-  const fb = await loadFirebase();
-  const { doc, deleteDoc } = fb.fs;
-  await deleteDoc(doc(fb.db, "access", normalizeEmail(email)));
-}
-
-/** A same-site path to go to after sign-in, or the fallback. Never another origin. */
-export function safeNext(raw: string | null, fallback = "/waitlist"): string {
-  if (!raw || !raw.startsWith("/") || raw.startsWith("//") || raw.includes("\\")) {
-    return fallback;
-  }
-  try {
-    const url = new URL(raw, window.location.origin);
-    if (url.origin !== window.location.origin) return fallback;
-    return url.pathname + url.search;
-  } catch {
-    return fallback;
-  }
+  const [daily, installs, crashes] = await Promise.all([
+    rows(fb, "telemetry_daily", fromDay, 400),
+    rows(fb, "telemetry_installs", fromDay, READ_CAP.installs),
+    rows(fb, "crashes", fromDay, READ_CAP.crashes),
+  ]);
+  return {
+    daily: daily.map((v) => ({
+      day: String(v.day ?? ""),
+      events: Number(v.events ?? 0),
+      counts: (v.counts ?? {}) as Record<string, number>,
+    })),
+    installs: installs.map((v) => ({
+      day: String(v.day ?? ""),
+      installId: String(v.installId ?? ""),
+      appVersion: String(v.appVersion ?? ""),
+      lastSeen: (v.lastSeen as Stamp)?.toMillis() ?? 0,
+    })),
+    crashes: crashes.map((v) => ({
+      signature: String(v.signature ?? ""),
+      appVersion: String(v.appVersion ?? ""),
+      process: String(v.process ?? ""),
+      kind: String(v.kind ?? ""),
+      message: String(v.message ?? ""),
+      stack: typeof v.stack === "string" ? v.stack : "",
+      installId: String(v.installId ?? ""),
+      receivedAt: (v.receivedAt as Stamp)?.toMillis() ?? 0,
+    })),
+  };
 }
