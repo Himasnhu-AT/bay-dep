@@ -23,14 +23,14 @@ import {
   RENDERER_EVENTS,
   TELEMETRY_VERSION,
   isTelemetryEventName,
+  thrownText,
   type CrashProcess,
-  type RendererErrorReport,
   type TelemetryEventName,
   type TelemetryProps,
   type TelemetrySwitch
 } from '@shared/telemetry'
 import { TelemetryClient, installIdAt, type CrashInput } from './client'
-import { telemetryOrigin } from './policy'
+import { rendererErrorReport, telemetryOrigin } from './policy'
 
 let client: TelemetryClient | null = null
 let destination: string | null = null
@@ -112,15 +112,19 @@ export function reportCrash(input: CrashInput): void {
   }
 }
 
-/** The renderer's own uncaught error: only its text arrives, and main redacts it before queueing. */
+/**
+ * The renderer's own uncaught error: only its text arrives, cut to the caps here at the boundary
+ * (`rendererErrorReport`), and redacted before queueing. The client admits at most
+ * `CRASHES_PER_MINUTE` reports a minute from every source together.
+ */
 export function reportRendererError(report: unknown, process: CrashProcess): void {
-  const value = (report ?? {}) as Partial<RendererErrorReport>
-  if (typeof value.message !== 'string') return
+  const value = rendererErrorReport(report)
+  if (!value) return
   reportCrash({
     process,
     kind: value.kind === 'rejection' ? 'rejection' : 'renderer-error',
     message: value.message,
-    stack: typeof value.stack === 'string' ? value.stack : undefined
+    stack: value.stack
   })
 }
 
@@ -139,16 +143,6 @@ export function telemetryState(): {
     destination,
     queued: client?.queued ?? { events: 0, crashes: 0 },
     lastProblem: client?.lastProblem ?? null
-  }
-}
-
-function messageAndStack(value: unknown): { message: string; stack?: string } {
-  if (value instanceof Error) return { message: `${value.name}: ${value.message}`, ...(value.stack ? { stack: value.stack } : {}) }
-  if (typeof value === 'string') return { message: value }
-  try {
-    return { message: JSON.stringify(value) ?? String(value) }
-  } catch {
-    return { message: String(value) }
   }
 }
 
@@ -172,12 +166,12 @@ function installCrashHandlers(): void {
   // The monitor event: Node reports it and then does exactly what it did before — Electron's
   // dialog, the exit — so reporting changes nothing about how bay behaves when it throws.
   process.on('uncaughtExceptionMonitor', (error, origin) => {
-    reportCrash({ process: 'main', kind: origin === 'unhandledRejection' ? 'rejection' : 'exception', ...messageAndStack(error) })
+    reportCrash({ process: 'main', kind: origin === 'unhandledRejection' ? 'rejection' : 'exception', ...thrownText(error, origin === 'unhandledRejection' ? 'rejection' : 'thrown') })
   })
   // A listener here replaces Node's warning, so the warning is printed as before.
   process.on('unhandledRejection', (reason) => {
     console.error('[bay] Unhandled promise rejection in main:', reason)
-    reportCrash({ process: 'main', kind: 'rejection', ...messageAndStack(reason) })
+    reportCrash({ process: 'main', kind: 'rejection', ...thrownText(reason, 'rejection') })
   })
   app.on('render-process-gone', (_event, contents, details) => {
     if (QUIET_REASONS.has(details.reason)) return

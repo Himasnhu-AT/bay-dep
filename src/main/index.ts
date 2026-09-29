@@ -250,7 +250,9 @@ void app.whenReady().then(() => {
   })
 
   registerBayProtocolHandler()
-  registerIpcHandlers()
+  registerIpcHandlers({
+    isEditor: (contents) => [...editorWindows].some((window) => !window.isDestroyed() && window.webContents === contents)
+  })
 
   // Usage telemetry and crash reports, each behind its switch in Preferences › Privacy (on unless
   // turned off). Before the window, so a crash in its first second is reported.

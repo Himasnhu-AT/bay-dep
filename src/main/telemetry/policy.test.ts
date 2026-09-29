@@ -1,7 +1,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { SITE_ORIGIN } from '@shared/access'
-import { BACKOFF_BASE_MS, BACKOFF_MAX_MS, CrashLimiter, backoffMs, crashSignature, guardedTelemetryFetch, telemetryOrigin, verdictFor, type Fetch } from './policy'
+import { BACKOFF_BASE_MS, BACKOFF_MAX_MS, CrashLimiter, RateWindow, backoffMs, crashSignature, guardedTelemetryFetch, rendererErrorReport, telemetryOrigin, verdictFor, type Fetch } from './policy'
+import { MAX_CRASH_MESSAGE, MAX_CRASH_STACK } from '@shared/telemetry'
 
 test('an installed bay reports to the site and nowhere else, whatever its environment says', () => {
   assert.deepEqual(telemetryOrigin({}, true), { kind: 'site', origin: SITE_ORIGIN })
@@ -11,7 +12,11 @@ test('an installed bay reports to the site and nowhere else, whatever its enviro
 test('a development build sends nothing unless BAY_TELEMETRY_BASE names a loopback stub', () => {
   assert.equal(telemetryOrigin({}, false).kind, 'none')
   assert.deepEqual(telemetryOrigin({ BAY_TELEMETRY_BASE: 'http://127.0.0.1:9999/ignored/path' }, false), { kind: 'local', origin: 'http://127.0.0.1:9999' })
-  assert.deepEqual(telemetryOrigin({ BAY_TELEMETRY_BASE: 'http://localhost:3000' }, false), { kind: 'local', origin: 'http://localhost:3000' })
+  assert.deepEqual(telemetryOrigin({ BAY_TELEMETRY_BASE: 'http://[::1]:3000' }, false), { kind: 'local', origin: 'http://[::1]:3000' })
+  // A name is not a literal address: `localhost` would be resolved (and /etc/hosts can point it anywhere).
+  const named = telemetryOrigin({ BAY_TELEMETRY_BASE: 'http://localhost:3000' }, false)
+  assert.equal(named.kind, 'none')
+  assert.match(named.kind === 'none' ? named.reason : '', /127\.0\.0\.1/)
   // Production, a remote host, a private address and a non-URL are all refused — never a fallback to the site.
   for (const value of [SITE_ORIGIN, 'http://example.com', 'http://10.0.0.2:3000', 'not a url', 'ftp://127.0.0.1']) {
     const origin = telemetryOrigin({ BAY_TELEMETRY_BASE: value }, false)
@@ -68,4 +73,23 @@ test('an identical crash is admitted once per window; another signature is not h
   assert.equal(limiter.admit(a, 1_000 + 599_999), false)
   assert.equal(limiter.admit(b, 2_000), true, 'a different crash is reported')
   assert.equal(limiter.admit(a, 1_000 + 600_000), true, 'and the same one again after ten minutes')
+})
+
+test('a renderer error report is cut to the caps at the boundary, and anything else is refused', () => {
+  const huge = 'x'.repeat(5_000_000)
+  const report = rendererErrorReport({ kind: 'rejection', message: huge, stack: huge })
+  assert.equal(report?.message.length, MAX_CRASH_MESSAGE)
+  assert.equal(report?.stack?.length, MAX_CRASH_STACK)
+  assert.equal(report?.kind, 'rejection')
+  assert.equal(rendererErrorReport({ kind: 'anything', message: 'm' })?.kind, 'error')
+  for (const bad of [null, 'text', 42, { message: 7 }, { kind: 'error' }]) assert.equal(rendererErrorReport(bad), null, JSON.stringify(bad))
+  // Positive control: a normal report passes through unchanged.
+  assert.deepEqual(rendererErrorReport({ kind: 'error', message: 'TypeError: x', stack: 'at f (a.js:1:1)' }), { kind: 'error', message: 'TypeError: x', stack: 'at f (a.js:1:1)' })
+})
+
+test('the rate window admits its limit per window and no more, then admits again once the window passes', () => {
+  const window = new RateWindow(3, 60_000)
+  assert.deepEqual([0, 1, 2, 3].map((t) => window.admit(t)), [true, true, true, false])
+  assert.equal(window.admit(59_999), false)
+  assert.equal(window.admit(60_000), true, 'the first admission has aged out')
 })

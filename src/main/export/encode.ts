@@ -34,6 +34,7 @@ import { buildAudioGraph, type CompositionSounds } from './audio-graph'
 import { inspectComposition } from '../html/compositions'
 import type { CompositionSound } from '@shared/composition'
 import { checkExportDestination } from './destination'
+import { cancelFailureStage } from './cancel-reason'
 import { frameProblem, writeFrame } from './frame-pipe'
 import { audioCodecArgs, containerArgs, extensionFor, tailOf, videoCodecArgs } from './codec-args'
 import { deliveredLoudness, masterAudio, verifyDelivered } from './master'
@@ -720,9 +721,17 @@ export async function finish(jobId: string, summary?: { incomplete: boolean }): 
   }
 }
 
-export async function cancel(jobId: string): Promise<void> {
+/**
+ * Stops a job and discards its output. `reason` is the renderer's `ExportCancelReason`: when the
+ * renderer cancels because its own export loop failed, this is the job's `export_failed` (main
+ * never sees that failure otherwise — the job just stops). A user's cancel passes none, and
+ * counts as nothing.
+ */
+export async function cancel(jobId: string, reason?: unknown): Promise<void> {
   const job = jobs.get(jobId)
   if (!job) return
+  const failedAt = cancelFailureStage(reason, job)
+  if (failedAt) track('export_failed', { stage: failedAt })
   job.cancelled = true
   if (job.child) {
     job.child.stdin.destroy()

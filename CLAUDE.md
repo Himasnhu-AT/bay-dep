@@ -1136,19 +1136,31 @@ not listed or of the wrong type is dropped before it is queued, and the renderer
 `page_view`. `POST /api/crash` carries one crash: main's `uncaughtExceptionMonitor` (so Electron's
 own behaviour is unchanged) and `unhandledRejection` (still logged), `render-process-gone` /
 `child-process-gone` (not `clean-exit` or `killed`), and the renderer's `error` /
-`unhandledrejection` forwarded as text over a send outside the access gate. Messages and stacks
-are redacted in main (`telemetry/redact.ts`): home → `~`, every directory of an absolute path →
-`…`, a non-code file name → `<file>.ext`, emails → `<email>`; an identical crash goes at most once
-per 10 minutes. **Never sent:** email, account id, project names, paths, asset names, prompts,
+`unhandledrejection` forwarded as text over a send outside the access gate, accepted only from the
+editor's own windows and cut to the caps at the boundary. A non-Error thrown or rejected is sent
+as its type only (`thrownText`: `rejection: object (Response)`), never serialised. Messages and
+stacks are cut to their caps *first* and then redacted line by line in main (`telemetry/redact.ts`,
+every pattern linear — a test holds the known ReDoS inputs under 50 ms): %xx decoded once, URL
+query/fragment → `?<query>` and user info → `<user>`, emails → `<email>`, tokens and keys and
+base64url runs ≥32 → `<secret>`, home → `~`, every directory of an absolute path wherever it
+starts → `…`, a non-code file name → `<file>.ext`, and quoted text (“…”, '…', "…") → `<text>`
+except on a stack frame line. An identical crash goes at most once per 10 minutes, and at most
+10 crashes a minute go in all. **Never sent:** email, account id, project names, paths, asset names, prompts,
 transcripts, tool arguments, media. The install id is a random v4 UUID in `userData/install-id`,
 derived from nothing. Unsent reports wait in `userData/telemetry-queue.json` (≤500 events, ≤50
 crashes, oldest dropped), written when a crash arrives, after a failed send and at quit; 400 is
-dropped, 429/5xx/no answer backs off 1 min → 1 h. Flushed every 60 s and at quit (≤2 s; not while
+dropped, 429/5xx/no answer backs off 1 min → 1 h — crashes and events each on their own backoff,
+and a report the site answered "try later" 5 times running is dropped (an unreachable site is
+not a strike). Flushed every 60 s and at quit (≤2 s; not while
 Squirrel quits to install an update). **A switch turned off sends nothing and deletes what of it
 was queued**; a database that will not open reads as off. Electron's `crashReporter` runs with
 `uploadToServer: false`: minidumps stay in `crashDumps`, named in Preferences › Privacy. The
 one-time notice (`settings/TelemetryNotice.tsx`, dismissal kept in main's database) says what is
-sent and links there. Tests: `src/shared/telemetry.test.ts` and `src/main/telemetry/*.test.ts`,
+sent and links there; it is mounted outside the access gate, because sending starts at launch, and
+while locked it carries the two switches itself (`telemetryStatus`/`Set`/`DismissNotice` are in
+`OPEN_WHILE_LOCKED`). `agent_turn.toolCalls` counts distinct call ids (the CLI announces each call
+twice), and a renderer-side export failure reaches `export_failed` through
+`export.cancel(jobId, { failed: true })`; a user's cancel counts nothing. Tests: `src/shared/telemetry.test.ts` and `src/main/telemetry/*.test.ts`,
 mutation-checked (12 guards, 12 caught).
 - **Subscribe narrowly to the store** (`useEditor((s) => s.playhead)`), never wholesale, or every
   component re-renders at the frame rate during playback.

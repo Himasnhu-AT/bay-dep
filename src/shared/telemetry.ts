@@ -8,10 +8,12 @@
  * **What is never sent** (hard rules, checked in `src/main/telemetry/*.test.ts`): email, account
  * id, project names, file paths, asset names, prompts, transcripts, tool arguments, or media.
  * Event props are an allow-list per event name (`TELEMETRY_EVENTS`) — a prop not listed, or of the
- * wrong type, is dropped before it is queued. Crash messages and stacks are redacted in main
- * (`src/main/telemetry/redact.ts`): the home folder becomes `~`, directories of an absolute path
- * become `…`, the name of a file that is not code becomes `<file>` (its extension kept), and
- * emails become `<email>`.
+ * wrong type, is dropped before it is queued. Crash messages and stacks are cut to their caps and
+ * then redacted in main (`src/main/telemetry/redact.ts`): percent-encoding decoded once, URL
+ * queries → `?<query>`, emails → `<email>`, tokens and keys → `<secret>`, the home folder → `~`,
+ * directories of an absolute path → `…`, the name of a file that is not code → `<file>` (its
+ * extension kept), and quoted text → `<text>`. A non-Error thrown value is sent as its type only
+ * (`thrownText`).
  *
  * **Where**: `POST {origin}/api/telemetry` and `POST {origin}/api/crash`, JSON. `origin` is
  * `SITE_ORIGIN` in an installed bay. An unpackaged build sends only to `BAY_TELEMETRY_BASE`, and
@@ -296,4 +298,38 @@ export interface RendererErrorReport {
   kind: 'error' | 'rejection'
   message: string
   stack?: string
+}
+
+/**
+ * The text of something thrown or rejected, for a crash report. An `Error` gives its name, message
+ * and stack (redacted by main before queueing). Anything else gives **only its type** — `label:
+ * object (Response)`, `label: number` — never a serialisation: an object rejected by a library can
+ * hold a project, a path list or a response body. A string is the one exception, kept as a message
+ * for main to redact like any other, because a thrown string *is* the message.
+ */
+export function thrownText(value: unknown, label: 'rejection' | 'thrown'): { message: string; stack?: string } {
+  let isError = false
+  try {
+    isError = value instanceof Error
+  } catch {
+    // A proxy whose getPrototypeOf throws: not an Error, and its type is all that is sent.
+  }
+  if (isError) {
+    const error = value as Error
+    const name = typeof error.name === 'string' ? error.name : 'Error'
+    const message = typeof error.message === 'string' ? error.message : ''
+    return { message: `${name}: ${message}`, ...(typeof error.stack === 'string' && error.stack ? { stack: error.stack } : {}) }
+  }
+  if (typeof value === 'string') return { message: `${label}: string: ${value}` }
+  if (value === null) return { message: `${label}: null` }
+  if (typeof value !== 'object' && typeof value !== 'function') return { message: `${label}: ${typeof value}` }
+  let constructor = ''
+  try {
+    const name: unknown = Object.getPrototypeOf(value)?.constructor?.name
+    // A class name is code, not data; anything that does not look like one is not sent.
+    if (typeof name === 'string' && /^[A-Za-z_$][\w$]{0,63}$/.test(name) && name !== 'Object') constructor = ` (${name})`
+  } catch {
+    // A proxy or a getter that throws: the type alone.
+  }
+  return { message: `${label}: ${typeof value}${constructor}` }
 }

@@ -12,7 +12,7 @@ import { ProjectsHome } from '@/home/ProjectsHome'
 import { Workspace } from '@/editor/workspace/Workspace'
 import { SettingsDialog } from '@/settings/SettingsDialog'
 import { ProjectSettingsDialog } from '@/settings/ProjectSettingsDialog'
-import { TelemetryNotice, usePageViews } from '@/settings/TelemetryNotice'
+import { usePageViews } from '@/settings/TelemetryNotice'
 import { Button, Modal } from '@/components'
 import type { Project } from '@shared/project'
 import { IMPORT_FILES_EVENT } from '@/lib/agentAttachments'
@@ -317,7 +317,6 @@ export function App(): ReactNode {
       <>
         <ProjectsHome />
         <SettingsDialog />
-        <TelemetryNotice />
         <ShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
       </>
     )
@@ -331,7 +330,6 @@ export function App(): ReactNode {
       <ProjectSettingsDialog />
       <SettingsDialog />
       <ShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
-      <TelemetryNotice />
 
       <Modal
         open={leaving !== null}

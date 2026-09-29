@@ -34,7 +34,7 @@ import {
   type TelemetryProps,
   type TelemetrySwitch
 } from '@shared/telemetry'
-import { CrashLimiter, backoffMs, crashSignature, guardedTelemetryFetch, verdictFor, type Fetch } from './policy'
+import { CRASHES_PER_MINUTE, CrashLimiter, RateWindow, backoffMs, crashSignature, guardedTelemetryFetch, verdictFor, type Fetch } from './policy'
 import { redactTo } from './redact'
 
 export interface QueueState {
@@ -91,6 +91,25 @@ export function writeQueue(path: string, queue: QueueState): void {
   renameSync(part, path)
 }
 
+type Lane = 'crashes' | 'events'
+
+interface LaneState {
+  failures: number
+  nextAttemptAt: number
+  /** Whether the last failure was an answer from the site (a strike) rather than no answer. */
+  answered: boolean
+  /** The report at the head of the lane when it last failed, and how many answered failures it has had running. */
+  head: unknown
+  strikes: number
+}
+
+function newLane(): LaneState {
+  return { failures: 0, nextAttemptAt: 0, answered: false, head: null, strikes: 0 }
+}
+
+/** Answered "try later"s in a row after which the report at the head of a lane is dropped. */
+export const MAX_HEAD_STRIKES = 5
+
 export interface CrashInput {
   process: CrashProcess
   kind: CrashKind
@@ -117,12 +136,13 @@ export class TelemetryClient {
   readonly #options: ClientOptions
   readonly #fetch: Fetch | null
   readonly #limiter = new CrashLimiter()
+  readonly #perMinute = new RateWindow(CRASHES_PER_MINUTE, 60_000)
   readonly #now: () => number
   readonly #random: () => number
   #switches: Record<TelemetrySwitch, boolean>
   #queue: QueueState
-  #failures = 0
-  #nextAttemptAt = 0
+  /** Each kind backs off on its own: a crash the site keeps refusing must not hold up usage events, or the reverse. */
+  readonly #lanes: Record<Lane, LaneState> = { crashes: newLane(), events: newLane() }
   #lastProblem: string | null = null
   #flushing: Promise<void> | null = null
 
@@ -160,8 +180,8 @@ export class TelemetryClient {
 
   /**
    * Queues one crash, redacted, and writes the queue at once — the process reporting it may be
-   * about to die. False when crash reports are off, the build sends nothing, or the same crash was
-   * reported within the last ten minutes.
+   * about to die. False when crash reports are off, the build sends nothing, the same crash was
+   * reported within the last ten minutes, or `CRASHES_PER_MINUTE` were already queued this minute.
    */
   crash(input: CrashInput): boolean {
     if (!this.#fetch || !this.#switches.crash) return false
@@ -171,12 +191,14 @@ export class TelemetryClient {
       at: this.#now(),
       process: input.process,
       kind: input.kind,
-      message: redactTo(String(input.message ?? '').slice(0, MAX_CRASH_STACK * 2), home, MAX_CRASH_MESSAGE)
+      // `redactTo` cuts to the cap before it redacts, so the patterns never see more than that.
+      message: redactTo(String(input.message ?? ''), home, MAX_CRASH_MESSAGE)
     }
-    if (input.stack) report.stack = redactTo(String(input.stack).slice(0, MAX_CRASH_STACK * 2), home, MAX_CRASH_STACK)
+    if (input.stack) report.stack = redactTo(String(input.stack), home, MAX_CRASH_STACK)
     if (input.reason) report.reason = redactTo(String(input.reason), home, MAX_CRASH_REASON)
     if (typeof input.exitCode === 'number' && Number.isInteger(input.exitCode)) report.exitCode = input.exitCode
     if (!this.#limiter.admit(crashSignature(report), report.at)) return false
+    if (!this.#perMinute.admit(report.at)) return false
     this.#queue = boundQueue({ ...this.#queue, crashes: [...this.#queue.crashes, report] })
     this.persist()
     return true
@@ -204,9 +226,12 @@ export class TelemetryClient {
   }
 
   /**
-   * Sends what is queued: each crash on its own, events in batches of at most 100. Stops at the
-   * first answer that says try later, and waits out the backoff before trying again. One flush at
-   * a time; a second call joins the first.
+   * Sends what is queued: each crash on its own, events in batches of at most 100. Crashes and
+   * events are two lanes: each stops at the first answer that says try later and waits out its
+   * own backoff, so neither holds up the other. A report the site answered "try later" for
+   * `MAX_HEAD_STRIKES` times running is dropped, so one report the site will never take cannot
+   * block every report behind it; failing to reach the site at all is not a strike (a Mac offline
+   * for a day keeps its reports). One flush at a time; a second call joins the first.
    */
   flush(): Promise<void> {
     if (this.#flushing) return this.#flushing
@@ -219,30 +244,59 @@ export class TelemetryClient {
   async #send(): Promise<void> {
     const fetcher = this.#fetch
     if (!fetcher) return
-    if (this.#now() < this.#nextAttemptAt) return
     const origin = this.#options.origin as string
 
-    while (this.#switches.crash && this.#queue.crashes.length > 0) {
-      const report = this.#queue.crashes[0]!
-      const verdict = await this.#post(fetcher, `${origin}${CRASH_PATH}`, report, crashReportProblem(report))
-      if (verdict === 'retry') return this.#settle()
-      this.#queue = { ...this.#queue, crashes: this.#queue.crashes.filter((entry) => entry !== report) }
+    if (this.#ready('crashes')) {
+      while (this.#switches.crash && this.#queue.crashes.length > 0) {
+        const report = this.#queue.crashes[0]!
+        const verdict = await this.#post('crashes', fetcher, `${origin}${CRASH_PATH}`, report, crashReportProblem(report))
+        if (verdict === 'retry' && !this.#strike('crashes', report)) break
+        this.#queue = { ...this.#queue, crashes: this.#queue.crashes.filter((entry) => entry !== report) }
+        if (verdict === 'retry') break
+        this.#succeeded('crashes')
+      }
     }
 
-    while (this.#switches.telemetry && this.#queue.events.length > 0) {
-      const events = this.#queue.events.slice(0, MAX_EVENTS_PER_BATCH)
-      const body = { ...this.#options.envelope, events }
-      const verdict = await this.#post(fetcher, `${origin}${TELEMETRY_PATH}`, body, telemetryBatchProblem(body))
-      if (verdict === 'retry') return this.#settle()
-      const sent = new Set(events)
-      this.#queue = { ...this.#queue, events: this.#queue.events.filter((event) => !sent.has(event)) }
+    if (this.#ready('events')) {
+      while (this.#switches.telemetry && this.#queue.events.length > 0) {
+        const events = this.#queue.events.slice(0, MAX_EVENTS_PER_BATCH)
+        const body = { ...this.#options.envelope, events }
+        const verdict = await this.#post('events', fetcher, `${origin}${TELEMETRY_PATH}`, body, telemetryBatchProblem(body))
+        if (verdict === 'retry' && !this.#strike('events', events[0]!)) break
+        const sent = new Set(events)
+        this.#queue = { ...this.#queue, events: this.#queue.events.filter((event) => !sent.has(event)) }
+        if (verdict === 'retry') break
+        this.#succeeded('events')
+      }
     }
-    this.#failures = 0
-    this.#nextAttemptAt = 0
     this.#settle()
   }
 
-  async #post(fetcher: Fetch, url: string, body: unknown, problem: string | null): Promise<'sent' | 'drop' | 'retry'> {
+  #ready(lane: Lane): boolean {
+    return this.#now() >= this.#lanes[lane].nextAttemptAt
+  }
+
+  #succeeded(lane: Lane): void {
+    this.#lanes[lane] = newLane()
+  }
+
+  /**
+   * After a "try later": true when `head` has now had `MAX_HEAD_STRIKES` of them running and is to
+   * be dropped. Only an answer from the site counts (`#answered`); an unreachable site does not.
+   */
+  #strike(lane: Lane, head: unknown): boolean {
+    const state = this.#lanes[lane]
+    if (!state.answered) return false
+    state.strikes = state.head === head ? state.strikes + 1 : 1
+    state.head = head
+    if (state.strikes < MAX_HEAD_STRIKES) return false
+    state.head = null
+    state.strikes = 0
+    this.#lastProblem = `The site kept answering "try later" for one ${lane === 'crashes' ? 'crash report' : 'batch of usage events'}; after ${MAX_HEAD_STRIKES} tries it was dropped.`
+    return true
+  }
+
+  async #post(lane: Lane, fetcher: Fetch, url: string, body: unknown, problem: string | null): Promise<'sent' | 'drop' | 'retry'> {
     // A body this build would itself call malformed is dropped rather than sent to be refused.
     if (problem) {
       this.#lastProblem = `A report was dropped before sending: ${problem}.`
@@ -253,18 +307,20 @@ export class TelemetryClient {
       const response = await fetcher(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       status = response.status
     } catch (error) {
-      return this.#failed(`the site could not be reached (${error instanceof Error ? error.message : String(error)})`)
+      return this.#failed(lane, false, `the site could not be reached (${error instanceof Error ? error.message : String(error)})`)
     }
     const verdict = verdictFor(status)
-    if (verdict === 'retry') return this.#failed(status === 429 ? 'the site asked bay to slow down (429)' : `the site answered ${status}`)
+    if (verdict === 'retry') return this.#failed(lane, true, status === 429 ? 'the site asked bay to slow down (429)' : `the site answered ${status}`)
     this.#lastProblem = verdict === 'drop' ? `The site refused a report as malformed (${status}); it was dropped.` : null
     return verdict
   }
 
-  #failed(why: string): 'retry' {
-    this.#failures += 1
-    const wait = backoffMs(this.#failures, this.#random())
-    this.#nextAttemptAt = this.#now() + wait
+  #failed(lane: Lane, answered: boolean, why: string): 'retry' {
+    const state = this.#lanes[lane]
+    state.failures += 1
+    state.answered = answered
+    const wait = backoffMs(state.failures, this.#random())
+    state.nextAttemptAt = this.#now() + wait
     this.#lastProblem = `The last send failed: ${why}. Trying again in ${Math.max(1, Math.round(wait / 60_000))} min.`
     return 'retry'
   }

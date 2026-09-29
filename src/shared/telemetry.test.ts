@@ -16,6 +16,7 @@ import {
   crashReportProblem,
   sanitizeEvent,
   telemetryBatchProblem,
+  thrownText,
   type CrashReport,
   type TelemetryBatch
 } from './telemetry'
@@ -98,4 +99,26 @@ test('every event the list allows would pass the contract', () => {
     assert.ok(Object.keys(TELEMETRY_EVENTS[name as keyof typeof TELEMETRY_EVENTS]).length <= MAX_PROPS, name)
   }
   assert.deepEqual([...RENDERER_EVENTS], ['page_view'], 'the renderer may ask for page views only')
+})
+
+test('thrownText sends only the type of a non-Error, never its contents', () => {
+  const secretObject = { project: 'Acme Q3 Pitch', path: '/Users/alice/Clients/Acme/cut.bay' }
+  const specimen = JSON.stringify(secretObject)
+  assert.ok(specimen.includes('Acme') && specimen.includes('alice'))
+  const object = thrownText(secretObject, 'rejection')
+  assert.equal(object.message, 'rejection: object')
+  assert.equal(object.stack, undefined)
+  class ApiFailure { body = 'alice@example.com' }
+  assert.equal(thrownText(new ApiFailure(), 'rejection').message, 'rejection: object (ApiFailure)')
+  assert.equal(thrownText([secretObject], 'thrown').message, 'thrown: object (Array)')
+  assert.equal(thrownText(42, 'rejection').message, 'rejection: number')
+  assert.equal(thrownText(undefined, 'rejection').message, 'rejection: undefined')
+  assert.equal(thrownText(null, 'rejection').message, 'rejection: null')
+  // A proxy whose traps throw still yields its type, not an exception.
+  const hostile = new Proxy({}, { getPrototypeOf() { throw new Error('no') } })
+  assert.equal(thrownText(hostile, 'rejection').message, 'rejection: object')
+  // A string is the message itself (main redacts it), and an Error keeps name, message, stack (positive controls).
+  assert.equal(thrownText('disk full', 'rejection').message, 'rejection: string: disk full')
+  const error = new TypeError('bad width')
+  assert.deepEqual(thrownText(error, 'thrown'), { message: 'TypeError: bad width', stack: error.stack })
 })

@@ -17,8 +17,8 @@ import {
   telemetryBatchProblem,
   type TelemetryEnvelope
 } from '@shared/telemetry'
-import { TelemetryClient, boundQueue, installIdAt, readQueue, writeQueue, type ClientOptions } from './client'
-import { BACKOFF_BASE_MS, type Fetch } from './policy'
+import { MAX_HEAD_STRIKES, TelemetryClient, boundQueue, installIdAt, readQueue, writeQueue, type ClientOptions } from './client'
+import { BACKOFF_BASE_MS, BACKOFF_MAX_MS, type Fetch } from './policy'
 
 const ORIGIN = 'https://bay.himanshuat.com'
 const HOME = '/Users/alice'
@@ -311,6 +311,80 @@ test('the install id is a random v4 UUID kept in its file, and a bad file is rep
     assert.equal(installIdAt(path, () => 'never-called'), first, 'kept across launches')
     writeFileSync(path, 'alice@example.com\n')
     assert.equal(installIdAt(path, () => '9f1c2b1e-8a4d-4c7e-9b2a-1d3e5f7a9c0b'), '9f1c2b1e-8a4d-4c7e-9b2a-1d3e5f7a9c0b')
+  } finally {
+    h.cleanup()
+  }
+})
+
+test('a crash the site keeps answering 503 does not hold up usage events', async () => {
+  const h = harness({ answer: (url) => (url.endsWith(CRASH_PATH) ? 503 : 204) })
+  try {
+    const client = h.make()
+    client.crash({ process: 'main', kind: 'exception', message: 'TypeError: stuck' })
+    client.track('app_open')
+    await client.flush()
+    assert.equal(h.sent.filter((s) => s.url === `${ORIGIN}${TELEMETRY_PATH}`).length, 1, 'the events went although the crash did not')
+    assert.deepEqual(client.queued, { events: 0, crashes: 1 })
+    // And the events lane is not held to the crash lane's backoff (positive control on the timing).
+    client.track('app_quit')
+    await client.flush()
+    assert.equal(h.sent.filter((s) => s.url === `${ORIGIN}${TELEMETRY_PATH}`).length, 2)
+    assert.equal(h.sent.filter((s) => s.url === `${ORIGIN}${CRASH_PATH}`).length, 1, 'the crash waited out its own backoff')
+  } finally {
+    h.cleanup()
+  }
+})
+
+test('a report answered "try later" 5 times running is dropped, and the next one is sent', async () => {
+  let refuse = true
+  const h = harness({ answer: (url) => (url.endsWith(CRASH_PATH) && refuse ? 503 : 204) })
+  try {
+    const client = h.make()
+    client.crash({ process: 'main', kind: 'exception', message: 'TypeError: poison' })
+    client.crash({ process: 'main', kind: 'exception', message: 'TypeError: fine' })
+    for (let attempt = 1; attempt <= MAX_HEAD_STRIKES; attempt += 1) {
+      assert.equal(client.queued.crashes, 2, `still queued before attempt ${attempt}`)
+      await client.flush()
+      h.advance(BACKOFF_MAX_MS * 2)
+    }
+    assert.equal(client.queued.crashes, 1, 'the poisoned report was dropped after five')
+    assert.match(client.lastProblem ?? '', /after 5 tries it was dropped/)
+    refuse = false
+    await client.flush()
+    assert.equal(client.queued.crashes, 0)
+    const bodies = h.sent.filter((s) => s.url === `${ORIGIN}${CRASH_PATH}`).map((s) => s.body['message'])
+    assert.deepEqual(bodies, [...Array(MAX_HEAD_STRIKES).fill('TypeError: poison'), 'TypeError: fine'])
+  } finally {
+    h.cleanup()
+  }
+})
+
+test('an unreachable site is never a strike: an offline Mac keeps its reports', async () => {
+  const h = harness({ answer: () => new Error('ENOTCONNECTED') })
+  try {
+    const client = h.make()
+    client.crash({ process: 'main', kind: 'exception', message: 'TypeError: offline' })
+    client.track('app_open')
+    for (let attempt = 0; attempt < MAX_HEAD_STRIKES * 3; attempt += 1) {
+      await client.flush()
+      h.advance(BACKOFF_MAX_MS * 2)
+    }
+    assert.deepEqual(client.queued, { events: 1, crashes: 1 })
+  } finally {
+    h.cleanup()
+  }
+})
+
+test('at most 10 crash reports are queued in any minute, all sources together', () => {
+  const h = harness({ answer: () => new Error('offline') })
+  try {
+    const client = h.make()
+    // Distinct signatures, so the per-signature limit cannot be what stops them.
+    const admitted = Array.from({ length: 25 }, (_, n) => client.crash({ process: n % 2 ? 'renderer' : 'main', kind: 'exception', message: `TypeError: distinct ${n}` }))
+    assert.equal(admitted.filter(Boolean).length, 10)
+    assert.equal(client.queued.crashes, 10)
+    h.advance(60_000)
+    assert.equal(client.crash({ process: 'main', kind: 'exception', message: 'TypeError: after a minute' }), true, 'admits again once the minute has passed')
   } finally {
     h.cleanup()
   }

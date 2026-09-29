@@ -217,7 +217,7 @@ const api: BayApi = {
     pushFrame: (frame: ExportFrame) =>
       ipcRenderer.invoke(IPC.exportPushFrame, frame) as Promise<void>,
     finish: (jobId: string, summary?: { incomplete: boolean }) => ipcRenderer.invoke(IPC.exportFinish, jobId, summary) as Promise<void>,
-    cancel: (jobId: string) => ipcRenderer.invoke(IPC.exportCancel, jobId) as Promise<void>,
+    cancel: (jobId, reason) => ipcRenderer.invoke(IPC.exportCancel, jobId, reason) as Promise<void>,
     chooseOutputPath: (defaultName: string, format: ExportFormat) =>
       ipcRenderer.invoke(IPC.exportChoosePath, defaultName, format) as Promise<string | null>,
     reveal: (outputPath: string) => ipcRenderer.invoke(IPC.exportReveal, outputPath) as Promise<boolean>,

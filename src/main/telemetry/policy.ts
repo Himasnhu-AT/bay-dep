@@ -7,11 +7,13 @@
  */
 
 import { SITE_ORIGIN } from '@shared/access'
-import { CRASH_REPEAT_MS, TELEMETRY_BASE_ENV } from '@shared/telemetry'
+import { CRASH_REPEAT_MS, MAX_CRASH_MESSAGE, MAX_CRASH_STACK, TELEMETRY_BASE_ENV } from '@shared/telemetry'
+import { cutCodePoints } from './redact'
 
 type Env = Record<string, string | undefined>
 
-const LOOPBACK = new Set(['127.0.0.1', 'localhost', '[::1]'])
+/** Literal loopback addresses only: a name (`localhost` too) is resolved, and /etc/hosts can point it anywhere. */
+const LOOPBACK = new Set(['127.0.0.1', '[::1]'])
 
 export type TelemetryOrigin =
   | { kind: 'site'; origin: string }
@@ -123,5 +125,43 @@ export class CrashLimiter {
       if (this.#last.size > 500) this.#last.delete(this.#last.keys().next().value as string)
     }
     return true
+  }
+}
+
+/** At most `limit` admissions in any `windowMs`, whatever they are. */
+export class RateWindow {
+  readonly #limit: number
+  readonly #windowMs: number
+  readonly #times: number[] = []
+
+  constructor(limit: number, windowMs: number) {
+    this.#limit = limit
+    this.#windowMs = windowMs
+  }
+
+  admit(now: number): boolean {
+    while (this.#times.length > 0 && now - this.#times[0]! >= this.#windowMs) this.#times.shift()
+    if (this.#times.length >= this.#limit) return false
+    this.#times.push(now)
+    return true
+  }
+}
+
+/** Crash reports queued in any one minute, all sources together: a crash loop sends ten, not thousands. */
+export const CRASHES_PER_MINUTE = 10
+
+/**
+ * What the renderer sent over `telemetryReportError`, checked at the boundary: strings only, each
+ * cut to the contract's cap before anything else reads it (a renderer can send megabytes), and
+ * `kind` one of two words. Null for anything that is not a report.
+ */
+export function rendererErrorReport(value: unknown): { kind: 'error' | 'rejection'; message: string; stack?: string } | null {
+  if (!value || typeof value !== 'object') return null
+  const { kind, message, stack } = value as Record<string, unknown>
+  if (typeof message !== 'string') return null
+  return {
+    kind: kind === 'rejection' ? 'rejection' : 'error',
+    message: cutCodePoints(message, MAX_CRASH_MESSAGE),
+    ...(typeof stack === 'string' && stack !== '' ? { stack: cutCodePoints(stack, MAX_CRASH_STACK) } : {})
   }
 }

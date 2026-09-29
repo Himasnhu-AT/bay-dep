@@ -28,8 +28,9 @@ import { CodexAgentRuntime, codexConfig, findCodexSession, migrateCodexHome, pre
 import { codexNotFoundMessage, findClaude, findCodex, notFoundMessage } from './locate'
 import { searchDirs } from '../search-dirs'
 import { agentSystemPrompt } from './prompt'
-import { providerOf, RUNTIME_ENV, runtimeFor, type HostedAgentRuntime, type RuntimeKind } from './runtime'
+import { providerOf, RUNTIME_ENV, runtimeFor, type HostedAgentRuntime } from './runtime'
 import { track } from '../telemetry/service'
+import { turnCounter } from './turn-counter'
 import { bundledExecutable, SdkAgentRuntime } from './sdk'
 import { installSkills } from './skills'
 import { ATTACHMENTS_FOLDER, prepareAttachments, sweepAttachments, withAttachmentNotes } from './attachments'
@@ -180,7 +181,10 @@ export async function startAgent(
     // naming an internal frame, which tells the user nothing they can act on.
     return { ok: false, error: (error as Error).message }
   }
-  const counter = turnCounter(choice.kind)
+  // `agent_turn` for each turn that ends: which runtime, how many tool calls, whether it completed.
+  // Counts only — never the message, the tools' arguments or what they returned.
+  const kind = choice.kind
+  const counter = turnCounter(({ toolCalls, ok }) => track('agent_turn', { runtime: kind, toolCalls, ok }))
   offEvents = created.onEvent((event) => {
     counter(event)
     broadcast(event)
@@ -188,22 +192,6 @@ export async function startAgent(
   runtime = created
   runtimeProvider = provider
   return { ok: true, id: created.id }
-}
-
-/**
- * `agent_turn` for each turn that ends: which runtime, how many tool calls, whether it completed.
- * Counts only — never the message, the tools' arguments or what they returned.
- */
-function turnCounter(kind: RuntimeKind): (event: AgentEvent) => void {
-  const calls = new Map<string, number>()
-  return (event) => {
-    if (event.type === 'started') calls.set(event.runId, 0)
-    else if (event.type === 'tool') calls.set(event.runId, (calls.get(event.runId) ?? 0) + 1)
-    else if (event.type === 'done') {
-      track('agent_turn', { runtime: kind, toolCalls: calls.get(event.runId) ?? 0, ok: event.reason === 'complete' })
-      calls.delete(event.runId)
-    }
-  }
 }
 
 /** `<userData>/agent-attachments` — bay's own folder, the only place attached files are read from. */

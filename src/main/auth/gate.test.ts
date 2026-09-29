@@ -13,7 +13,7 @@ import { createConnection } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { IPC } from '@shared/ipc'
-import type { AccessStatus } from '@shared/access'
+import { lockedMessage, type AccessStatus } from '@shared/access'
 import { OPEN_WHILE_LOCKED, gateToolRunner, refuseChannel } from './gate'
 import { startSocketServer } from '../mcp/socket-server'
 import { LineBuffer, encode } from '../mcp/jsonrpc'
@@ -55,6 +55,19 @@ test('positive controls: entitled opens everything; locked still opens the acces
   for (const status of LOCKED) {
     for (const channel of ['accessStatus', 'accessSignIn', 'accessSignOut', 'windowClose']) {
       assert.equal(refuseChannel(channel, status), null, `${status.state} ${channel}`)
+    }
+  }
+})
+
+test('locked, the telemetry notice can still read and turn the switches — bay sends from launch, before sign-in', () => {
+  for (const status of LOCKED) {
+    for (const channel of ['telemetryStatus', 'telemetrySet', 'telemetryDismissNotice']) {
+      assert.equal(refuseChannel(channel, status), null, `${status.state} ${channel}`)
+    }
+    // Negative control beside it: the neighbouring editor channels stay refused, with how to unlock.
+    for (const channel of ['projectSave', 'exportStart', 'agentStart']) {
+      const refusal = refuseChannel(channel, status)
+      assert.ok(refusal && refusal === lockedMessage(status), `${status.state} ${channel}: ${refusal}`)
     }
   }
 })

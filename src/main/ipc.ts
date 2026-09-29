@@ -8,7 +8,7 @@
  */
 
 import { BrowserWindow, ipcMain, shell, app } from 'electron'
-import type { IpcMainInvokeEvent } from 'electron'
+import type { IpcMainInvokeEvent, WebContents } from 'electron'
 import type { AudioResult, AudioSpan, BayApi, ImportedAsset } from '@shared/ipc'
 import type { McpToolResult } from '@shared/mcp'
 import { IPC } from '@shared/ipc'
@@ -408,7 +408,12 @@ const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
   mediaSubjectMatte: (_event, request) => ensureSubjectMatte(request),
   mediaSubjectMatteIndex: (_event, key) => subjectMattes().index(key),
 
-  projectInitial: () => store.initial(),
+  // The project restored at launch (or double-clicked in Finder) is an open too — but only one
+  // read from a file; the empty project a first launch starts with is not.
+  projectInitial: async () => {
+    const project = await store.initial()
+    return project.filePath ? trackProjectOpen(project) : project
+  },
   projectSave: (event, project) => store.save(project, windowOf(event)),
   projectSaveAs: (event, project) => store.saveAs(project, windowOf(event)),
   projectOpen: async (event) => trackProjectOpen(await store.open(windowOf(event))),
@@ -426,7 +431,7 @@ const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
   exportStart: (event, request) => encode.start(request, event.sender),
   exportPushFrame: (_event, frame) => encode.pushFrame(frame),
   exportFinish: (_event, jobId, summary) => encode.finish(jobId, { incomplete: summary?.incomplete === true }),
-  exportCancel: (_event, jobId) => encode.cancel(jobId),
+  exportCancel: (_event, jobId, reason) => encode.cancel(jobId, reason),
   exportChoosePath: (event, defaultName, format) =>
     encode.chooseOutputPath(defaultName, format, windowOf(event)),
   exportReveal: async (_event, outputPath) => {
@@ -510,7 +515,12 @@ function trackProjectOpen<P extends Project | null>(project: P): P {
   return project
 }
 
-export function registerIpcHandlers(): void {
+export interface IpcOptions {
+  /** Whether `contents` is one of the editor's own windows — not a composition or render window. */
+  isEditor: (contents: WebContents) => boolean
+}
+
+export function registerIpcHandlers({ isEditor }: IpcOptions): void {
   // The renderer's answer to a tool call. A `send`, not an `invoke`, because the renderer is
   // replying rather than asking — the correlation is by the id main put on the call.
   ipcMain.on(IPC.mcpToolResult, (_event, result: McpToolResult) => {
@@ -520,11 +530,15 @@ export function registerIpcHandlers(): void {
     setExecutorReady(event.sender, ready === true)
   })
   // Sends, outside the access gate: a page view carries one allow-listed word, and a locked
-  // bay's own crash is still a crash. Main checks both before anything is queued.
-  ipcMain.on(IPC.telemetryTrack, (_event, name: unknown, props: unknown) => {
+  // bay's own crash is still a crash. Main checks both before anything is queued — and only from
+  // the editor's own windows: a composition or render window runs a document someone else may
+  // have written, and must not be able to put text into a crash report or an event.
+  ipcMain.on(IPC.telemetryTrack, (event, name: unknown, props: unknown) => {
+    if (!isEditor(event.sender)) return
     telemetry.trackFromRenderer(name, props)
   })
-  ipcMain.on(IPC.telemetryReportError, (_event, report: unknown) => {
+  ipcMain.on(IPC.telemetryReportError, (event, report: unknown) => {
+    if (!isEditor(event.sender)) return
     telemetry.reportRendererError(report, 'renderer')
   })
 

@@ -239,8 +239,9 @@ export class FrameExporter {
     } catch (error) {
       // The encoder rejects a frame of the wrong size, the wrong dimensions or out of
       // sequence. Letting that propagate without cancelling would leave ffmpeg running on
-      // a half-written file that nothing will ever close.
-      await bay.export.cancel(jobId).catch(() => {})
+      // a half-written file that nothing will ever close. Main is told this cancel is a
+      // failure, so it counts one: to the encoder it is otherwise the same as the user's.
+      await bay.export.cancel(jobId, { failed: true, stage: 'rendering' }).catch(() => {})
       throw error
     } finally {
       release()

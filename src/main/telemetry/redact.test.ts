@@ -6,7 +6,7 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { redact, redactTo } from './redact'
+import { redact, redactLine, redactTo } from './redact'
 
 const HOME = '/Users/alice'
 
@@ -84,8 +84,11 @@ test('a project file name (not code) is not kept, even when it looks like a sent
 })
 
 test('text that is not a path is left alone (positive control)', () => {
-  const plain = 'TypeError: Cannot read properties of undefined (reading \'width\') ratio 1/2 at https://example.com/a/b'
+  const plain = 'TypeError: Cannot read properties of undefined (reading width) ratio 1/2 at https://example.com/a/b and ./rel/x'
   assert.equal(redact(plain, HOME), plain)
+  // A quoted span is text as far as redaction can tell, even a property name (by design: a
+  // project name quoted the same way cannot be told from it).
+  assert.equal(redact("Cannot read properties of undefined (reading 'width')", HOME), 'Cannot read properties of undefined (reading <text>)')
   assert.equal(redact('at Object.<anonymous> (node:internal/modules/cjs/loader:1)', HOME), 'at Object.<anonymous> (node:internal/modules/cjs/loader:1)')
 })
 
@@ -94,4 +97,122 @@ test('redactTo redacts before it cuts, so a cut cannot leave half a path', () =>
   const out = redactTo(specimen, HOME, 18)
   assert.ok(out.length <= 18)
   assert.ok(!out.includes('Clien') && !out.includes('alice'), out)
+})
+
+// -- audit of 9775a5a: each specimen below leaked, or took most of a second, before the fix -----
+
+/** Fails when any of `secrets` survives in `out`; asserts first that the specimen holds them. */
+function assertGone(specimen: string, out: string, secrets: readonly string[]): void {
+  for (const secret of secrets) {
+    assert.ok(specimen.includes(secret), `the specimen must contain ${secret}`)
+    assert.ok(!out.includes(secret), `${secret} survived: ${out}`)
+  }
+}
+
+test('a path after a colon, backtick, brace, pipe or semicolon loses its directories', () => {
+  for (const before of ['path:', '`', '{', '|', ';', 'x=', '[']) {
+    const specimen = `${before}/Users/alice/Clients/Acme/cut.bay`
+    const out = redact(specimen, HOME)
+    assertGone(specimen, out, ['alice', 'Clients', 'Acme', 'cut'])
+    assert.ok(out.includes('<file>.bay'), out)
+  }
+  // And a `~/` path written as such, not produced from home.
+  const tilde = 'path:~/Clients/Acme/cut.bay'
+  assertGone(tilde, redact(tilde, HOME), ['Clients', 'Acme'])
+})
+
+test('a folder name holding ": " or spaces does not leak any part of itself', () => {
+  const specimen = '    at run (/Users/alice/My Projects/Acme: Merger/index.js:4:5)'
+  const out = redact(specimen, HOME)
+  assertGone(specimen, out, ['alice', 'My Projects', 'Projects', 'Acme', 'Merger'])
+  assert.equal(out, '    at run (~/…/index.js:4:5)')
+  const outside = 'at x (/Volumes/Work Drive/Client: Beta (2024)/raw/cut.mov)'
+  assertGone(outside, redact(outside, HOME), ['Work Drive', 'Client', 'Beta', '2024', 'raw'])
+})
+
+test('percent-encoded emails and paths are decoded once and redacted', () => {
+  const email = 'signed in as alice%40example.com'
+  assertGone(email, redact(email, HOME), ['alice', 'example.com'])
+  const path = 'GET %2FUsers%2Fbob%2FClients%2FSecret%20Cut%2Fa.mov failed'
+  assertGone(path, redact(path, HOME), ['bob', 'Clients', 'Secret'])
+  // Malformed sequences are left as they are, and never throw.
+  assert.equal(redact('100% sure, %E0%A4%A and %ZZ', HOME), '100% sure, %E0%A4%A and %ZZ')
+})
+
+test("a URL's query string and fragment are removed, its host kept", () => {
+  const specimen = 'fetch failed: https://api.example.com/v1/files?name=Acme%20Pitch&user=alice#frag-Secret'
+  const out = redact(specimen, HOME)
+  assertGone(specimen, out, ['Acme', 'alice', 'Secret'])
+  assert.ok(out.includes('https://api.example.com/v1/files?<query>'), out)
+  const fragment = 'at https://example.com/page#Acme-Merger'
+  assertGone(fragment, redact(fragment, HOME), ['Acme'])
+})
+
+test('tokens and keys become <secret>', () => {
+  const cases = [
+    'Authorization: Bearer abc.DEF-123_xyz',
+    'key sk-proj-ABCDEFGHIJKLMNOPQRSTUV rejected',
+    'key AIzaSyA1234567890abcdefghijklmnopqrstuv rejected',
+    'token ya29.a0AfH6SMBx-secret-part rejected',
+    'refresh AMf-vBxSecretRefreshToken rejected',
+    'blob QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVowMTIzNDU2 rejected'
+  ]
+  const secrets = ['abc.DEF-123_xyz', 'ABCDEFGHIJKLMNOPQRSTUV', 'SyA1234567890abcdefghij', 'a0AfH6SMBx', 'vBxSecretRefreshToken', 'QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVowMTIzNDU2']
+  cases.forEach((specimen, index) => {
+    const out = redact(specimen, HOME)
+    assertGone(specimen, out, [secrets[index]!])
+    assert.ok(out.includes('<secret>'), out)
+  })
+  // Positive control: a short ordinary word with a dash is not a secret.
+  assert.equal(redact('a sk-ip and a long-ish-word', HOME), 'a sk-ip and a long-ish-word')
+})
+
+test('quoted text in a message becomes <text>; a stack frame line keeps its function name', () => {
+  for (const specimen of ['“Acme Q3 Pitch” is missing from disk', '"Acme Q3 Pitch" is missing from disk', "'Acme Q3 Pitch' is missing from disk", "‘Acme Q3 Pitch’ is missing"]) {
+    const out = redact(specimen, HOME)
+    assertGone(specimen, out, ['Acme', 'Pitch'])
+    assert.ok(out.includes('<text>'), out)
+  }
+  // An apostrophe inside the quoted name does not end it early.
+  const apostrophe = "'Alice's cut' could not load"
+  assertGone(apostrophe, redact(apostrophe, HOME), ['Alice', 'cut'])
+  // An apostrophe in prose is not a quote (positive control).
+  assert.equal(redact("can't open it, don't retry", HOME), "can't open it, don't retry")
+  // A stack: the message line is redacted, the frames are kept whole.
+  const stack = 'Error: “Acme Q3 Pitch” is missing\n    at loadAsset (/Users/alice/app/out/main/index.js:10:2)'
+  const out = redact(stack, HOME)
+  assertGone(stack, out, ['Acme'])
+  assert.ok(out.endsWith('    at loadAsset (~/…/index.js:10:2)'), out)
+  // A cut that left a quote unclosed still hides what followed it.
+  const unclosed = 'Error: “Acme Q3 Pi'
+  assertGone(unclosed, redact(unclosed, HOME), ['Acme'])
+})
+
+test('pathological inputs redact in linear time (< 50 ms each)', () => {
+  const inputs = ['/' + 'a.'.repeat(16000) + '!', 'a'.repeat(32000) + '@', 'a@' + 'b.'.repeat(16000), '~/' + 'a/'.repeat(16000), ' /x'.repeat(10000), "'".repeat(32000), 'x://'.repeat(8000), '%'.repeat(32000)]
+  for (const input of inputs) {
+    for (const [label, run] of [
+      ['redact', () => redact(input, HOME)],
+      ['redactLine (uncapped)', () => redactLine(input, HOME)],
+      ['redactTo', () => redactTo(input, HOME, 16000)]
+    ] as const) {
+      const started = performance.now()
+      run()
+      const took = performance.now() - started
+      assert.ok(took < 50, `${label} took ${took.toFixed(1)} ms on ${JSON.stringify(input.slice(0, 12))}…`)
+    }
+  }
+})
+
+test('redactTo cuts on a code point, never inside a surrogate pair', () => {
+  const out = redactTo(`${'x'.repeat(9)}😀tail`, HOME, 10)
+  assert.equal(out, 'x'.repeat(9))
+  assert.ok(!/[\uD800-\uDBFF]$/.test(out))
+})
+
+test('redactTo cuts before it redacts, and a cut cannot leave half an email', () => {
+  const specimen = `${'word '.repeat(3)}alice.smith@example.com rest`
+  const out = redactTo(specimen, HOME, 26)
+  assert.ok(out.length <= 26, out)
+  assert.ok(!out.includes('alice'), out)
 })

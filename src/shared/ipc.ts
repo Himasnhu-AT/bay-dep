@@ -221,6 +221,12 @@ export interface ExportRequest {
   loudness?: LoudnessTarget
 }
 
+/** Why the renderer is cancelling an export: its own failure, and the stage it failed in. */
+export interface ExportCancelReason {
+  failed: true
+  stage?: 'preparing' | 'rendering' | 'encoding'
+}
+
 export interface ExportProgress {
   jobId: string
   /** 0..1, or null while the total is not yet known. */
@@ -791,7 +797,13 @@ export interface BayApi {
      * wrong (pending or placeholder) — only the renderer knows, and the export's usage event says so.
      */
     finish(jobId: string, summary?: { incomplete: boolean }): Promise<void>
-    cancel(jobId: string): Promise<void>
+    /**
+     * Stops the job and discards what it wrote. `reason.failed`: the renderer is cancelling because
+     * *it* failed (a frame it could not draw or push), not because the user asked — main then
+     * counts the export as failed (`export_failed`) at `reason.stage`, or the last stage it saw. A
+     * user's cancel passes no reason and is counted as nothing.
+     */
+    cancel(jobId: string, reason?: ExportCancelReason): Promise<void>
     chooseOutputPath(defaultName: string, format: ExportFormat): Promise<string | null>
     /**
      * Show a finished export in Finder, or open it in the default app. Only a path an export in
