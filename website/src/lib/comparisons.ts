@@ -91,6 +91,12 @@ export type Comparison = {
   beforeSound?: boolean;
   av1?: boolean;
   retouched?: string;
+  /**
+   * Set for an entry with no "before": a film made from scratch rather than an edit of footage.
+   * One plain sentence saying what the agent was given, shown where the Before frame would be.
+   * The entry then publishes only after.* media.
+   */
+  given?: string;
 };
 
 /** Pending entries carry this in place of copy, so nothing unfinished reads as a claim. */
@@ -187,7 +193,9 @@ export const comparisons: Comparison[] = [
   {
     slug: "sage-launch",
     status: "ready",
-    title: "A product launch film drawn in code from the app's own screens",
+    title: "A product launch film the agent designed and built on its own",
+    given:
+      "Screen recordings of the app, its icon, a music bed and the brief below. It planned, drew, reviewed and exported the film itself.",
     style: "product-launch-film",
     aspect: "16:9",
     durationSec: 48.3,

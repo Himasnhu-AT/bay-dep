@@ -1,3 +1,4 @@
+import { FilmFigure } from "@/components/app/FilmFigure";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { Metadata } from "next";
@@ -28,7 +29,7 @@ function checked(entries: Comparison[]): Comparison[] {
   for (const c of entries) {
     const problems = readyProblems(c);
     const pair = comparisonPair(c);
-    for (const side of [pair.before, pair.after]) {
+    for (const side of c.given ? [pair.after] : [pair.before, pair.after]) {
       for (const file of [side.av1, side.h264, side.poster.avif, side.poster.webp]) {
         if (file && !existsSync(join(process.cwd(), "public", file))) problems.push(`missing public${file}`);
       }
@@ -70,6 +71,22 @@ function Credits({ entry }: { entry: Comparison }) {
   );
 }
 
+function notes(entry: Comparison) {
+  return (
+    <div className="max-w-[62ch]">
+      <Prompt>{entry.prompt}</Prompt>
+      <p className="mt-8 text-xs text-muted">What ran, in order</p>
+      <div className="mt-2">
+        <StepList steps={entry.did.map(splitStep)} />
+      </div>
+      <p className="mt-6 text-sm text-ink-soft">
+        {entry.retouched ?? "Nothing was changed by hand after the agent finished."}
+      </p>
+      <Credits entry={entry} />
+    </div>
+  );
+}
+
 function Figure({ entry }: { entry: Comparison }) {
   return (
     <section aria-labelledby={`${entry.slug}-title`}>
@@ -83,26 +100,18 @@ function Figure({ entry }: { entry: Comparison }) {
       </Reveal>
       <Reveal delay={0.08}>
         <div className="mt-6">
+          {entry.given ? (
+            <FilmFigure film={comparisonPair(entry).after} given={entry.given} label={entry.title} notes={notes(entry)} />
+          ) : (
           <BeforeAfter
             pair={comparisonPair(entry)}
             layout="split"
             sound={entry.afterSound ?? false}
             label={entry.title}
             sides={{ before: "raw footage", after: "the agent’s export" }}
-            notes={
-              <div className="max-w-[62ch]">
-                <Prompt>{entry.prompt}</Prompt>
-                <p className="mt-8 text-xs text-muted">What ran, in order</p>
-                <div className="mt-2">
-                  <StepList steps={entry.did.map(splitStep)} />
-                </div>
-                <p className="mt-6 text-sm text-ink-soft">
-                  {entry.retouched ?? "Nothing was changed by hand after the agent finished."}
-                </p>
-                <Credits entry={entry} />
-              </div>
-            }
+            notes={notes(entry)}
           />
+          )}
         </div>
       </Reveal>
     </section>
@@ -117,7 +126,7 @@ export default function ComparePage() {
       <PageHeader
         eyebrow="Compare"
         title="What went in, and what the agent made of it."
-        lead={`Each figure is one run of ${product.name}'s agent: the footage it was given on one side, the file it exported on the other, and with them the message it was given, word for word, and the tools it called.`}
+        lead={`Each figure is one run of ${product.name}'s agent: the footage it was given on one side (or, for a film it made from scratch, a line saying what it was given), the file it exported on the other, and with them the message it was given, word for word, and the tools it called.`}
       />
       <Wrap>
         {entries.length === 0 ? (
