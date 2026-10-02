@@ -808,6 +808,11 @@ export interface Project {
   updatedAt: number
   /** Absolute path this project was last saved to, or null if never saved. */
   filePath?: string | null
+  /**
+   * Where this project is edited (`@shared/host`). Absent is bay's own editor; `'resolve'` means
+   * the timeline lives in DaVinci Resolve and the agent drives it there.
+   */
+  host?: 'bay' | 'resolve'
 }
 
 /**

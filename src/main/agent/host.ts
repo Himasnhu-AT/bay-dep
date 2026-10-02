@@ -12,6 +12,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { app, BrowserWindow, shell } from 'electron'
 import { IPC } from '@shared/ipc'
+import type { ProjectHost } from '@shared/host'
 import {
   DEFAULT_AGENT_TUNING,
   parseAgentTuning,
@@ -123,7 +124,7 @@ export async function agentProviders(): Promise<AgentProviderStatus[]> {
 }
 
 export async function startAgent(
-  options: { provider?: AgentProvider; tuning?: AgentTuning } = {}
+  options: { provider?: AgentProvider; tuning?: AgentTuning; host?: ProjectHost } = {}
 ): Promise<{ ok: true; id: string } | { ok: false; error: string }> {
   if (options.tuning !== undefined) tuning = parseAgentTuning(options.tuning)
   // The Settings choice unless `BAY_AGENT_RUNTIME` overrides it. Read per start rather than at

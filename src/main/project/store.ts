@@ -16,6 +16,7 @@ import { posterFor, uniqueProjectName } from './library'
 import { thumbnailFile } from '../media/thumbnails'
 import type { RecentProject } from '@shared/ipc'
 import type { Project } from '@shared/project'
+import type { ProjectHost } from '@shared/host'
 import type { TelemetrySwitch } from '@shared/telemetry'
 import { appDbPath, autosaveDir, projectsDir } from '../paths'
 import {
@@ -359,13 +360,14 @@ export async function launchRequest(): Promise<Project | null> {
   }
 }
 
-export async function create(): Promise<Project> {
+export async function create(host: ProjectHost = 'bay'): Promise<Project> {
   const dir = projectsDir()
   const taken = (await readdir(dir).catch(() => [] as string[]))
     .filter((name) => name.toLowerCase().endsWith(`.${EXTENSION}`))
     .map((name) => name.slice(0, -(EXTENSION.length + 1)))
   const name = uniqueProjectName(taken)
-  const fresh: Project = { ...freshProject(), name }
+  // Bay is stored as absence, so a bay project's file is what it was before hosts existed.
+  const fresh: Project = { ...freshProject(), name, ...(host === 'resolve' ? { host } : {}) }
   return admitAssets(await persist(fresh, join(dir, `${name}.${EXTENSION}`)))
 }
 

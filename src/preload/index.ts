@@ -31,6 +31,7 @@ import type { Project } from '@shared/project'
 import type { WhisperDownload } from '@shared/whisper'
 import type { VisionStatus } from '@shared/visual-search'
 import type { AccessStatus } from '@shared/access'
+import type { ProjectHost, ResolveStatus } from '@shared/host'
 import type { UpdateStatus } from '@shared/update'
 
 const api: BayApi = {
@@ -159,7 +160,7 @@ const api: BayApi = {
   },
 
   agent: {
-    start: (options?: { provider?: AgentProvider; tuning?: AgentTuning }) => ipcRenderer.invoke(IPC.agentStart, options),
+    start: (options?: { provider?: AgentProvider; tuning?: AgentTuning; host?: ProjectHost }) => ipcRenderer.invoke(IPC.agentStart, options),
     configure: (tuning: AgentTuning) => ipcRenderer.invoke(IPC.agentConfigure, tuning),
     providers: () => ipcRenderer.invoke(IPC.agentProviders),
     send: (text: string, attachments?: AgentAttachmentInput[]) => ipcRenderer.invoke(IPC.agentSend, text, attachments),
@@ -201,7 +202,8 @@ const api: BayApi = {
     autosave: (project: Project) =>
       ipcRenderer.invoke(IPC.projectAutosave, project) as Promise<void>,
     launchRequest: () => ipcRenderer.invoke(IPC.projectLaunchRequest) as Promise<Project | null>,
-    create: () => ipcRenderer.invoke(IPC.projectCreate) as Promise<Project>,
+    create: (options?: { host?: ProjectHost }) =>
+      ipcRenderer.invoke(IPC.projectCreate, options) as Promise<Project>,
     forget: (filePath: string) => ipcRenderer.invoke(IPC.projectForget, filePath) as Promise<void>,
     reveal: (filePath: string) => ipcRenderer.invoke(IPC.projectReveal, filePath) as Promise<void>,
     rename: (filePath: string, name: string) =>
@@ -211,6 +213,10 @@ const api: BayApi = {
     trash: (filePath: string) => ipcRenderer.invoke(IPC.projectTrash, filePath) as Promise<void>
   },
 
+  resolve: {
+    status: () => ipcRenderer.invoke(IPC.resolveStatus) as Promise<ResolveStatus>,
+    open: () => ipcRenderer.invoke(IPC.resolveOpen) as Promise<{ ok: boolean; error?: string }>
+  },
   export: {
     start: (request: ExportRequest) =>
       ipcRenderer.invoke(IPC.exportStart, request) as Promise<ExportJob>,

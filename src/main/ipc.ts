@@ -51,6 +51,8 @@ import { checkSearchRequest, checkVisionAssets } from './vision/requests'
 import { downloadsDir, stylesDir } from './paths'
 import { listUserStyles, writeUserStyle } from './styles/store'
 import * as store from './project/store'
+import { openResolve, resolveStatus } from './resolve'
+import { parseHost } from '@shared/host'
 import * as encode from './export/encode'
 import { mcpStatus, setExecutorReady, setMcpClients, settleToolCall } from './mcp/server'
 import { writeGenerated, writeTemplate } from './html/templates'
@@ -135,6 +137,8 @@ interface ChannelApi {
   projectAutosave: BayApi['project']['autosave']
   projectLaunchRequest: BayApi['project']['launchRequest']
   projectCreate: BayApi['project']['create']
+  resolveStatus: BayApi['resolve']['status']
+  resolveOpen: BayApi['resolve']['open']
   projectForget: BayApi['project']['forget']
   projectReveal: BayApi['project']['reveal']
   projectRename: BayApi['project']['rename']
@@ -421,7 +425,9 @@ const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
   projectRecent: () => store.recent(),
   projectAutosave: (_event, project) => store.autosave(project),
   projectLaunchRequest: () => store.launchRequest(),
-  projectCreate: () => store.create(),
+  projectCreate: (_event, options) => store.create(parseHost(options?.host)),
+  resolveStatus: () => resolveStatus(),
+  resolveOpen: () => openResolve(),
   projectForget: async (_event, filePath) => store.forget(filePath),
   projectReveal: async (_event, filePath) => store.reveal(filePath),
   projectRename: (_event, filePath, name) => store.rename(filePath, name),

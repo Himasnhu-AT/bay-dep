@@ -54,3 +54,7 @@ downloaded-assets/
 /.ffmpeg-build/
 /vendor/ffmpeg/*/ffmpeg
 /vendor/ffmpeg/*/ffprobe
+
+# The Resolve MCP connector: a clone made by script/setup-resolve-mcp.sh, with its Python venv.
+# Third-party (MIT) and several MB; bay finds it here in a checkout and never commits it.
+/vendor/davinci-resolve-mcp/

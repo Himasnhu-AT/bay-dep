@@ -28,6 +28,7 @@ import type { CompositionFault, CompositionInfo } from './composition'
 import type { McpToolCall, McpToolResult } from './mcp'
 import type { LoudnessMeasurement, LoudnessReport, LoudnessTarget } from './loudness'
 import type { AccessStatus } from './access'
+import type { ProjectHost, ResolveStatus } from './host'
 import type { UpdateStatus } from './update'
 import type { RendererErrorReport, TelemetryProps, TelemetryStatus, TelemetrySwitch } from './telemetry'
 import type { Finding } from './findings'
@@ -660,6 +661,12 @@ export interface BayApi {
     start(options?: {
       provider?: AgentProvider
       tuning?: AgentTuning
+      /**
+       * The open project's host. With `'resolve'` the session also gets the Resolve MCP server
+       * and a prompt written for editing there; a start for another host than the running
+       * conversation's replaces that conversation, as a change of provider does.
+       */
+      host?: ProjectHost
     }): Promise<{ ok: true; id: string } | { ok: false; error: string }>
     /**
      * Preferences › Agent's effort, model or longest turn changed. The running conversation takes
@@ -768,10 +775,10 @@ export interface BayApi {
     launchRequest(): Promise<Project | null>
     /**
      * A new, empty project, already written to disk in the projects folder under a name that
-     * does not collide, and already in the recents list. No dialog: creating a project should
-     * not start with a question.
+     * does not collide, and already in the recents list. Main shows no dialog; the renderer
+     * asks the one question — which editor — before calling. `host` omitted is bay's editor.
      */
-    create(): Promise<Project>
+    create(options?: { host?: ProjectHost }): Promise<Project>
     /** Take one project off the recents list. The file itself is not touched. */
     forget(filePath: string): Promise<void>
     /** Show the project file in Finder. */
@@ -788,6 +795,13 @@ export interface BayApi {
     trash(filePath: string): Promise<void>
   }
 
+  /** DaVinci Resolve as a project's editor (`@shared/host`, `src/main/resolve/`). */
+  resolve: {
+    /** Probed fresh on every call: installed, set up, running, connected. Never throws. */
+    status(): Promise<ResolveStatus>
+    /** Bring DaVinci Resolve to the front, launching it if it is closed. */
+    open(): Promise<{ ok: boolean; error?: string }>
+  }
   export: {
     start(request: ExportRequest): Promise<ExportJob>
     /** Renderer pushes one composited frame; resolves when the encoder has taken it. */
@@ -1012,6 +1026,8 @@ export const IPC = {
   projectAutosave: 'project:autosave',
   projectLaunchRequest: 'project:launch-request',
   projectCreate: 'project:create',
+  resolveStatus: 'resolve:status',
+  resolveOpen: 'resolve:open',
   projectForget: 'project:forget',
   projectReveal: 'project:reveal',
   projectRename: 'project:rename',
