@@ -216,6 +216,22 @@ ones the task matches, not only the ones the user names. A skill's description i
 agent decides to use it. Codex cannot load skills itself, so it gets only the ones named and says
 which it would have wanted.
 
+**A project names its editor, and a Resolve project is a weaker sandbox** (`Project.host`,
+`@shared/host`, `src/main/resolve/`, `@shared/resolve-tools`). New Project asks: bay editor or
+DaVinci Resolve. Absent `host` is bay, and a bay project's prompt, MCP config and allow-list are
+byte-identical to before. For `'resolve'` the Claude runtimes also get samuelgursky/davinci-resolve-mcp
+(installed by `script/setup-resolve-mcp.sh` into gitignored `vendor/davinci-resolve-mcp`, never
+shipped or fetched by bay) as server `resolve`, 25 of its 36 tools by exact name — the 11 that run
+code, install plugins, browse the disk or reach the cloud are withheld — and a prompt written for
+editing there. Codex refuses a Resolve project. What does **not** hold for one: `policy.ts` never
+sees a Resolve call, so allowed tools can still write an export to any path and delete timelines;
+"Ask before editing", the Changes card, Revert and undo do not cover Resolve; the connector launches
+Resolve on a tool call; and `resolve_control` can still ask GitHub for the connector's latest release
+(the startup check is off by env). The free edition needs Workspace › Scripts › resolve_bridge once
+per Resolve launch. Measured: the dialog, a Resolve project's workspace and the `not-running` status
+in the app, and `tools/list` (36) through bay's entry. **Not measured:** `ready`/`bridge-needed`
+against an open Resolve, and any real agent turn using a Resolve tool.
+
 **The in-app agent reaches files only through `src/main/mcp/policy.ts`.** It has no filesystem
 tools, so a path argument is its only way to a file, and text it reads (a transcript, an asset
 name) can carry a prompt injection. It connects on its own socket, `bay-agent.sock`, so main knows

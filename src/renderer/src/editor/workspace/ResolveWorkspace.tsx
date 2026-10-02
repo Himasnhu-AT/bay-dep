@@ -80,6 +80,10 @@ function ResolvePanel({ onHome }: { onHome(): void }): ReactNode {
       <p className="mb-2.5 text-[11px] leading-relaxed text-pretty text-ink-2">
         This project’s timeline is in Resolve. Ask the agent for edits here; they are made there.
       </p>
+      <p data-resolve-limits="" className="mb-2.5 text-[11px] leading-relaxed text-pretty text-ink-3">
+        Changes made in Resolve are not in bay’s Changes card, Revert or undo, and “Ask before
+        editing” does not cover them. Undo them in Resolve.
+      </p>
       <ResolveStatusLine connection={connection} />
     </section>
   )
