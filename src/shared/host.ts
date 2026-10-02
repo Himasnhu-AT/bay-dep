@@ -80,3 +80,60 @@ export function resolveStatusMessage(status: ResolveStatus): string {
     }
   }
 }
+
+/** One step of connecting Resolve: done already, the one to do now, or still ahead. */
+export interface ResolveStep {
+  id: 'install' | 'connector' | 'open' | 'bridge' | 'ask'
+  title: string
+  /** What to do, written for the person doing it. */
+  detail: string
+  progress: 'done' | 'now' | 'later'
+}
+
+/** The states in the order a person gets through them; a status means every earlier one is done. */
+const STATE_ORDER: readonly ResolveState[] = ['not-installed', 'not-set-up', 'not-running', 'bridge-needed', 'ready']
+
+/**
+ * The whole way from nothing to a connected Resolve, with where this Mac is on it.
+ *
+ * Every step is always listed, so someone at step 2 can see step 4 is coming — the bridge is the
+ * one nobody expects, and on the free edition it is needed again each time Resolve starts.
+ */
+export function resolveSetupSteps(status: ResolveStatus): ResolveStep[] {
+  const at = STATE_ORDER.indexOf(status.state)
+  const setup = status.setup ?? 'script/setup-resolve-mcp.sh'
+  const steps: Omit<ResolveStep, 'progress'>[] = [
+    {
+      id: 'install',
+      title: 'Install DaVinci Resolve',
+      detail: 'The free edition works. Download it from blackmagicdesign.com and put it in Applications.'
+    },
+    {
+      id: 'connector',
+      title: 'Set up bay’s Resolve connector',
+      detail: `In Terminal, run ${setup} — once per Mac. It also adds the bridge script to Resolve’s Scripts menu.`
+    },
+    {
+      id: 'open',
+      title: 'Open Resolve and a project',
+      detail: 'Open DaVinci Resolve, then open or create the project you want bay to edit.'
+    },
+    {
+      id: 'bridge',
+      title: 'Start the bridge in Resolve',
+      detail:
+        status.state === 'bridge-needed' && status.bridgeInstalled === false
+          ? `resolve_bridge is not in Resolve’s Scripts menu yet. Run ${setup}, restart Resolve, then choose Workspace › Scripts › resolve_bridge.`
+          : 'In Resolve’s menu bar choose Workspace › Scripts › resolve_bridge. The free edition needs this each time Resolve starts; Studio connects without it.'
+    },
+    {
+      id: 'ask',
+      title: 'Ask the agent',
+      detail: 'Describe the edit in bay. The agent makes it in the Resolve project that is open.'
+    }
+  ]
+  return steps.map((step, index) => ({
+    ...step,
+    progress: index < at ? 'done' : index === at ? 'now' : 'later'
+  }))
+}
