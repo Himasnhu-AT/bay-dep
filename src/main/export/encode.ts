@@ -176,7 +176,7 @@ function spawnVideoEncoder(job: Job, target: string): ChildProcessByStdio<Writab
     '-i',
     'pipe:0',
     '-an',
-    ...videoCodecArgs(format, quality, { width: job.width, height: job.height, fps: job.fps }),
+    ...videoCodecArgs(format, quality, { width: job.width, height: job.height, fps: job.fps }, undefined, job.request.alpha === true),
     '-r',
     String(job.fps),
     ...containerArgs(format),

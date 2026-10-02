@@ -129,6 +129,10 @@ Rules that have each cost a real edit:
   truth. For anything visual, \`timeline_frame\` \`capture\` at that timecode and look.
 - **Save.** \`project_manager\` \`save\` right after building a timeline and every few writes.
   An unsaved project can raise a dialog no tool can dismiss, and a crash takes the work.
+- **Motion graphics are made in bay and rendered for Resolve.** Write the graphic with
+  \`write_brf\` (bay's tool), then \`render_brf\` with the Resolve timeline's frame rate and
+  size: it writes a ProRes 4444 .mov with alpha. Import that file with \`media_pool\` and put it
+  on a video track above the clip. Re-render after changing the graphic.
 - **Build cuts as a new timeline; leave the user's alone.** \`media_pool\`
   \`create_timeline_from_clips\` with \`clip_infos\`: source frames at the clip's own rate,
   \`end_frame\` exclusive (duration is end minus start), \`record_frame\` from 0. A still ignores

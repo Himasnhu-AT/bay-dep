@@ -418,6 +418,8 @@ const TOOL_EXEMPT: Record<string, string> = {
     'replaces the document and starts fresh history by design — it is not an edit to undo',
   export_timeline:
     'renders a file from the project and never edits it; its frame exporter needs a DOM canvas',
+  render_brf:
+    'renders a file from a throwaway timeline and never edits the project; its frame exporter needs a DOM canvas',
   generate_image: 'starts a job in main and never edits the project; generation.test.ts asserts past is untouched',
   generate_video: 'starts a job in main and never edits the project; generation.test.ts asserts past is untouched',
   generate_speech: 'starts a job in main and never edits the project; generation-speech.test.ts asserts past is untouched',

@@ -50,6 +50,7 @@ import { tool as removeMarker } from './remove-marker'
 import { tool as removeRange } from './remove-range'
 import { tool as removeSilences } from './remove-silences'
 import { tool as removeTransition } from './remove-transition'
+import { tool as renderBrf } from './render-brf'
 import { tool as resolveFeedback } from './resolve-feedback'
 import { tool as searchFootage } from './search-footage'
 import { tool as searchStyles } from './search-styles'
@@ -89,6 +90,7 @@ export const TOOLS: ToolSpec[] = [
   proposeEdit,
   writeBrf,
   readBrf,
+  renderBrf,
   searchStyles,
   readStyle,
   writeStyle,

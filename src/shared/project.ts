@@ -836,6 +836,12 @@ export interface Project {
  */
 export const PROJECT_VERSION = 1
 
+/**
+ * A timeline background that paints nothing, so a frame keeps its alpha. Never stored in a
+ * `.bay`: only the throwaway timeline `render_brf` builds to render one graphic has it.
+ */
+export const TRANSPARENT_BACKGROUND = 'transparent'
+
 // ---------------------------------------------------------------------------
 // Time helpers — the only places frames and real time are allowed to meet
 // ---------------------------------------------------------------------------

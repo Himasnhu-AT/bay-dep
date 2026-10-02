@@ -220,6 +220,12 @@ export interface ExportRequest {
    * level the preview played, which is the default on purpose.
    */
   loudness?: LoudnessTarget
+  /**
+   * Keep the picture's transparency: `mov` only, written as ProRes 4444 with an alpha channel
+   * (`render_brf`). The frames pushed must then carry real alpha — a timeline whose background
+   * is `'transparent'`. Absent is the opaque delivery every other export is.
+   */
+  alpha?: boolean
 }
 
 /** Why the renderer is cancelling an export: its own failure, and the stage it failed in. */

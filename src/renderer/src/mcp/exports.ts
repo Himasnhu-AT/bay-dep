@@ -13,13 +13,14 @@
  */
 
 import type { ExportFormat, ExportProgress, IncompleteFrames } from '@shared/ipc'
-import { timelineDuration } from '@shared/project'
+import { TRANSPARENT_BACKGROUND, defaultLayout, timelineDuration, usToFrames, type Project, type Timeline } from '@shared/project'
 import { chooseExportLoudness, describeTarget, rememberedTarget, unmasteredLevelWarning, type LoudnessTarget } from '@shared/loudness'
 import { checkExportRange } from '@shared/export-presets'
 import { hasBlocking, type Finding } from '@shared/findings'
 import { FrameExporter } from '@/engine'
 import { bay } from '@/lib/bay'
-import { fail, project, store, timeline, type CallContext, type Handlers } from './helpers'
+import { makeTrack, newId } from '@/store/factory'
+import { fail, project, resolveAsset, store, timeline, type CallContext, type Handlers } from './helpers'
 import { stillWorking, waitSecondsOf, waitUntil } from './wait'
 
 interface Job {
@@ -90,7 +91,9 @@ function subscribe(): void {
 
 export async function exportTimeline(
   args: Record<string, unknown>,
-  context?: CallContext
+  context?: CallContext,
+  /** A project and timeline other than the open ones, rendered with alpha (`renderBrf`). */
+  source?: { project: Project; timeline: Timeline }
 ): Promise<Record<string, unknown>> {
   const api = bay()
   if (!api) fail('This window has no bridge to the app, so nothing can be exported.')
@@ -106,7 +109,8 @@ export async function exportTimeline(
     fail(`quality must be "draft", "good" or "best"; got "${quality}".`)
   }
 
-  const tl = timeline()
+  const tl = source?.timeline ?? timeline()
+  const rendered = source?.project ?? project()
   // Refused before anything starts: an export that ran for minutes and then ignored a
   // misspelled preset would deliver a file at the wrong level with no word about it. No
   // argument means the timeline's remembered target, when it has one.
@@ -114,7 +118,7 @@ export async function exportTimeline(
   const remembered = rememberedTarget(tl.delivery?.loudness)
   const loudness = chooseExportLoudness(args.loudness, remembered.target ?? undefined)
   if ('error' in loudness) fail(loudness.error)
-  const projectId = project().id
+  const projectId = rendered.id
   const duration = timelineDuration(tl)
   if (duration === 0) {
     fail(
@@ -136,10 +140,11 @@ export async function exportTimeline(
   let job
   try {
     job = await api.export.start({
-      project: project(),
+      project: rendered,
       timelineId: tl.id,
       format,
       outputPath,
+      ...(source ? { alpha: true } : {}),
       width: tl.width,
       height: tl.height,
       fps: tl.fps,
@@ -176,7 +181,7 @@ export async function exportTimeline(
 
   if (!AUDIO_ONLY.includes(format)) {
     const exporter = new FrameExporter({
-      project: project(),
+      project: rendered,
       timelineId: tl.id,
       jobId: job.jobId,
       width: tl.width,
@@ -232,6 +237,83 @@ export async function exportTimeline(
   const status = await trackExport({ jobId: job.jobId }, context)
   const { note: _note, ...rest } = started
   return { ...rest, ...status }
+}
+
+/**
+ * `render_brf`: one `.brf` graphic alone, over nothing, as a ProRes 4444 `.mov` with alpha — a
+ * file another editor (a Resolve project's media pool) lays over footage.
+ *
+ * It is `exportTimeline` over a throwaway timeline holding only that asset on a transparent
+ * background, so the frames come from the compositor that draws the preview and every other
+ * export, and a graphic that throws or is still loading is reported the same way
+ * (`complete`, `incompleteFrames`). The open project is not changed.
+ */
+export async function renderBrf(args: Record<string, unknown>, context?: CallContext): Promise<Record<string, unknown>> {
+  const asset = resolveAsset(String(args.assetId))
+  if (asset.kind !== 'brf') {
+    fail(`${asset.name} is a ${asset.kind} asset, not a .brf one. render_brf renders motion graphics written with write_brf.`)
+  }
+  const open = timeline()
+  const numberOr = (value: unknown, fallback: number): number =>
+    typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.round(value) : fallback
+  // The graphic's own size when its scene declares one; otherwise the open timeline's, which is
+  // the canvas it was written against.
+  const width = numberOr(args.width, asset.width ?? open.width)
+  const height = numberOr(args.height, asset.height ?? open.height)
+  const fps = numberOr(args.fps, open.fps)
+  const durationInFrames = Math.max(1, usToFrames(asset.durationUs, fps))
+
+  let outputPath = args.outputPath === undefined ? '' : String(args.outputPath)
+  if (!outputPath) {
+    const saved = project().filePath
+    if (!saved) {
+      fail('This project has not been saved, so there is no folder to render into. Pass outputPath: an absolute path ending in .mov.')
+    }
+    const safe = asset.name.replace(/\.brf$/i, '').replace(/[^A-Za-z0-9._ -]+/g, '-').trim() || asset.id
+    outputPath = `${saved.replace(/\.[^./]+$/, '')} renders/${safe}.mov`
+  }
+  if (!/\.mov$/i.test(outputPath)) {
+    fail(`outputPath must end in .mov — the render is ProRes 4444 with alpha; got "${outputPath}".`)
+  }
+
+  const track = makeTrack('video', 1)
+  track.items.push({
+    id: newId('itm'),
+    assetId: asset.id,
+    trackId: track.id,
+    from: 0,
+    durationInFrames,
+    sourceStartUs: 0,
+    layout: defaultLayout({ width, height }),
+    volume: 1,
+    fadeInFrames: 0,
+    fadeOutFrames: 0,
+    speed: 1
+  })
+  const alone: Timeline = {
+    id: newId('tl'),
+    name: asset.name,
+    fps,
+    width,
+    height,
+    background: TRANSPARENT_BACKGROUND,
+    tracks: [track]
+  }
+  const result = await exportTimeline(
+    { outputPath, format: 'mov', quality: 'best', loudness: 'off', ...(args.wait === false ? { wait: false } : {}) },
+    context,
+    { project: { ...project(), timelines: [alone], activeTimelineId: alone.id }, timeline: alone }
+  )
+  return {
+    ...result,
+    assetId: asset.id,
+    width,
+    height,
+    fps,
+    durationInFrames,
+    codec: 'ProRes 4444 with alpha',
+    use: 'Import outputPath into the other editor and put it on a video track above the footage; its alpha is straight (unpremultiplied).'
+  }
 }
 
 /**
@@ -446,5 +528,6 @@ export function recordJobForTest(jobId: string, progress: Omit<ExportProgress, '
 
 export const handlers: Handlers = {
   export_timeline: (args, context) => exportTimeline(args, context),
+  render_brf: (args, context) => renderBrf(args, context),
   track_export: (args, context) => trackExport(args, context),
 }

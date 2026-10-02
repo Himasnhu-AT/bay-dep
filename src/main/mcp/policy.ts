@@ -136,6 +136,8 @@ export async function checkCallPolicy(
       }
       return null
     }
+    // `render_brf` writes a file the same way; with no outputPath it renders beside the project.
+    case 'render_brf':
     case 'export_timeline': {
       const raw = args['outputPath']
       if (typeof raw !== 'string' || !isAbsolute(raw)) return null

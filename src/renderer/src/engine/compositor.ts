@@ -26,7 +26,8 @@ import {
   isCropped,
   cropSourceRect,
   cropDestRect,
-  playableTimeline
+  playableTimeline,
+  TRANSPARENT_BACKGROUND
 } from '@shared/project'
 import { animatedItemAt } from '@shared/keyframes'
 import { matteRecordAt, MAX_MASK_FEATHER, subjectMaskOf } from '@shared/matte'
@@ -291,8 +292,13 @@ export class Compositor {
     ctx.save()
     ctx.globalAlpha = 1
     ctx.globalCompositeOperation = 'source-over'
-    ctx.fillStyle = timeline.background || '#000000'
-    ctx.fillRect(0, 0, width, height)
+    // `'transparent'` is a render of a graphic alone (`render_brf`): the frame must leave here
+    // with real alpha, and a fill in a transparent colour would leave the last frame under it.
+    if (timeline.background === TRANSPARENT_BACKGROUND) ctx.clearRect(0, 0, width, height)
+    else {
+      ctx.fillStyle = timeline.background || '#000000'
+      ctx.fillRect(0, 0, width, height)
+    }
 
     // The one definition of what this frame draws, shared with `awaitSources` so the element
     // waited on is the element drawn. See `itemsToDraw`.
