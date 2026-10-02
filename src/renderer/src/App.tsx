@@ -8,6 +8,7 @@ import { registerMcpExecutor } from '@/mcp'
 import { useEditor } from '@/store/editor'
 import { ExportDialog } from '@/editor/ExportDialog'
 import { ShortcutsDialog } from '@/editor/ShortcutsDialog'
+import { NewProjectDialog } from '@/editor/NewProjectDialog'
 import { ProjectsHome } from '@/home/ProjectsHome'
 import { Workspace } from '@/editor/workspace/Workspace'
 import { SettingsDialog } from '@/settings/SettingsDialog'
@@ -15,6 +16,7 @@ import { ProjectSettingsDialog } from '@/settings/ProjectSettingsDialog'
 import { usePageViews } from '@/settings/TelemetryNotice'
 import { Button, Modal } from '@/components'
 import type { Project } from '@shared/project'
+import type { ProjectHost } from '@shared/host'
 import { IMPORT_FILES_EVENT } from '@/lib/agentAttachments'
 
 
@@ -153,16 +155,30 @@ export function App(): ReactNode {
    * A new project is opened the way a chosen one is: straight in from the projects screen, and
    * through `switchProject` from the editor, which ends the agent's session about the old one.
    */
-  const onNewProject = useCallback((): void => {
-    // Asked before creating, not after: `create` writes the new `.bay` at once.
-    guardLeave('starting a new project', () => {
-      void call('Create project', (client) => client.project.create()).then((project) => {
-        if (!project) return
-        if (useEditor.getState().screen === 'home') enterProject(project)
-        else switchProject(project)
+  const [choosingHost, setChoosingHost] = useState(false)
+  // The command only asks the one question — which editor (`NewProjectDialog`). Nothing is
+  // created, and nothing about the open project is asked, until that is answered: Escape there
+  // costs nothing.
+  const onNewProject = useCallback((): void => setChoosingHost(true), [])
+  const createProject = useCallback(
+    (host: ProjectHost): void => {
+      setChoosingHost(false)
+      // The unsaved-changes question comes after the choice and before creating, not after:
+      // `create` writes the new `.bay` at once, and this is the moment the open project is
+      // actually about to be replaced.
+      guardLeave('starting a new project', () => {
+        void call('Create project', (client) => client.project.create({ host })).then((project) => {
+          if (!project) return
+          if (useEditor.getState().screen === 'home') enterProject(project)
+          else switchProject(project)
+        })
       })
-    })
-  }, [guardLeave, enterProject, switchProject])
+    },
+    [guardLeave, enterProject, switchProject]
+  )
+  const newProjectDialog = (
+    <NewProjectDialog open={choosingHost} onClose={() => setChoosingHost(false)} onCreate={createProject} />
+  )
 
   /**
    * macOS handing bay a document while it runs. Every *menu item* arrives as a registry
@@ -318,6 +334,7 @@ export function App(): ReactNode {
         <ProjectsHome />
         <SettingsDialog />
         <ShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
+        {newProjectDialog}
       </>
     )
   }
@@ -330,6 +347,7 @@ export function App(): ReactNode {
       <ProjectSettingsDialog />
       <SettingsDialog />
       <ShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
+      {newProjectDialog}
 
       <Modal
         open={leaving !== null}
