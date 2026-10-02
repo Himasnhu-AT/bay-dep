@@ -16,6 +16,8 @@
  */
 
 import type { AgentEvent, AgentProvider, AgentTuning } from '@shared/agent'
+import { resolveStatusMessage, type ProjectHost } from '@shared/host'
+import type { McpServerEntry } from '../resolve'
 
 export interface HostedAgentRuntime {
   readonly id: string
@@ -85,4 +87,65 @@ export function runtimeFor(
 /** Which provider a runtime belongs to. */
 export function providerOf(kind: RuntimeKind): AgentProvider {
   return kind === 'codex' ? 'codex' : 'claude'
+}
+
+/** What a conversation was started as. A start asking for anything else replaces it. */
+export interface ConversationKey {
+  provider: AgentProvider
+  host: ProjectHost
+}
+
+/**
+ * Whether a start may answer with the conversation already running.
+ *
+ * Only when it is the same provider **and** the same host. A Resolve project's conversation has
+ * the Resolve tools and a prompt that says the timeline is in Resolve; handed to a bay project it
+ * would edit Resolve while the user watched bay's timeline stand still, and the other way round
+ * it would have no Resolve tools at all.
+ */
+export function sameConversation(running: ConversationKey, wanted: ConversationKey): boolean {
+  return running.provider === wanted.provider && running.host === wanted.host
+}
+
+/**
+ * Switches the connector's own update check off. Left on, the connector asks GitHub for its
+ * releases when it starts — a request bay did not make and the user did not ask for. Updating
+ * the connector is `script/setup-resolve-mcp.sh`'s job.
+ */
+export const RESOLVE_CONNECTOR_ENV: Readonly<Record<string, string>> = { DAVINCI_RESOLVE_MCP_UPDATE_CHECK: '0' }
+
+/**
+ * The Resolve connector for one start: none for a bay project, the server for a Resolve project,
+ * or the sentence the user reads when a Resolve project cannot start.
+ *
+ * - **Codex is refused.** The connector has tools that run scripts and install plugins
+ *   (`@shared/resolve-tools`); Claude Code withholds them through its allow-list, and Codex has
+ *   none. Its config does take `enabled_tools` on an MCP server — measured on codex-cli 0.157.0:
+ *   accepted under `--strict-config` where a misspelt sibling key is refused — but whether the
+ *   model is then really without the other tools was **not** measured (it takes a signed-in
+ *   turn; the tool names are not in the request Codex builds, which a stub provider showed).
+ *   A sandbox checked only as config text is how the Codex approval fault shipped, so until a
+ *   real turn has shown a withheld tool refused, a Resolve project does not start on Codex.
+ * - **No connector is refused**, with the setup command, rather than starting a conversation
+ *   whose prompt names tools it does not have.
+ *
+ * `server` is what `resolveMcpServer()` answered; asked for only when the host is Resolve.
+ */
+export function resolveForStart(
+  host: ProjectHost,
+  provider: AgentProvider,
+  name: string,
+  server: () => McpServerEntry | null
+): { ok: true; resolve: { name: string; entry: McpServerEntry } | null } | { ok: false; error: string } {
+  if (host !== 'resolve') return { ok: true, resolve: null }
+  if (provider === 'codex') {
+    return {
+      ok: false,
+      error:
+        'This project is edited in DaVinci Resolve, which needs the Claude agent for now: Codex cannot be limited to the Resolve tools bay allows. Choose Claude in Preferences › Agent › Model, then start again.'
+    }
+  }
+  const entry = server()
+  if (!entry) return { ok: false, error: resolveStatusMessage({ state: 'not-set-up' }) }
+  return { ok: true, resolve: { name, entry: { ...entry, env: { ...entry.env, ...RESOLVE_CONNECTOR_ENV } } } }
 }

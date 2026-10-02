@@ -39,6 +39,8 @@ import { setPriority } from 'node:os'
 import { DEFAULT_TURN_LIMIT, parseAgentTuning, parseTurnLimit, type AgentEvent, type AgentTuning } from '@shared/agent'
 import { TOOLS } from '@shared/mcp'
 import { BAY_SKILLS } from '@shared/skills'
+import { resolveAllowedToolNames } from '@shared/resolve-tools'
+import type { McpServerEntry } from '../resolve'
 import { newStreamState, parseLine, toAgentEvents } from './stream'
 import type { HostedAgentRuntime } from './runtime'
 
@@ -204,12 +206,29 @@ export interface CliOptions {
   turnTimeoutMs?: number
   /** Preferences › Agent: effort, model, longest turn. The defaults when absent. */
   tuning?: AgentTuning
+  /** For a project edited in DaVinci Resolve: the connector, as a second MCP server. */
+  resolve?: ResolveServer
 }
 
-/** Bay's tools, namespaced the way the CLI reports them. */
-export function allowedToolNames(): string[] {
+/**
+ * The Resolve connector for one conversation: its stdio entry and the name it has in the MCP
+ * config. The name is given, not known here, so the config key and the allow-list's
+ * `mcp__<name>__` prefix come from one value (`RESOLVE_SERVER_NAME`, passed by `host.ts`).
+ */
+export interface ResolveServer {
+  name: string
+  entry: McpServerEntry
+}
+
+/**
+ * The tools the agent may call, namespaced the way the CLI reports them: bay's, and for a Resolve
+ * project the connector's allowed ones by exact name (`@shared/resolve-tools` says which and
+ * why). Never `mcp__<server>` alone, which the CLI reads as every tool that server publishes.
+ */
+export function allowedToolNames(options: Pick<CliOptions, 'resolve'> = {}): string[] {
   return [
     ...TOOLS.map((tool) => `mcp__bay__${tool.name}`),
+    ...(options.resolve ? resolveAllowedToolNames(options.resolve.name) : []),
     'ListMcpResourcesTool',
     'ReadMcpResourceTool',
     // Scoped to bay's skills by name. Measured as a partial gate, not a wall: it denied a bundled
@@ -260,8 +279,18 @@ export function bayMcpServer(options: Pick<CliOptions, 'proxyPath' | 'socketPath
   }
 }
 
+/**
+ * Every MCP server the agent gets: bay, and the Resolve connector when the project is edited
+ * there. Shared with the SDK runtime, so both launch the same servers under the same names.
+ */
+export function mcpServers(options: Pick<CliOptions, 'proxyPath' | 'socketPath' | 'resolve'>): Record<string, McpServerEntry> {
+  const servers: Record<string, McpServerEntry> = { bay: bayMcpServer(options) }
+  if (options.resolve) servers[options.resolve.name] = options.resolve.entry
+  return servers
+}
+
 export function mcpConfig(options: CliOptions): string {
-  return JSON.stringify({ mcpServers: { bay: bayMcpServer(options) } })
+  return JSON.stringify({ mcpServers: mcpServers(options) })
 }
 
 /**
@@ -282,7 +311,7 @@ export function cliArgs(options: CliOptions, sessionId: string, resume = false):
     '--strict-mcp-config',
     // The built-ins that exist at all. Everything not named is absent, not merely denied.
     '--tools', BUILT_IN_TOOLS.join(','),
-    '--allowedTools', ...allowedToolNames(),
+    '--allowedTools', ...allowedToolNames(options),
     // Anything not allowed above is refused rather than queued behind a prompt no one can see.
     '--permission-prompts', 'none',
     // Project settings from the agent's own directory, which holds only bay's skills. The

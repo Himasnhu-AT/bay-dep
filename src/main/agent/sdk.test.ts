@@ -68,6 +68,26 @@ test("the user's other MCP servers are not inherited", () => {
   assert.deepEqual(Object.keys(options.mcpServers ?? {}), ['bay'])
 })
 
+test('a Resolve project gets the same second server and the same allow-list as the CLI', () => {
+  const resolve = {
+    name: 'resolve',
+    entry: { command: '/opt/resolve-mcp/venv/bin/python', args: ['/opt/resolve-mcp/src/server.py'], env: { DAVINCI_RESOLVE_BRIDGE: '1' } }
+  }
+  const withResolve = sdkOptions({ ...BASE, resolve }, { resume: null, abortController: new AbortController() })
+  const cliWith = cliArgs({ ...BASE, resolve }, 'session-1')
+  assert.deepEqual(Object.keys(withResolve.mcpServers ?? {}), ['bay', 'resolve'])
+  assert.deepEqual(withResolve.mcpServers?.['resolve'], { type: 'stdio', ...resolve.entry })
+  // Compared with what the CLI really passes, not with a shared function agreeing with itself.
+  const start = cliWith.indexOf('--allowedTools') + 1
+  assert.deepEqual(cliWith.slice(start, start + (withResolve.allowedTools?.length ?? 0)), withResolve.allowedTools)
+  assert.ok(withResolve.allowedTools?.includes('mcp__resolve__timeline'))
+  assert.equal(withResolve.allowedTools?.includes('mcp__resolve__script_plugin'), false)
+  assert.equal(withResolve.allowedTools?.includes('mcp__resolve'), false)
+  assert.equal(withResolve.strictMcpConfig, true)
+  // A bay project has neither.
+  assert.equal(options.allowedTools?.some((name) => name.startsWith('mcp__resolve')), false)
+})
+
 test('the MCP server is the CLI runtime’s, entry for entry', () => {
   const cliServer = JSON.parse(cliValueAfter('--mcp-config') ?? '{}').mcpServers.bay
   const sdkServer = options.mcpServers?.['bay'] as Record<string, unknown>
