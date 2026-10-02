@@ -13,7 +13,8 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { AGENT_SYSTEM_PROMPT, GUIDE_ROUTES, SKILLS_SECTION, skillsSection } from './prompt'
+import { AGENT_SYSTEM_PROMPT, agentSystemPrompt, GUIDE_ROUTES, RESOLVE_SECTION, SKILLS_SECTION, skillsSection } from './prompt'
+import { RESOLVE_ALLOWED_TOOLS, RESOLVE_TOOLS } from '@shared/resolve-tools'
 import { BAY_SKILLS } from '@shared/skills'
 import { findResource } from '@shared/resources'
 import { TOOLS } from '@shared/mcp'
@@ -145,4 +146,106 @@ test('the prompt keeps its standing sections', () => {
   // The money rule: a dry run for the estimate, then the user's go-ahead.
   assert.match(AGENT_SYSTEM_PROMPT, /validateOnly: true/)
   assert.match(AGENT_SYSTEM_PROMPT, /go-ahead/)
+})
+
+// --- a project edited in DaVinci Resolve ------------------------------------------------------
+
+const RESOLVE_PROMPT = agentSystemPrompt('claude', 'resolve')
+
+/** Every single-backticked word in a text: tools, actions and arguments alike. */
+function backticked(text: string): string[] {
+  return [...text.matchAll(/`([^`\n]+)`/g)].map((m) => m[1]!)
+}
+
+/**
+ * The connector's actions and arguments the Resolve section names, each read from the
+ * connector's own source (`src/server.py`, 2.103.3). Anything backticked there that is not a
+ * bay tool, a connector tool or one of these is a name nobody checked.
+ */
+const RESOLVE_ACTIONS_AND_ARGUMENTS = new Set([
+  'resolve', 'action', 'params', 'list', 'get_items', 'probe_timeline_structure', 'project_summary', 'capture',
+  'safe_import_media', 'set_current', 'timeline_name', 'save', 'create_timeline_from_clips', 'clip_infos',
+  'end_frame', 'record_frame', 'plan_silence_ripple', 'execute_silence_ripple', 'apply_cuts', 'get_clip_property',
+  'FPS', 'add_keyframe', 'runtime_mode', 'topics', 'get', 'api_truth'
+])
+
+test('a bay project’s prompt is the prompt it had: the host defaults to bay and adds nothing', () => {
+  assert.equal(agentSystemPrompt('claude'), AGENT_SYSTEM_PROMPT)
+  assert.equal(agentSystemPrompt('claude', 'bay'), AGENT_SYSTEM_PROMPT)
+  assert.equal(agentSystemPrompt('codex', 'bay'), agentSystemPrompt('codex'))
+  // Nothing of Resolve reaches a bay project, where its tools do not exist.
+  for (const prompt of [AGENT_SYSTEM_PROMPT, agentSystemPrompt('codex')]) {
+    assert.doesNotMatch(prompt, /DaVinci/)
+    assert.doesNotMatch(prompt, /`resolve` tools/)
+    assert.equal(prompt.includes(RESOLVE_SECTION), false)
+  }
+  assert.match(AGENT_SYSTEM_PROMPT, /^You are editing video inside bay, alongside the person using it\./)
+  assert.match(AGENT_SYSTEM_PROMPT, /lands on their undo stack as one step/)
+})
+
+test('a Resolve project’s prompt says where the edit lives, once, and keeps the standing sections', () => {
+  assert.notEqual(RESOLVE_PROMPT, AGENT_SYSTEM_PROMPT)
+  assert.equal(RESOLVE_PROMPT.split(RESOLVE_SECTION).length, 2)
+  assert.match(RESOLVE_PROMPT, /^You are editing video in DaVinci Resolve/)
+  for (const heading of ['## This project is edited in DaVinci Resolve', '## How to work', '## Money', '## When something fails', '## Which guide to read', '## Skills', '## Talking to them']) {
+    assert.ok(RESOLVE_PROMPT.includes(heading), `${heading} missing`)
+  }
+  assert.ok(RESOLVE_PROMPT.includes(SKILLS_SECTION))
+  assert.ok(agentSystemPrompt('codex', 'resolve').includes(skillsSection('codex')))
+  // What is true of bay's editor and false of Resolve is not said: no undo step, no Revert.
+  assert.doesNotMatch(RESOLVE_PROMPT, /lands on their undo stack/)
+  assert.doesNotMatch(RESOLVE_PROMPT, /a wrong edit costs them one click/)
+  assert.match(RESOLVE_PROMPT, /has no Revert for it/)
+})
+
+test('the Resolve section carries the rules that cost real edits', () => {
+  // bay's timeline tools are not what the user sees.
+  assert.match(RESOLVE_SECTION, /never make the edit with them/)
+  // The call that deletes whole items and reports success.
+  assert.match(RESOLVE_SECTION, /Never call `timeline` `apply_cuts`/)
+  assert.match(RESOLVE_SECTION, /`end_frame` exclusive/)
+  assert.match(RESOLVE_SECTION, /Never rely on\s+"the current timeline"/)
+  assert.match(RESOLVE_SECTION, /Read every write back/)
+  assert.match(RESOLVE_SECTION, /`project_manager` `save`/)
+  assert.match(RESOLVE_SECTION, /`get_clip_property` for\s+`FPS`/)
+  assert.match(RESOLVE_SECTION, /`timeline_item` `add_keyframe` does not exist/)
+  // The exact step when Resolve is not reachable.
+  assert.match(RESOLVE_SECTION, /Workspace › Scripts › resolve_bridge/)
+})
+
+test('every name the Resolve prompt backticks is a bay tool, a tool the agent has, or a checked action', () => {
+  const connector = new Set(RESOLVE_TOOLS.map((tool) => tool.name))
+  const allowed = new Set(RESOLVE_ALLOWED_TOOLS)
+  const names = backticked(RESOLVE_SECTION)
+  assert.ok(names.length >= 40, `only ${names.length} names found — is the pattern still matching?`)
+  const unknown = names.filter((name) => !TOOL_NAMES.has(name) && !connector.has(name) && !RESOLVE_ACTIONS_AND_ARGUMENTS.has(name))
+  assert.deepEqual(unknown, [])
+  // A tool the agent is told to call must be one it has: naming a withheld one is a call made
+  // in front of the user and denied.
+  const withheldNamed = names.filter((name) => connector.has(name) && !allowed.has(name))
+  assert.deepEqual(withheldNamed, [])
+  // Specimens, so the two checks above are known to be looking at something.
+  for (const name of ['timeline', 'media_pool', 'project_manager', 'edit_engine', 'transcribe', 'search_footage']) {
+    assert.ok(names.includes(name), `the section must name ${name}`)
+  }
+  // And the proof they can fail: a withheld tool and a misspelt bay tool, put in.
+  const spoiled = RESOLVE_SECTION.replace('`edit_engine`', '`script_plugin`').replace('`transcribe`', '`transcribe_it`')
+  assert.notEqual(spoiled, RESOLVE_SECTION)
+  const spoiledNames = backticked(spoiled)
+  assert.deepEqual(spoiledNames.filter((name) => connector.has(name) && !allowed.has(name)), ['script_plugin'])
+  assert.deepEqual(
+    spoiledNames.filter((name) => !TOOL_NAMES.has(name) && !connector.has(name) && !RESOLVE_ACTIONS_AND_ARGUMENTS.has(name)),
+    ['transcribe_it']
+  )
+})
+
+test('the whole Resolve prompt names no bay tool that does not exist', () => {
+  // The same check the bay prompt gets, on what is shared: the Resolve section is taken out
+  // because its snake_case names are the connector's, checked above.
+  const shared = RESOLVE_PROMPT.replace(RESOLVE_SECTION, '')
+  assert.notEqual(shared, RESOLVE_PROMPT)
+  const connector = new Set(RESOLVE_TOOLS.map((tool) => tool.name))
+  const unknown = unknownTools(shared).filter((name) => !connector.has(name) && !RESOLVE_ACTIONS_AND_ARGUMENTS.has(name))
+  assert.deepEqual(unknown, [])
+  assert.deepEqual(unknownGuides(RESOLVE_PROMPT), [])
 })

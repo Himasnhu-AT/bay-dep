@@ -12,7 +12,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { app, BrowserWindow, shell } from 'electron'
 import { IPC } from '@shared/ipc'
-import type { ProjectHost } from '@shared/host'
+import { parseHost, type ProjectHost } from '@shared/host'
 import {
   DEFAULT_AGENT_TUNING,
   parseAgentTuning,
@@ -29,7 +29,8 @@ import { CodexAgentRuntime, codexConfig, findCodexSession, migrateCodexHome, pre
 import { codexNotFoundMessage, findClaude, findCodex, notFoundMessage } from './locate'
 import { searchDirs } from '../search-dirs'
 import { agentSystemPrompt } from './prompt'
-import { providerOf, RUNTIME_ENV, runtimeFor, type HostedAgentRuntime } from './runtime'
+import { providerOf, resolveForStart, RUNTIME_ENV, runtimeFor, sameConversation, type HostedAgentRuntime } from './runtime'
+import { RESOLVE_SERVER_NAME, resolveMcpServer } from '../resolve'
 import { track } from '../telemetry/service'
 import { turnCounter } from './turn-counter'
 import { bundledExecutable, SdkAgentRuntime } from './sdk'
@@ -42,6 +43,8 @@ import { isAllowed } from '../protocol'
 let runtime: HostedAgentRuntime | null = null
 /** Which provider `runtime` is — so a start asking for the other one replaces it. */
 let runtimeProvider: AgentProvider = 'claude'
+/** Which editor `runtime` was started for — a start for the other one replaces it too. */
+let runtimeHost: ProjectHost = 'bay'
 let offEvents: (() => void) | null = null
 /**
  * The last conversation's session id and provider, kept past `dispose` so its transcript can
@@ -133,13 +136,21 @@ export async function startAgent(
   if (!choice.ok) return { ok: false, error: choice.error }
   const provider = providerOf(choice.kind)
 
-  if (runtime && runtimeProvider === provider) {
+  // Off the wire, so read rather than trusted: anything that is not `resolve` is bay's editor.
+  const host = parseHost(options.host)
+
+  if (runtime && sameConversation({ provider: runtimeProvider, host: runtimeHost }, { provider, host })) {
     runtime.configure(tuning)
     return { ok: true, id: runtime.id }
   }
   // A start for the other provider replaces the conversation rather than quietly answering with
   // the one already running — the user picked a different model and would be talking to the old.
+  // The same for the other editor: that conversation has the wrong tools and the wrong prompt.
   if (runtime) disposeAgent()
+
+  // For a Resolve project: the connector, or the sentence that says why it cannot start.
+  const connector = resolveForStart(host, provider, RESOLVE_SERVER_NAME, resolveMcpServer)
+  if (!connector.ok) return { ok: false, error: connector.error }
 
   const base = {
     // `out/main/agent/…` at runtime, so the proxy is two levels up beside main's own bundle.
@@ -147,8 +158,9 @@ export async function startAgent(
     // The agent's own socket, under the in-app file policy (`mcp/policy.ts`).
     socketPath: socketPathIn(app.getPath('userData'), AGENT_SOCKET_NAME),
     cwd: workspace(),
-    systemPrompt: agentSystemPrompt(provider),
-    tuning
+    systemPrompt: agentSystemPrompt(provider, host),
+    tuning,
+    ...(connector.resolve ? { resolve: connector.resolve } : {})
   }
 
   let created: HostedAgentRuntime
@@ -192,6 +204,7 @@ export async function startAgent(
   })
   runtime = created
   runtimeProvider = provider
+  runtimeHost = host
   return { ok: true, id: created.id }
 }
 

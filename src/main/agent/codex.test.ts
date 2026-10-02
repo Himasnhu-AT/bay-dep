@@ -46,6 +46,7 @@ import {
   userCodexHome,
   withSkills
 } from './codex'
+import { mcpConfig } from './cli'
 import { alive, fakeCodex, pidsIn, reap, waitFor, type FakePids } from './fixtures/fake-agent'
 import { findCodex } from './locate'
 import { agentSystemPrompt } from './prompt'
@@ -79,6 +80,22 @@ function valueIn(toml: string, section: string, key: string): string | undefined
 test('the only MCP server in the agent config is bay', () => {
   const servers = sections(codexConfig(OPTIONS)).filter((name) => name.startsWith('mcp_servers.'))
   assert.deepEqual(servers, ['mcp_servers.bay', 'mcp_servers.bay.env'])
+})
+
+test('the Resolve connector is never written into the Codex config', () => {
+  // Codex has no allow-list, so the connector's script and plugin tools could not be withheld
+  // from it; a Resolve project is refused on Codex instead (`resolveForStart`). Options carrying
+  // a connector — what the Claude runtimes are given — must not put it in front of Codex.
+  const withResolve = {
+    ...OPTIONS,
+    cwd: '/w',
+    resolve: { name: 'resolve', entry: { command: '/opt/resolve-mcp/venv/bin/python', args: ['/opt/resolve-mcp/src/server.py'], env: {} } }
+  }
+  const config = codexConfig(withResolve)
+  assert.equal(config, codexConfig(OPTIONS))
+  assert.equal(config.includes('resolve-mcp'), false)
+  // Specimen: the same options do put the connector in the Claude runtimes' config.
+  assert.ok(mcpConfig(withResolve).includes('resolve-mcp'))
 })
 
 test('bay is launched the way the Claude runtimes launch it: its socket, full mode, run as Node', () => {

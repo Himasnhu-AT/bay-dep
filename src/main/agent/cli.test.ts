@@ -33,6 +33,7 @@ import {
 } from './cli'
 import { TOOLS } from '@shared/mcp'
 import { BAY_SKILLS } from '@shared/skills'
+import { RESOLVE_ALLOWED_TOOLS, RESOLVE_WITHHELD_TOOLS } from '@shared/resolve-tools'
 import { alive, fakeClaude, pidsIn, reap, waitFor, type FakePids } from './fixtures/fake-agent'
 
 const OPTIONS = {
@@ -163,6 +164,71 @@ test('a stored value that is not a choice falls back to the default rather than 
     model: 'sonnet',
     turnMinutes: 40
   })
+})
+
+// --- a project edited in DaVinci Resolve ------------------------------------------------------
+
+const RESOLVE = {
+  name: 'resolve',
+  entry: { command: '/opt/resolve-mcp/venv/bin/python', args: ['/opt/resolve-mcp/src/server.py'], env: { DAVINCI_RESOLVE_BRIDGE: '1' } }
+}
+const RESOLVE_OPTIONS = { ...OPTIONS, resolve: RESOLVE }
+const resolveArgs = cliArgs(RESOLVE_OPTIONS, 'session-1')
+/** Everything after `--allowedTools`, up to the next flag. */
+function allowedIn(argv: string[]): string[] {
+  const start = argv.indexOf('--allowedTools') + 1
+  const end = argv.findIndex((value, index) => index >= start && value.startsWith('--'))
+  return argv.slice(start, end)
+}
+
+test('a bay project’s MCP config and allow-list are what they were before Resolve existed', () => {
+  // The literal, not `mcpConfig` compared with itself: one server, these three env keys, in this
+  // order. A Resolve entry leaking into a bay project would add a key here.
+  assert.equal(
+    mcpConfig(OPTIONS),
+    `{"mcpServers":{"bay":{"command":${JSON.stringify(process.execPath)},"args":["/app/out/main/mcp/index.js"],` +
+      `"env":{"ELECTRON_RUN_AS_NODE":"1","BAY_MCP_SOCKET":"/Users/x/Library/Application Support/bay/bay-mcp.sock","BAY_MCP_MODE":"full"}}}}`
+  )
+  assert.equal(allowedIn(args).some((name) => name.startsWith('mcp__resolve')), false)
+  assert.equal(allowedIn(args).length, TOOLS.length + 2 + BAY_SKILLS.length)
+})
+
+test('a Resolve project gets the connector as a second server, under the name it was given', () => {
+  const config = JSON.parse(resolveArgs[resolveArgs.indexOf('--mcp-config') + 1] ?? '{}')
+  assert.deepEqual(Object.keys(config.mcpServers), ['bay', 'resolve'])
+  assert.deepEqual(config.mcpServers.resolve, RESOLVE.entry)
+  // bay's own entry is the one a bay project gets, untouched.
+  assert.deepEqual(config.mcpServers.bay, JSON.parse(mcpConfig(OPTIONS)).mcpServers.bay)
+  // Still isolated: the user's own servers stay out with two servers as with one.
+  assert.ok(resolveArgs.includes('--strict-mcp-config'))
+})
+
+test('the Resolve tools are allowed one by one, and the ones that run code are not', () => {
+  const allowed = allowedIn(resolveArgs)
+  // Specimen: the flag list really was read — bay's tools are in it too.
+  assert.ok(allowed.includes('mcp__bay__read_project'))
+  for (const tool of RESOLVE_ALLOWED_TOOLS) assert.ok(allowed.includes(`mcp__resolve__${tool}`), tool)
+  assert.ok(allowed.includes('mcp__resolve__timeline'))
+  assert.ok(RESOLVE_WITHHELD_TOOLS.length > 0)
+  for (const tool of RESOLVE_WITHHELD_TOOLS) {
+    assert.equal(allowed.includes(`mcp__resolve__${tool.name}`), false, `${tool.name} is withheld and must not be allowed`)
+  }
+  assert.equal(allowed.includes('mcp__resolve__script_plugin'), false)
+  // Never the server alone, nor a wildcard: either is every tool the connector publishes.
+  assert.equal(allowed.includes('mcp__resolve'), false)
+  assert.equal(allowed.some((name) => name.includes('*')), false)
+  assert.equal(allowed.filter((name) => name.startsWith('mcp__resolve')).length, RESOLVE_ALLOWED_TOOLS.length)
+  // And nothing else about the sandbox loosens for a Resolve project.
+  assert.equal(resolveArgs[resolveArgs.indexOf('--tools') + 1], BUILT_IN_TOOLS.join(','))
+  assert.equal(resolveArgs[resolveArgs.indexOf('--permission-prompts') + 1], 'none')
+})
+
+test('the allow-list prefix is the server’s name, so the two cannot disagree', () => {
+  const renamed = cliArgs({ ...OPTIONS, resolve: { ...RESOLVE, name: 'davinci' } }, 'session-1')
+  const config = JSON.parse(renamed[renamed.indexOf('--mcp-config') + 1] ?? '{}')
+  assert.deepEqual(Object.keys(config.mcpServers), ['bay', 'davinci'])
+  assert.ok(allowedIn(renamed).includes('mcp__davinci__timeline'))
+  assert.equal(allowedIn(renamed).some((name) => name.startsWith('mcp__resolve')), false)
 })
 
 test('the config is valid JSON on one line, because it is an argv entry', () => {
