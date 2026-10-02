@@ -21,6 +21,10 @@
  * timeline, so a mode switch moves them like a page switch does. The agent's conversation lives
  * in the store, and the panel itself is hosted too, so a draft, attachments and a send in flight
  * survive a switch.
+ *
+ * A project edited in DaVinci Resolve (`hostOf(project)`) gets neither: `ResolveWorkspace` takes
+ * the working area, the page bar and panel toggles go, and the viewer and timeline wait, still
+ * mounted, in the parking box.
  */
 
 import { useCallback, useMemo, type ReactNode } from 'react'
@@ -32,6 +36,7 @@ import { StatusBar } from '@/editor/StatusBar'
 import { Timeline } from '@/editor/Timeline'
 import { TopBar } from '@/editor/TopBar'
 import { useEditor } from '@/store/editor'
+import { hostOf } from '@shared/host'
 import { aiToolPalette, AiLayout } from './AiLayout'
 import { Hosted, HostProvider, Slot, useHost } from './hosted'
 import { layoutStorage } from './layoutStorage'
@@ -42,6 +47,7 @@ import { PageLayout, regionsOf } from './PageLayout'
 import { useCollapsiblePanel } from './useCollapsiblePanel'
 import { ViewerRegion } from './ViewerRegion'
 import { PlayingMark } from './PlayingMark'
+import { ResolveWorkspace } from './ResolveWorkspace'
 
 export interface WorkspaceProps {
   onHome(): void
@@ -58,6 +64,9 @@ export function Workspace({ onHome, onExport, saving }: WorkspaceProps): ReactNo
   const layoutMode = useEditor((state) => state.layoutMode)
   const aiPanels = useEditor((state) => state.aiPanels)
   const regions = layoutRegions(layoutMode, aiPanels)
+  // A project edited in DaVinci Resolve has no use for bay's pages: `ResolveWorkspace` replaces
+  // both layouts. A string, so this re-renders only when the host changes.
+  const inResolve = useEditor((state) => hostOf(state.project)) === 'resolve'
   // Smart mode: the palette follows the footage. Assets change on import, not per frame.
   const assets = useEditor((state) => state.project.assets)
   const palette = useMemo(() => aiToolPalette(assets), [assets])
@@ -71,9 +80,11 @@ export function Workspace({ onHome, onExport, saving }: WorkspaceProps): ReactNo
   return (
     <HostProvider host={host}>
       <PlayingMark />
-      <TopBar onExport={onExport} saving={saving} regions={regionsOf(content)} panelToggles={regions.panelToggles} />
+      <TopBar onExport={onExport} saving={saving} regions={regionsOf(content)} panelToggles={regions.panelToggles && !inResolve} />
 
-      {regions.agent === 'primary' ? (
+      {inResolve ? (
+        <ResolveWorkspace onHome={onHome} />
+      ) : regions.agent === 'primary' ? (
         <AiLayout drawers={regions.drawers} onExport={onExport} onHome={onHome} />
       ) : (
       /* Every boundary between regions is a separator that can be dragged or moved with the
@@ -112,7 +123,7 @@ export function Workspace({ onHome, onExport, saving }: WorkspaceProps): ReactNo
       )}
 
       <StatusBar saving={saving} />
-      {regions.pageBar && <PageBar onHome={onHome} />}
+      {regions.pageBar && !inResolve && <PageBar onHome={onHome} />}
 
       {/* After the page, so its slots have placed these nodes before anything inside measures. */}
       <Hosted name="viewer">
@@ -122,7 +133,7 @@ export function Workspace({ onHome, onExport, saving }: WorkspaceProps): ReactNo
           is the AI layout's; the dock keeps the starters grid only. */}
       <Hosted name="agent">
         <ErrorBoundary region="the agent panel">
-          <AgentPanel palette={regions.agent === 'primary' ? palette : undefined} />
+          <AgentPanel palette={regions.agent === 'primary' && !inResolve ? palette : undefined} />
         </ErrorBoundary>
       </Hosted>
       <Hosted name="timeline">

@@ -66,6 +66,13 @@ import {
   type PendingAttachment
 } from '@/lib/agentAttachments'
 import { cn } from '@/lib/cn'
+import { hostOf, type ProjectHost } from '@shared/host'
+
+/**
+ * The editor the running session was started for. Module state, not a ref: the session outlives
+ * a remount of the panel, and so must the record of what it was started with.
+ */
+let sessionHost: ProjectHost | null = null
 
 /**
  * Claude Code, in the editor.
@@ -257,12 +264,20 @@ export function AgentPanel({ palette }: AgentPanelProps = {}): ReactNode {
         // Starting is separate from sending so a missing `claude` binary reads as "could not
         // start" rather than as a model that ignored the message.
         start: async () => {
-          if (useEditor.getState().agentSessionActive) return { ok: true }
+          // The session is for one editor: a project edited in Resolve gets Resolve's tools and
+          // prompt. One still counted as running for the other host is started again, which
+          // replaces it in main as a change of provider does.
+          const host = hostOf(useEditor.getState().project)
+          if (useEditor.getState().agentSessionActive && sessionHost === host) return { ok: true }
           const started = await api.agent.start({
             provider: useAgentProvider.getState().provider,
-            tuning: currentAgentTuning()
+            tuning: currentAgentTuning(),
+            host
           })
-          if (started.ok) startAgentSession()
+          if (started.ok) {
+            sessionHost = host
+            startAgentSession()
+          }
           return started.ok ? { ok: true } : started
         },
         toInputs: (list) => Promise.all(list.map(toInput)),
