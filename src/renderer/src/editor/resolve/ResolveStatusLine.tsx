@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { Check, ExternalLink, RefreshCw } from 'lucide-react'
-import { resolveSetupSteps, resolveStatusMessage, type ResolveStatus } from '@shared/host'
+import { resolvePlaybackWarning, resolveSetupSteps, resolveStatusMessage, type ResolveStatus } from '@shared/host'
 import { Button } from '@/components'
 import { cn } from '@/lib/cn'
 import { canOpenResolve, resolveTone, type ResolveTone } from '@/lib/projectHost'
@@ -50,6 +50,15 @@ export function ResolveStatusLine({ connection, className }: { connection: Resol
           </Button>
         )}
       </div>
+      {status && resolvePlaybackWarning(status) && (
+        <p
+          role="alert"
+          data-resolve-playback-warning=""
+          className="ml-4 rounded-sm border border-warning/50 bg-warning/10 px-2 py-1.5 text-[11px] leading-relaxed text-pretty text-ink-0 select-text"
+        >
+          {resolvePlaybackWarning(status)}
+        </p>
+      )}
       {status && <ResolveSteps status={status} />}
     </div>
   )

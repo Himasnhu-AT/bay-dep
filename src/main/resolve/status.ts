@@ -19,6 +19,9 @@ export interface ProbeReport {
   product?: string
   version?: string
   projectName?: string
+  /** The open project's timeline and playback frame rates, when it said both. */
+  timelineFps?: number
+  playbackFps?: number
   transport?: 'bridge' | 'external'
   error?: string
 }
@@ -73,6 +76,12 @@ try:
             name = project.GetName() if project else None
             if name:
                 out["projectName"] = str(name)
+            if project:
+                for key, field in (("timelineFrameRate", "timelineFps"), ("timelinePlaybackFrameRate", "playbackFps")):
+                    try:
+                        out[field] = float(project.GetSetting(key))
+                    except Exception:
+                        pass
         except Exception as exc:
             out["error"] = "The open project could not be read: %s" % exc
 except Exception as exc:
@@ -97,12 +106,19 @@ export function parseProbeOutput(stdout: string): ProbeReport | null {
     const field = value[key]
     return typeof field === 'string' && field.trim() ? field.trim() : undefined
   }
+  const rate = (key: string): number | undefined => {
+    const field = value[key]
+    return typeof field === 'number' && Number.isFinite(field) && field > 0 ? field : undefined
+  }
   const transport = text('transport')
   return {
     connected: value.connected === true,
     product: text('product'),
     version: text('version'),
     projectName: text('projectName'),
+    // Left out when unknown, like every other field a probe may not report.
+    ...(rate('timelineFps') !== undefined ? { timelineFps: rate('timelineFps') } : {}),
+    ...(rate('playbackFps') !== undefined ? { playbackFps: rate('playbackFps') } : {}),
     transport: transport === 'bridge' || transport === 'external' ? transport : undefined,
     error: text('error')
   }
@@ -113,6 +129,16 @@ export function editionOf(product: string | undefined): 'free' | 'studio' | unde
   if (!product) return undefined
   if (/\bstudio\b/i.test(product)) return 'studio'
   return /^davinci resolve$/i.test(product.trim()) ? 'free' : undefined
+}
+
+/**
+ * The two rates when they disagree — Resolve then plays sound chopped and pitched, and no script
+ * can write the playback rate (measured on free 21.0.4: \`SetSetting\` answers False). Equal, or
+ * either unknown, is nothing to report.
+ */
+export function playbackMismatch(timelineFps: number | undefined, playbackFps: number | undefined): ResolveStatus['playback'] {
+  if (timelineFps === undefined || playbackFps === undefined) return undefined
+  return Math.abs(timelineFps - playbackFps) < 0.01 ? undefined : { timelineFps, playbackFps }
 }
 
 /** Unknown fields are left out rather than sent as `undefined`: the status crosses IPC. */
@@ -142,6 +168,7 @@ export function decideStatus(facts: StatusFacts): ResolveStatus {
       version: probe.report.version ?? facts.version,
       edition: editionOf(probe.report.product),
       projectName: probe.report.projectName,
+      playback: playbackMismatch(probe.report.timelineFps, probe.report.playbackFps),
       // Connected, and one thing still went wrong (the open project could not be read).
       detail: probe.report.error
     })

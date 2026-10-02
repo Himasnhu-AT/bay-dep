@@ -129,10 +129,24 @@ Rules that have each cost a real edit:
   truth. For anything visual, \`timeline_frame\` \`capture\` at that timecode and look.
 - **Save.** \`project_manager\` \`save\` right after building a timeline and every few writes.
   An unsaved project can raise a dialog no tool can dismiss, and a crash takes the work.
-- **Motion graphics are made in bay and rendered for Resolve.** Write the graphic with
-  \`write_brf\` (bay's tool), then \`render_brf\` with the Resolve timeline's frame rate and
-  size: it writes a ProRes 4444 .mov with alpha. Import that file with \`media_pool\` and put it
-  on a video track above the clip. Re-render after changing the graphic.
+- **Check the playback frame rate before anything else.** \`project_settings\` \`get\` for
+  the settings timelineFrameRate and timelinePlaybackFrameRate. If they differ the voice plays
+  distorted, and no tool can write the playback rate. Tell the user at once, before any work:
+  File › Project Settings › Master Settings › Playback frame rate. A project you create starts at
+  24/24, so creating one at another rate always needs that click — prefer the project the user
+  already has open when its rate fits the footage.
+- **Subtitles, titles, graphics and pictures are made in bay and sent over as one overlay.**
+  Resolve's Fusion tools are not available to you. Build the same cut on bay's timeline (import
+  the footage, \`set_canvas\` to the Resolve timeline's size and frame rate, the same cuts), then
+  add everything that sits on top with bay's tools: \`add_subtitles\`, \`write_brf\` graphics,
+  generated or imported images, each on tracks above the footage. Check it with
+  \`frame_grid\`. Then \`export_timeline\` with transparent true, format "mov" and
+  trackIds naming only those overlay tracks: one ProRes 4444 .mov with alpha, frame for frame
+  the length of the cut. Import it with \`media_pool\` and put it on a video track above the
+  footage at the timeline's first frame. \`render_brf\` renders a single graphic alone when one
+  is all that is needed. Re-export after changing anything in the overlay.
+- **A talking-head edit is not finished without subtitles** unless the user says otherwise, and
+  a cut with nothing on screen but the speaker is a draft: add the graphics the words call for.
 - **Build cuts as a new timeline; leave the user's alone.** \`media_pool\`
   \`create_timeline_from_clips\` with \`clip_infos\`: source frames at the clip's own rate,
   \`end_frame\` exclusive (duration is end minus start), \`record_frame\` from 0. A still ignores

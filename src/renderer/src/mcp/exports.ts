@@ -102,13 +102,15 @@ export async function exportTimeline(
   if (!outputPath.startsWith('/')) {
     fail(`outputPath must be absolute; got "${outputPath}".`)
   }
-  const format = String(args.format) as ExportFormat
-
   const quality = args.quality === undefined ? 'good' : String(args.quality)
   if (quality !== 'draft' && quality !== 'good' && quality !== 'best') {
     fail(`quality must be "draft", "good" or "best"; got "${quality}".`)
   }
 
+  const format = String(args.format) as ExportFormat
+  // `transparent`: the timeline's graphics alone, with alpha, for another editor to lay over the
+  // footage it already holds. Built here from the open timeline; `renderBrf` passes its own.
+  if (!source && args.transparent === true) source = overlaySource(args, format)
   const tl = source?.timeline ?? timeline()
   const rendered = source?.project ?? project()
   // Refused before anything starts: an export that ran for minutes and then ignored a
@@ -237,6 +239,34 @@ export async function exportTimeline(
   const status = await trackExport({ jobId: job.jobId }, context)
   const { note: _note, ...rest } = started
   return { ...rest, ...status }
+}
+
+/**
+ * The open timeline with only the named tracks drawn, over nothing and silent: what
+ * `export_timeline { transparent: true }` renders. A track left out is hidden, not removed, so
+ * frame numbers and every remaining item stay exactly where the preview shows them.
+ */
+function overlaySource(args: Record<string, unknown>, format: ExportFormat): { project: Project; timeline: Timeline } {
+  if (format !== 'mov') {
+    fail(`transparent needs format "mov" — it is written as ProRes 4444 with alpha; got "${format}".`)
+  }
+  const open = timeline()
+  const wanted = Array.isArray(args.trackIds) ? args.trackIds.map(String) : null
+  if (!wanted || wanted.length === 0) {
+    const tracks = open.tracks.filter((track) => track.kind === 'video').map((track) => `${track.id} (${track.name})`)
+    fail(`transparent needs trackIds: the video tracks to draw (the graphics and subtitles, not the footage). This timeline has ${tracks.join(', ') || 'no video tracks'}.`)
+  }
+  const unknown = wanted.filter((id) => !open.tracks.some((track) => track.id === id))
+  if (unknown.length > 0) {
+    fail(`No track ${unknown.join(', ')} on this timeline. Its tracks: ${open.tracks.map((track) => `${track.id} (${track.name})`).join(', ')}.`)
+  }
+  const alone: Timeline = {
+    ...open,
+    id: newId('tl'),
+    background: TRANSPARENT_BACKGROUND,
+    tracks: open.tracks.map((track) => ({ ...track, muted: true, hidden: track.hidden || !wanted.includes(track.id) }))
+  }
+  return { project: { ...project(), timelines: [alone], activeTimelineId: alone.id }, timeline: alone }
 }
 
 /**

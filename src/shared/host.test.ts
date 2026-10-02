@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { resolveSetupSteps, type ResolveState } from './host'
+import { resolvePlaybackWarning, resolveSetupSteps, type ResolveState } from './host'
 
 const progress = (state: ResolveState): string =>
   resolveSetupSteps({ state })
@@ -23,4 +23,13 @@ test('the connector step names the command main reported, and a missing bridge s
   const installed = resolveSetupSteps({ state: 'bridge-needed', bridgeInstalled: true })
   assert.doesNotMatch(installed[3]!.detail, /not in Resolve’s Scripts menu yet/)
   assert.match(installed[3]!.detail, /Workspace › Scripts › resolve_bridge/)
+})
+
+test('a playback rate that disagrees with the timeline is named with the rate to set; agreement says nothing', () => {
+  const warning = resolvePlaybackWarning({ state: 'ready', playback: { timelineFps: 30, playbackFps: 24 } })
+  assert.match(warning ?? '', /timeline is 30 fps but its playback frame rate is 24/)
+  assert.match(warning ?? '', /set Playback frame rate to 30/)
+  // The nearest states that must stay quiet: connected with matching rates, and not connected.
+  assert.equal(resolvePlaybackWarning({ state: 'ready' }), null)
+  assert.equal(resolvePlaybackWarning({ state: 'bridge-needed', playback: { timelineFps: 30, playbackFps: 24 } }), null)
 })

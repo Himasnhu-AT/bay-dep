@@ -55,6 +55,12 @@ export interface ResolveStatus {
   setup?: string
   /** For `bridge-needed`: false when the bridge script is not in Resolve's Scripts menu yet. */
   bridgeInstalled?: boolean
+  /**
+   * `ready` only: the open Resolve project's timeline and playback frame rates, present when
+   * they disagree. Resolve then plays sound chopped and pitched, and only its own Project
+   * Settings can fix it — no script can write the playback rate.
+   */
+  playback?: { timelineFps: number; playbackFps: number }
   /** What the probe itself said, when it failed in a way the states above do not name. */
   detail?: string
 }
@@ -79,6 +85,21 @@ export function resolveStatusMessage(status: ResolveStatus): string {
         : `Connected to ${app}. No project is open there yet.`
     }
   }
+}
+
+/**
+ * What to do about a playback rate that disagrees with the timeline's, or null when they agree.
+ * Its own sentence because it is the fault that hides best: everything reads connected and the
+ * timeline is right, and the voice sounds broken.
+ */
+export function resolvePlaybackWarning(status: ResolveStatus): string | null {
+  if (status.state !== 'ready' || !status.playback) return null
+  const { timelineFps, playbackFps } = status.playback
+  const shown = (fps: number): string => String(Number(fps.toFixed(3)))
+  return (
+    `Sound will play distorted in Resolve: this project’s timeline is ${shown(timelineFps)} fps but its playback frame rate is ${shown(playbackFps)}. ` +
+    `In Resolve choose File › Project Settings › Master Settings and set Playback frame rate to ${shown(timelineFps)}. Resolve does not let bay change it.`
+  )
 }
 
 /** One step of connecting Resolve: done already, the one to do now, or still ahead. */

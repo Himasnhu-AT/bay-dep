@@ -302,3 +302,11 @@ test('the probe script mirrors the server: no module and no forced bridge means 
   assert.match(PROBE_SCRIPT, /if \(dvr is not None or forced\) else None/)
   assert.ok(PROBE_SCRIPT.includes(`"\\n${PROBE_MARKER}"`))
 })
+
+test('a playback rate is reported only when it differs from the timeline rate and both are known', async () => {
+  const { playbackMismatch } = await import('./status')
+  assert.deepEqual(playbackMismatch(30, 24), { timelineFps: 30, playbackFps: 24 })
+  assert.equal(playbackMismatch(30, 30), undefined)
+  assert.equal(playbackMismatch(29.97, 29.97), undefined)
+  assert.equal(playbackMismatch(30, undefined), undefined)
+})
