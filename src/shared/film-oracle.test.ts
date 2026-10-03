@@ -418,8 +418,8 @@ test('a film that never stops fails; so does one whose only quiet is a slow push
   assert.match(sentence(restless, 'rhythm'), /never stops: 0 % of it is dead still, under 25 % and its longest rest is 0 s, under 1 s/)
   assert.match(sentence(restless, 'rhythm'), /no slow push/)
 
-  // A push reads 0.8 everywhere it "rests": under the low bar for seconds, never dead still.
-  const pushed = checkFilm(meta(), film({ energy: (t) => (calm(t) > 0 ? 6 : 0.8) }))
+  // A push reads 0.2 everywhere it "rests": under the low bar for seconds, never dead still.
+  const pushed = checkFilm(meta(), film({ energy: (t) => (calm(t) > 0 ? 6 : 0.2) }))
   assert.equal(pushed.legs.rhythm.status, 'fail')
   assert.ok(pushed.legs.rhythm.longestRest!.toSeconds - pushed.legs.rhythm.longestRest!.fromSeconds >= 1, 'specimen: it does have a long quiet stretch')
   assert.match(sentence(pushed, 'rhythm'), /never stops: 0 % of it is dead still, under 25 %\./)
@@ -429,6 +429,19 @@ test('a film that never stops fails; so does one whose only quiet is a slow push
   assert.ok(twitchy.legs.rhythm.stillShare! >= 0.25, 'specimen: it is still often enough')
   assert.equal(twitchy.legs.rhythm.status, 'fail')
   assert.match(sentence(twitchy, 'rhythm'), /never stops: its longest rest is 0\.5 s, under 1 s/)
+
+  // The numbers the running app read off fixtures/film/carried.html (test/app/film.mjs): a 200 px
+  // subject crossing at 25 px/frame is 1.97, and the tail of its ease 0.34–0.41. Neither is a rest
+  // or a hold, and on the thresholds this started with (2 and 0.5) both were.
+  const crossing = checkFilm(meta(), film({ energy: () => 1.97 }))
+  assert.equal(crossing.legs.rhythm.longestRest, null, 'a subject crossing the frame is not a rest')
+  assert.equal(crossing.legs.rhythm.moving.length, 1)
+  const tail = checkFilm(meta(), film({ energy: () => 0.34 }))
+  assert.equal(tail.legs.rhythm.stillShare, 0, 'the tail of an ease is not dead still')
+  assert.equal(tail.legs.rhythm.status, 'fail')
+  // …and a time captured twice may differ by 0.05 and be the same picture, so under that is still.
+  const same = checkFilm(meta(), film({ energy: () => 0.04 }))
+  assert.equal(same.legs.rhythm.stillShare, 1)
 
   const rested = good().legs.rhythm
   assert.equal(rested.status, 'pass')

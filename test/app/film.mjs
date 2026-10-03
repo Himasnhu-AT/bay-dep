@@ -4,10 +4,9 @@
  *
  *     PORT=9222 node test/app/film.mjs
  *
- * **UNRUN.** This was written without an app to run it against (several agents share the one
- * instance) and has never executed. Treat its first run as a run of the probe as much as of the
- * tool: a red here may be the probe. Build first (`./run.sh`), because main's sampler is in the
- * bundle the app started with.
+ * Build first (`./run.sh`), because main's sampler is in the bundle the app started with. 44
+ * checks; first run against a real instance was green as written, and the raw energy series it
+ * measured is what `STILL_ENERGY` and `LOW_ENERGY` in `src/shared/film-oracle.ts` are set from.
  *
  * What only this can prove — `src/main/html/film-fixtures.test.ts` runs the same fixtures through
  * the same scripts and the same judgement under Node, but with a `vm` for the page and no picture:

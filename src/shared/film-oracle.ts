@@ -89,10 +89,14 @@ export const MIN_TRACK_RATE = 10
 export const BEAT_CV_MIN = 0.25
 /** The longest beat should be this many times the shortest. onetake's beat sheet asks for 4x. */
 export const BEAT_RATIO_MIN = 4
-/** A step whose picture energy is under this is dead still. onetake's energy map: 0.5. */
-export const STILL_ENERGY = 0.5
-/** …and under this, barely moving. onetake's energy map: 2. */
-export const LOW_ENERGY = 2
+/**
+ * A step whose picture energy is under this is dead still: the two captures are the same picture,
+ * by the tolerance the purity check already uses ({@link PURITY_PICTURE_TOLERANCE}).
+ * See the calibration under {@link ENERGY_WIDTH} for why this is not onetake's 0.5.
+ */
+export const STILL_ENERGY = 0.05
+/** …and under this, barely moving. Not onetake's 2 — same calibration. */
+export const LOW_ENERGY = 0.5
 /** This share of the film must be dead still. onetake: 25 %. */
 export const STILL_SHARE_MIN = 0.25
 /** …with one stretch at least this long under {@link LOW_ENERGY}. onetake: 1 s. */
@@ -101,12 +105,36 @@ export const REST_SECONDS_MIN = 1
  * Picture energy is the mean absolute luma difference (0–255) between two captures this many
  * pixels wide, {@link ENERGY_STEP_SECONDS} apart. The width and the step are onetake's (its rest
  * leg reads at 320 px; its map is one cell per 1/12 s); **the unit is mine** — its docs publish
- * the thresholds without the formula, so 0.5 and 2 are borrowed numbers on a scale that has not
- * been calibrated against a film here.
+ * the thresholds (0.5 still, 2 low) without the formula.
+ *
+ * **Calibrated in the running app** (`test/app/film.mjs` on `fixtures/film/`, a Retina Mac, so a
+ * 3840x2160 capture resized to 320x180):
+ *
+ * - The unit is *share of the frame that changed x the luma contrast of the change*, and nothing
+ *   else. The fixture's hero (a 200 px disc, luma 183 on 16, 1.5 % of the frame) crossing at
+ *   62.5 px a step predicts 1.977 by the area of two overlapping discs; it read 1.97, 1.97, 1.98.
+ * - There is no noise floor: every one of the 432 hold steps across three fixtures read exactly
+ *   0.00, and a time captured twice differed by 0. So nothing but a moving picture puts a step
+ *   over zero, and the thresholds can sit as low as the motion they are meant to see.
+ * - On onetake's numbers the instrument could not see a subject move. That disc at 25 px/frame
+ *   read 1.97 — under 2, a "rest"; its ease tails (10 px in the step) read 0.34–0.41 — under
+ *   0.5, "dead still"; and it cannot read over 5.1 however fast it goes. Only the card swaps
+ *   (a fifth of the frame) were over 2, so "never dead still for a second" was unfailable by any
+ *   film whose moving things are subject-sized, which is most of them.
+ * - At 0.05 / 0.5 the same disc is dead still under about 0.6 px/frame at 30 fps (which is
+ *   {@link REST_PX_PER_FRAME_AT_1080P}, the track's own idea of rest) and resting under about
+ *   6 px/frame. `carried.html` then reads 89 % still with exactly its three crossings as moving.
+ *
+ * It is blind to hue: the fixture's blue card swapped for a magenta one of nearly the same luma
+ * read 1.51, where the other two swaps of the same card read 10.6 and 11.7.
  */
 export const ENERGY_WIDTH = 320
 export const ENERGY_STEP_SECONDS = 1 / 12
-/** A step whose picture energy is over this is a wholesale change of picture. Mine. */
+/**
+ * A step whose picture energy is over this is a wholesale change of picture. Mine. Measured: a
+ * 900x500 card (a fifth of the frame) swapping colour reads 1.5–11.7, so this fires only for a
+ * change bigger than that.
+ */
 export const PICTURE_CUT_ENERGY = 12
 
 /** Without motion blur, a move over this strobes into copies — at 1920x1080. onetake: 80 px/frame. */
