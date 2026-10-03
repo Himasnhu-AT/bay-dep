@@ -15,7 +15,11 @@ export const tool: ToolSpec = {
     'window.__timelines[<that id>] — a plain object { time(t) { /* set every style from t */ }, ' +
     'duration: () => <seconds> }, since bay ships no animation library; and nothing may load ' +
     'over the network, because bay blocks remote origins. A remote <script src> (a GSAP CDN ' +
-    'tag, say) is refused: the file is written but not imported until the tag is gone. Put ' +
+    'tag, say) is refused: the file is written but not imported until the tag is gone. The ' +
+    'one script bay supplies is its move library: put <script src="bay-motion.js"></script> ' +
+    'above your own script and bay writes that file beside the composition, giving window.BM ' +
+    '— springs, entrances, carries and a camera as pure functions of t that return numbers ' +
+    '(the contract lists them). Put ' +
     'fonts, and any library you are licensed to use, beside the file and reference them by ' +
     'relative path. Sound is declared, not ' +
     'captured: <audio id="whoosh" src="./whoosh.wav" data-start="0.2" data-volume="0.8"> with ' +

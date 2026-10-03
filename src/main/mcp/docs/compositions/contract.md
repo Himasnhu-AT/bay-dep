@@ -44,6 +44,8 @@ This skill is the **technical contract** — how to build one hyperframes projec
 
 bay ships no animation library, and a composition may load nothing from the network — so write the timeline in plain JavaScript (below, and `minimal-composition.md`). A library you are licensed to use can be vendored beside the file and loaded by relative path.
 
+**What bay does ship is a move library, `BM`.** Put `<script src="bay-motion.js"></script>` above your own script and `write_composition` writes that file beside the composition (you never write it; the result's `motionLibrary` line confirms it). `window.BM` is then a set of measured moves, each a pure function of absolute time returning plain numbers — `BM.wordLand(t, 0.2)` → `{ op, y, s }`, `BM.rectMorph(t, t0, t1, A, B)` → a rect, `BM.pushInto(…)` and `BM.layerMatrix(camera)` → a matrix for `ctx.setTransform(...BM.matCanvas(M))` or `el.style.transform = BM.matCss(M)` (with `transform-origin: 0 0`) — so `time(t)` stays a function of `t` and nothing else. It is not a timeline engine: you still register `window.__timelines[id]` yourself and set every style from `t`. Simulations (`BM.simFollower`, `BM.simString`, `BM.simMagnet`) are built once, outside `time(t)`, and read with `.at(t)`. Calling `BM.…` without the tag is reported as a problem on write, because `BM` is then undefined and the clip is a still frame. The same library is `import { BM } from 'bay'` in a `.brf` module.
+
 ## Building a composition
 
 ### Two root forms (not interchangeable)

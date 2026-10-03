@@ -25,6 +25,7 @@ import type {
   StartRefused
 } from './generation'
 import type { CompositionFault, CompositionInfo } from './composition'
+import type { MotionFileResult } from './motion-file'
 import type { McpToolCall, McpToolResult } from './mcp'
 import type { LoudnessMeasurement, LoudnessReport, LoudnessTarget } from './loudness'
 import type { AccessStatus } from './access'
@@ -727,8 +728,11 @@ export interface BayApi {
      * agent — everything else an agent does lands in the project document, which is undoable
      * and visible. A file on disk is neither, so this one refuses anything that is not a
      * composition path rather than becoming a general-purpose file writer.
+     *
+     * `motion` is present when the document loads or uses bay's move library, and says whether
+     * `bay-motion.js` is beside it (`@shared/motion-file`).
      */
-    write(path: string, html: string): Promise<{ ok: true } | { ok: false; error: string }>
+    write(path: string, html: string): Promise<{ ok: true; motion?: MotionFileResult } | { ok: false; error: string }>
     /**
      * Size one of bay's shipped templates to a canvas and write it to disk, ready to import.
      *

@@ -46,6 +46,8 @@ import { bgraToRgba, describeSizeMismatch } from './bitmap'
 import { seekScript, variablesScript } from './scripts'
 import { decideCompositionRequest } from './sandbox'
 import { compositionFontCss } from './font-css'
+import { ensureMotionFile } from './motion-file'
+import type { MotionFileResult } from '@shared/motion-file'
 import { fontsDir } from '../paths'
 
 /**
@@ -558,11 +560,15 @@ function withTimeout<T>(work: Promise<T>, ms: number, message: string): Promise<
  * Existing files are overwritten, because editing a composition is the normal case and a
  * refusal would force every edit through a delete. Directories are created, because a
  * composition usually wants a folder of its own for its vendored fonts and libraries.
+ *
+ * One more file may land beside it: `bay-motion.js`, bay's move library, when the document loads
+ * it by that name (`./motion-file.ts`). A composition window can load nothing outside its own
+ * folder, so that is the only way the library can reach one. `motion` says what happened to it.
  */
 export async function writeComposition(
   path: string,
   html: string
-): Promise<{ ok: true } | { ok: false; error: string }> {
+): Promise<{ ok: true; motion?: MotionFileResult } | { ok: false; error: string }> {
   if (!isCompositionPath(path)) {
     return {
       ok: false,
@@ -582,7 +588,8 @@ export async function writeComposition(
     // reachable too — otherwise the file renders without the things it references and looks
     // merely wrong.
     allowPath(dirname(path))
-    return { ok: true }
+    const motion = await ensureMotionFile(dirname(path), html)
+    return motion ? { ok: true, motion } : { ok: true }
   } catch (error) {
     return { ok: false, error: `${path} could not be written: ${(error as Error).message}` }
   }
