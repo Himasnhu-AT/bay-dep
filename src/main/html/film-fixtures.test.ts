@@ -112,8 +112,9 @@ function sampleHtml(html: string, name: string, path?: string): Sampled {
     energyMissing: 'this test takes no pictures',
     purity: probed.purity.map((probe) => ({ ...probe, pictureDelta: null }))
   }
-  const events = plain<unknown>(runInContext('typeof window.__film.events === "function" ? window.__film.events() : null', context))
-  return { declared, problems: null, report: checkFilm(read.meta, samples), events }
+  // The events come the way check_film's do: read by the page script, carried by the report.
+  const report = checkFilm(read.meta, samples)
+  return { declared, problems: null, report, events: report.events }
 }
 
 const status = (report: FilmReport): Record<string, string> =>
@@ -255,6 +256,24 @@ test('the kit, broken on purpose, fails the leg that should catch it (the proof 
   assert.ok(lost)
   assert.equal(lost.legs.framing.status, 'fail')
   assert.deepEqual(lost.legs.framing.subjects.filter((subject) => subject.out.length > 0).map((subject) => subject.id), ['word'])
+})
+
+test('a film\'s events reach the report through the page script, and a broken events() costs the sound, not the film', () => {
+  // No events declared: nothing returned, nothing said.
+  const none = sample('slideshow.html').report!
+  assert.equal('events' in none, false)
+  assert.deepEqual(none.findings.filter((f) => /events/.test(f.sentence)), [])
+  assert.deepEqual(sample('carried.html').report!.events, [1, 5, 7.5].map((t) => ({ t, material: 'knock', gain: 0.5 })))
+
+  const thrown = sampleHtml(kitWith('events: () => [', "events: () => { throw new Error('no table') }, unused: () => ["), 'the kit whose events() throws').report!
+  assert.equal(thrown.events, undefined)
+  assert.equal(thrown.legs.faults.status, 'warn')
+  assert.equal(thrown.legs.continuity.score, 1, 'the film was still measured')
+  assert.match(thrown.findings.find((f) => f.leg === 'faults')!.sentence, /__film\.events\(\) threw: "no table"/)
+
+  // A list given directly, not as a function, is read the same way.
+  const listed = sampleHtml(kitWith('events: () => [', 'events: ['), 'the kit with events as a list')
+  assert.deepEqual(listed.events, sampleHtml(guideKit(), 'the guide kit').events)
 })
 
 test('the kit\'s sound events are a score score_sfx accepts: fewer than its picture has, one loudest', () => {

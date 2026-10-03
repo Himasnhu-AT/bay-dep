@@ -369,14 +369,22 @@ catalogue). **Measured:** the guide's kit — four beats, three boundaries carri
 `pushInto` and `iris` — is run on the real generated script at every frame, and under Node
 (`film-fixtures.test.ts`) it gets faults, continuity (1.00 over 3), curves and framing `pass`, with
 `blur: false`, a two-id iris and an off-frame word each failing the leg that should catch it; its
-picture was looked at as contact sheets in a plain headless Chrome from a file, not in bay. **Not
-measured:** `check_film`, `score_sfx` and `bay-motion.js` had not been exercised in a running bay
-when this was written (another agent was doing that; this paragraph does not claim its result);
-the kit's stillness leg, which needs pictures; whether a real agent turn follows the skills; and
-the oracle's picture-energy unit, which is bay's own formula under thresholds borrowed from
-onetake's scale and has not been calibrated against any film made here — so a `rhythm` verdict is
-the least trustworthy of the five. One reach worth knowing: a boundary's carry window opens 0.25 s
-before it, so the tail of the previous move counts as a carry of the next boundary.
+picture was looked at as contact sheets in a plain headless Chrome from a file. **Then measured
+in a running bay** (an isolated instance; `test/app/film.mjs`, 47 checks): `check_film` on the
+four fixtures gives each its expected verdict with pictures, 3.5 s for a 12 s film, no window left
+behind, a `time(t)` that never returns answered as "did not answer within 20 s", and a preview
+playing a composition undisturbed by it; the kit passes all five legs there (52 % still, its last
+3 s exactly 0.00, boundary at 5.1 s carried by `dot` alone, fastest visible move `thumb` at
+271 px/frame) and its `events` go to `score_sfx` unchanged; `bay-motion.js` is written, a missing
+tag and a foreign file are each warned about, and `BM` runs in the locked `.brf` worker;
+`score_sfx`'s 24-bit WAV plays in Chromium over `bay://` (metered: 0.000 before the first hit,
+0.211 on it) and is in the export within 0.3 ms of each scored time. A 30 s, 60-event score
+blocks main for about 250 ms (the renderer instead, with `validateOnly`). **The picture-energy
+unit is calibrated, and its thresholds are bay's, not onetake's:** it is share-of-frame-changed ×
+luma contrast with no noise floor (every hold step of every fixture read exactly 0.00), on which
+onetake's 0.5/2 called a 200 px subject crossing at 25 px/frame a rest; `STILL_ENERGY` 0.05 and
+`LOW_ENERGY` 0.5 carry the evidence at the constant. It is blind to hue. **Not measured:**
+whether a real agent turn follows the skills.
 
 **Beats are analysed in main, kept on the asset in source time, and mapped once**
 (`media/beat-analysis.ts`, `@shared/beats`, `detect_beats`). Spectral flux → autocorrelation picks

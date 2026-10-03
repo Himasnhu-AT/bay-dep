@@ -95,6 +95,11 @@ export function filmDeclaredScript(): string {
     const plain = (value) => {
       try { return value === undefined ? undefined : JSON.parse(JSON.stringify(value)) } catch { return 'unreadable' }
     }
+    // The film's sounds, read once and carried to the report for score_sfx. A throw is reported, not raised.
+    let events
+    if (typeof film.events === 'function') {
+      try { events = { value: plain(film.events()) ?? null } } catch (error) { events = { threw: String((error && error.message) || error).slice(0, 200) } }
+    } else if (film.events !== undefined) events = { value: plain(film.events) ?? null }
     return {
       present: true,
       kind,
@@ -102,7 +107,8 @@ export function filmDeclaredScript(): string {
       cuts: plain(film.cuts),
       inFrame: plain(film.inFrame),
       blur: plain(film.blur),
-      track: typeof film.track
+      track: typeof film.track,
+      events
     }
   })()`
 }

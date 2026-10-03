@@ -199,7 +199,7 @@ window.__film = {
   track(t) {                   // what is on screen at t: boxes in SCREEN pixels, x/y the top-left
     return { panel: { x: 460, y: 240, w: 1000, h: 600, op: 1 } }
   },
-  events() {                   // where the sounds are; check_film ignores it, score_sfx is fed from it
+  events() {                   // where the sounds are; check_film returns the list as `events`, for score_sfx
     return [{ t: 1.2, material: 'knock', gain: 0.45, pan: -0.2 }]
   }
 }
@@ -217,8 +217,8 @@ to change, the failures nobody can see by watching first.
 | leg | fails on | change |
 |---|---|---|
 | `faults` | `time(t)` or `track(t)` throws; the same time gives two answers; a box that is not five finite numbers | compute every value from `t` alone; build sims outside `time(t)`; never measure the DOM before layout |
-| `continuity` | carry score under 0.5 (warns under 0.7). At each boundary a tracked id either survives and moves 2 % of the frame diagonal or scales 10 % (**carried**, 1), survives unmoved while covering 3 % of the frame (**anchored**, ½), or nothing survives (**bare**, 0) | keep one id on screen across the boundary and move or scale it into the next beat; or list a deliberate cut in `cuts`. 3 bare boundaries within 1.5 s are a burst, and one in the last 1.2 s is the end card: neither counts |
-| `curves` | a move over 80 px/frame at 1080p without `blur: true`. Warns when three or more moves all share one t80 | give the move more frames or less travel, or draw real blur and declare it; ease moves by what they are |
+| `continuity` | carry score under 0.5 (warns under 0.7). At each boundary a tracked id either survives and, from the boundary on, moves 2 % of the frame diagonal or scales 10 % (**carried**, 1 — a move that ended on the beat is the last beat's and does not count), survives unmoved while covering 3 % of the frame (**anchored**, ½), or nothing survives (**bare**, 0) | keep one id on screen across the boundary and move or scale it into the next beat; or list a deliberate cut in `cuts`. 3 bare boundaries within 1.5 s are a burst, and one in the last 1.2 s is the end card: neither counts |
+| `curves` | a move over 80 px/frame at 1080p without `blur: true`, measured on the part of the box inside the frame. Warns when three or more moves all share one t80 | give the move more frames or less travel, or draw real blur and declare it; ease moves by what they are |
 | `rhythm` | beat lengths with a coefficient of variation under 0.25 (warns when the longest is under 4× the shortest); under 25 % of the film dead still, or no rest of 1 s | shorten the hits, lengthen one hold, and make the hold truly still |
 | `framing` | an id named in `inFrame` that is absent, off frame, or (with `'whole'`) cut by the edge | key the camera to where the subject lands before it gets there, or widen the shot |
 
@@ -496,7 +496,8 @@ soft arrival), all sent to one room. There is no other sound, and that is the po
 in one space is what makes a film's sounds belong to each other.
 
 - Keep the events in the composition, as `__film.events()`, built from the same table of times
-  as the picture. Send that list to `score_sfx` with `durationSeconds` the film's length and
+  as the picture. `check_film` calls it and returns the list as `events`: pass that to
+  `score_sfx` as it came — do not retype the times — with `durationSeconds` the film's length and
   `atFrame` the frame the film's clip starts on.
 - **Fewer sounds than events.** A sound on every visual event is a slot machine. Score the
   contacts a viewer should feel, one of each run (one key in three), and leave rests.

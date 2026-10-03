@@ -58,6 +58,10 @@
       var boxes = { hero: { x: heroX(t), y: 60, w: 200, h: 200, op: 1 } }
       boxes['card' + beatAt(t)] = { x: 500, y: 300, w: 900, h: 500, op: 1 }
       return boxes
+    },
+    // One sound per crossing: check_film hands this list back as `events`, for score_sfx.
+    events: function () {
+      return BEATS.slice(1).map(function (beat) { return { t: beat, material: 'knock', gain: 0.5 } })
     }
   }
   time(0)

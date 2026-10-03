@@ -21,7 +21,8 @@ export const tool: ToolSpec = {
     'inFrame that leaves the frame fails. faults — time(t) or track(t) throwing, or one time ' +
     'drawing two different pictures. `findings` lists every failure with what to change, the ' +
     'ones nobody can see by watching first; `blind` lists what it cannot see, so a pass is not ' +
-    'the same as having looked — frame_grid is still the look. Pass assetId for a composition in ' +
+    'the same as having looked — frame_grid is still the look. When the film declares ' +
+    '__film.events(), the list comes back as `events`, ready to pass to score_sfx. Pass assetId for a composition in ' +
     "the pool, or itemId for one on the timeline (that clip's variables are applied). Changes " +
     'nothing. A 30 s film takes about half a minute; pictures: false answers in about a second ' +
     'without the stillness numbers.',

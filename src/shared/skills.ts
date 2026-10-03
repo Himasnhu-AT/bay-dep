@@ -111,8 +111,9 @@ const FILM_CHECK =
   'Never show as finished, or export, a film that fails.'
 
 const FILM_SOUND =
-  'Sound, if the user gave no effects of their own: send the film\'s __film.events() to ' +
-  'score_sfx — durationSeconds the film\'s length, atFrame the film clip\'s first frame — with ' +
+  'Sound, if the user gave no effects of their own: check_film returns the film\'s ' +
+  '__film.events() as `events` — pass that list to score_sfx as it came, never retyped, with ' +
+  'durationSeconds the film\'s length and atFrame the film clip\'s first frame — ' +
   'validateOnly: true first, and fix what it warns about. Score FEWER sounds than the picture ' +
   'has events: the contacts a viewer should feel, one of each run, with rests between; pan each ' +
   'where the thing is; save the loudest gain for the biggest moment; keep one room for the whole ' +

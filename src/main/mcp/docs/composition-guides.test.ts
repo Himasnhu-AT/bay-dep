@@ -379,7 +379,7 @@ test('the thresholds the guide quotes are the oracle\'s own', () => {
   assert.deepEqual(phrases.filter((phrase) => !GUIDE_PROSE.includes(phrase)), [])
   // Every field of the contract the oracle prints is in the guide's own copy of it.
   const fields = [...FILM_CONTRACT.matchAll(/^ {2}(\w+)[:(]/gm)].map((m) => m[1]!)
-  assert.deepEqual(fields, ['beats', 'cuts', 'inFrame', 'blur', 'track'])
+  assert.deepEqual(fields, ['beats', 'cuts', 'inFrame', 'blur', 'track', 'events'])
   const contract = /```js\nwindow\.__film = \{[\s\S]*?^```/m.exec(GUIDE_PROSE)?.[0] ?? ''
   assert.deepEqual(fields.filter((field) => !new RegExp(`^ {2}${field}[:(]`, 'm').test(contract)), [])
 })

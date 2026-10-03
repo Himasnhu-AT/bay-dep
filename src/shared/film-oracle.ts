@@ -43,6 +43,9 @@ export const FILM_CONTRACT = `window.__film = {
   blur: false,                     // optional: true when the composition draws its own motion blur
   track(t) {                       // what is on screen at t, as boxes in SCREEN pixels (x, y = top-left)
     return { dot: { x: 900, y: 500, w: 120, h: 120, op: 1 } }
+  },
+  events() {                       // optional: where the sounds are; check_film returns them for score_sfx
+    return [{ t: 1.6, material: 'knock' }]
   }
 }`
 
@@ -68,9 +71,13 @@ export const BURST_WINDOW_SECONDS = 1.5
 /**
  * The window a carry is looked for in, around a boundary at `b`: who was on screen in
  * `[b - before, b)`, who still is in the second half of `[b, b + after]`, and how far a survivor
- * went across the whole of it. Mine: onetake finds its boundaries from the picture and uses 0.4 s
+ * went **from `b` on**. Mine: onetake finds its boundaries from the picture and uses 0.4 s
  * around each; a declared beat is where the author says the section starts, and the move that
  * joins two sections mostly happens just after that, so the window leans forward.
+ *
+ * Travel before `b` does not count. It did, and the tail of the *previous* beat's move then
+ * carried the next boundary: a film passed continuity by ending each move on the beat and
+ * sitting still after it. A move that straddles the boundary is counted for the part after it.
  */
 export const CARRY_BEFORE_SECONDS = 0.25
 export const CARRY_AFTER_SECONDS = 0.5
@@ -174,6 +181,41 @@ export interface FilmMeta {
   cuts: number[]
   inFrame: Record<string, { from: number; to: number; whole: boolean }>
   blur: boolean
+  /** Absent when the film declares no `events`. */
+  events?: FilmEvents
+}
+
+/**
+ * One sound the film asks for: when, and which material. Anything else on it (gain, pan, pitch…)
+ * is carried through untouched — `score_sfx` is what knows a score, and it checks the rest.
+ */
+export type FilmEvent = { t: number; material: string } & Record<string, unknown>
+
+/** The film's `events()`, read: the list, or the sentence saying why there is none to pass on. */
+export type FilmEvents = { list: FilmEvent[] } | { problem: string }
+
+/**
+ * What the page answered for `__film.events`: the value it returned (or the array it is), or the
+ * message it threw. Loosely checked on purpose — a list of objects with a finite `t` and a string
+ * `material` — because this only carries the list to `score_sfx`, which refuses a bad score with
+ * its own sentences. A bad list is a problem to report, never a reason not to measure the film.
+ */
+export function readFilmEvents(declared: NonNullable<DeclaredFilm['events']>): FilmEvents {
+  if ('threw' in declared) {
+    return { problem: `__film.events() threw: "${declared.threw}". The film was measured without it; no events are returned, so there is nothing to pass to score_sfx until it is fixed.` }
+  }
+  const value = declared.value
+  const shape = 'It must return a list like [{ t: 1.2, material: \'knock\' }] — t in seconds on the film\'s clock, material one of score_sfx\'s.'
+  if (!Array.isArray(value)) {
+    return { problem: `__film.events gave ${value === null ? 'null' : `a ${typeof value}`}, not a list, so no events are returned. ${shape}` }
+  }
+  const bad = value.findIndex(
+    (event) => typeof event !== 'object' || event === null || Array.isArray(event) || !isNumber((event as FilmEvent).t) || typeof (event as FilmEvent).material !== 'string'
+  )
+  if (bad >= 0) {
+    return { problem: `__film.events()[${bad}] is ${JSON.stringify(value[bad])}, which has no finite t and string material, so no events are returned. ${shape}` }
+  }
+  return { list: value as FilmEvent[] }
 }
 
 /**
@@ -190,6 +232,8 @@ export interface DeclaredFilm {
   blur?: unknown
   /** `typeof __film.track`. */
   track?: string
+  /** What `__film.events()` returned (or `__film.events` itself when it is not a function), or what it threw. Absent when there is none. */
+  events?: { value: unknown } | { threw: string }
 }
 
 const seconds = (value: number): string => `${Math.round(value * 100) / 100} s`
@@ -293,7 +337,10 @@ export function readFilmMeta(
   }
 
   if (problems.length > 0) return { ok: false, problems }
-  return { ok: true, meta: { beats, cuts, inFrame, blur: declared.blur === true } }
+  return {
+    ok: true,
+    meta: { beats, cuts, inFrame, blur: declared.blur === true, ...(declared.events ? { events: readFilmEvents(declared.events) } : {}) }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -500,6 +547,11 @@ export interface FilmReport {
     energyStepSeconds: number | null
     pictures: number
   }
+  /**
+   * The film's own `__film.events()`, as it gave them: pass the list to `score_sfx` as `events`.
+   * Absent when the film declares none, or when what it declared could not be read (a finding says why).
+   */
+  events?: FilmEvent[]
   /** What this report cannot see. Constant, and returned every time so a pass is read with it. */
   blind: string[]
 }
@@ -582,7 +634,8 @@ function judgeBoundary(at: number, samples: Sample[], frame: Frame, duration: nu
     }
   }
 
-  const window = between(samples, at - CARRY_BEFORE_SECONDS, afterEnd)
+  // From the boundary on: a move that ended at it is the last beat's, not a carry into this one.
+  const window = between(samples, at, afterEnd)
   const survivors = [...was].filter((id) => is.has(id)).map((id) => survivorOf(id, window, frame))
   const lost = [...was].filter((id) => !is.has(id))
   const arrived = [...is].filter((id) => !was.has(id))
@@ -764,9 +817,14 @@ export function checkFilm(meta: FilmMeta, input: FilmSamples): FilmReport {
         'Each box is { x, y, w, h, op } in screen pixels; a NaN usually means a measurement taken before layout. Those boxes were ignored.'
     )
   }
-  const faultsStatus: LegStatus =
+  let faultsStatus: LegStatus =
     findings.some((f) => f.leg === 'faults') ? 'fail' : input.purity.length === 0 ? 'unmeasured' : 'pass'
   if (faultsStatus === 'unmeasured') note('faults', 'warn', 'Purity was not checked: no time was sampled twice.')
+  // A broken events() costs the sound, not the film: a warning, after the leg's own verdict is in.
+  if (meta.events && 'problem' in meta.events) {
+    note('faults', 'warn', meta.events.problem)
+    if (faultsStatus === 'pass') faultsStatus = 'warn'
+  }
 
   // ---- continuity ---------------------------------------------------------
   const declaredBoundaries = meta.beats.slice(1)
@@ -934,7 +992,7 @@ export function checkFilm(meta: FilmMeta, input: FilmSamples): FilmReport {
         close()
         continue
       }
-      const step = cornerTravel(p, q)
+      const step = cornerTravel(shown(p, frame), shown(q, frame))
       const speed = step * perFrame
       if (speed > peak.pxPerFrame) peak = { pxPerFrame: speed, seconds: b.t }
       if (speed > limit) over += 1
@@ -1202,6 +1260,7 @@ export function checkFilm(meta: FilmMeta, input: FilmSamples): FilmReport {
       energyStepSeconds: input.energy ? round(input.energy.step, 4) : null,
       pictures: input.energy ? input.energy.values.length + 1 : 0
     },
+    ...(meta.events && 'list' in meta.events ? { events: meta.events.list } : {}),
     blind: BLIND
   }
 }
@@ -1222,6 +1281,21 @@ function cornerTravel(a: FilmBox, b: FilmBox): number {
     Math.hypot(b.x - a.x, b.y + b.h - (a.y + a.h)),
     Math.hypot(b.x + b.w - (a.x + a.w), b.y + b.h - (a.y + a.h))
   )
+}
+
+/**
+ * The part of a box a viewer can see: its edges pulled in to the frame. A box wholly outside
+ * becomes a sliver of no size on the edge it is beyond, which is where it will come in from.
+ *
+ * Speed is measured on this, not on the box. A panel that grows past the frame has corners far
+ * outside it travelling hundreds of px a frame that nobody sees; measured unclipped, the guide's
+ * own kit named `panel` at 863 px/frame when the fastest thing on screen was `thumb` at 271.
+ */
+function shown(box: FilmBox, frame: Frame): FilmBox {
+  const within = (value: number, max: number): number => Math.min(max, Math.max(0, value))
+  const x = within(box.x, frame.width)
+  const y = within(box.y, frame.height)
+  return { x, y, w: within(box.x + box.w, frame.width) - x, h: within(box.y + box.h, frame.height) - y, op: box.op }
 }
 
 function framed(box: FilmBox | undefined, frame: Frame, whole: boolean): 'in' | 'absent' | 'off frame' | 'cut by the edge' {

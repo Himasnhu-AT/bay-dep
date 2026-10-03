@@ -71,6 +71,9 @@ export async function checkFilmTool(args: Record<string, unknown>): Promise<Reco
   }
 
   const report = checkFilm(result.meta, result.samples)
+  const sound = report.events
+    ? ` \`events\` is the film's own __film.events(): pass it to score_sfx as events, with durationSeconds ${result.samples.durationSeconds}.`
+    : ''
   return {
     asset: asset.name,
     path: asset.path,
@@ -78,11 +81,11 @@ export async function checkFilmTool(args: Record<string, unknown>): Promise<Reco
     ...report,
     elapsedSeconds: Math.round(result.elapsedMs / 100) / 10,
     next:
-      report.verdict === 'fail'
+      (report.verdict === 'fail'
         ? 'Fix the findings in the composition (write_composition) and call check_film again; they are in the order to fix them. Do not place or export a film that fails.'
         : report.verdict === 'warn'
           ? 'Nothing fails. Each warning says what would make it better or what was not measured; fix those, or say why they stand. Then look at it with frame_grid.'
-          : 'Every leg passes. That is not the same as having looked: read `blind`, then check the picture with frame_grid.'
+          : 'Every leg passes. That is not the same as having looked: read `blind`, then check the picture with frame_grid.') + sound
   }
 }
 

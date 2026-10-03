@@ -4,7 +4,7 @@
  *
  *     PORT=9222 node test/app/film.mjs
  *
- * Build first (`./run.sh`), because main's sampler is in the bundle the app started with. 44
+ * Build first (`./run.sh`), because main's sampler is in the bundle the app started with. 47
  * checks; first run against a real instance was green as written, and the raw energy series it
  * measured is what `STILL_ENERGY` and `LOW_ENERGY` in `src/shared/film-oracle.ts` are set from.
  *
@@ -74,6 +74,8 @@ await runProbe(async () => {
   check('with a rest of over a second', c.legs.rhythm.longestRest, (r) => r && r.toSeconds - r.fromSeconds >= 3)
   check('the same time twice is the same picture', c.legs.faults.impure.length, 0)
   check('nothing reads as untracked', c.legs.continuity.untracked.length, 0)
+  check('its events() come back as events, for score_sfx', c.events, (e) => JSON.stringify(e) === JSON.stringify([1, 5, 7.5].map((t) => ({ t, material: 'knock', gain: 0.5 }))))
+  check('and next says where they go', c.next, (t) => /pass it to score_sfx as events, with durationSeconds 12/.test(t))
 
   console.log('\n── slideshow.html: the same cards, nothing carried')
   const slides = await call('check_film', { assetId: ids['slideshow.html'] })
@@ -86,6 +88,7 @@ await runProbe(async () => {
   check('bare at 1, 5 and 7.5 s', s.legs.continuity.boundaries.map((b) => `${b.seconds}:${b.verdict}`).join(' '), '1:bare 5:bare 7.5:bare')
   check('the finding says what to do', s.findings[0].sentence, (t) => /Carry score 0\.00/.test(t) && /keep one tracked thing on screen/.test(t))
   check('and the next step is to fix, not place', s.next, (t) => /Do not place or export a film that fails/.test(t))
+  check('a film with no events() returns none', 'events' in s, false)
 
   console.log('\n── faulty.html: impure, throwing, too fast, out of frame')
   const faulty = await call('check_film', { assetId: ids['faulty.html'] })

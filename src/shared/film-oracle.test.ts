@@ -117,6 +117,32 @@ const sentence = (report: ReturnType<typeof checkFilm>, leg: string): string =>
     .map((finding) => finding.sentence)
     .join('\n')
 
+test('a move that ends on the beat and then sits still is the last beat\'s move, not a carry into the next', () => {
+  const beats = [0, 2, 6, 9]
+  // The same 300 px, on the same curve, over the same 0.4 s — only where it sits against the boundary differs.
+  const mover = (endsAfterBoundary: number): Track => (t) => {
+    let x = 100
+    beats.slice(1).forEach((beat) => {
+      x += 300 * EASES[1]!(clamp01((t - (beat + endsAfterBoundary - 0.4)) / 0.4))
+    })
+    // Big enough to anchor (over 3 % of the frame), so "survives unmoved" has a verdict of its own.
+    return { hero: { x, y: 60, w: 400, h: 400 } }
+  }
+  const verdicts = (track: Track): string[] =>
+    checkFilm(meta({ beats }), film({ track, energy: () => 0 })).legs.continuity.boundaries.map((b) => `${b.verdict}:${b.by[0]}`)
+
+  // Specimen: before the boundary the move is whole and inside the old window (it opens 0.25 s before).
+  const ending = mover(0)
+  assert.equal(ending(2).hero!.x - ending(1.75).hero!.x >= 150, true, 'specimen: most of the travel is in the 0.25 s before the boundary')
+  assert.ok(Math.abs(ending(2.5).hero!.x - ending(2).hero!.x) < 1e-6, 'specimen: nothing moves after the boundary')
+  assert.deepEqual(verdicts(ending), ['anchored:hero', 'anchored:hero', 'anchored:hero'])
+
+  // The nearest legal film: the same move straddling the boundary is a carry, counted for the part after it.
+  assert.deepEqual(verdicts(mover(0.2)), ['carried:hero', 'carried:hero', 'carried:hero'])
+  // …and so is one that starts on the beat.
+  assert.deepEqual(verdicts(mover(0.4)), ['carried:hero', 'carried:hero', 'carried:hero'])
+})
+
 // ---------------------------------------------------------------------------
 // The passing film every refusal below is one change away from
 // ---------------------------------------------------------------------------
@@ -224,9 +250,10 @@ test('a survivor that does not move anchors a boundary for half a point; a small
 
 test('a carry is a move of 2 % of the diagonal or a 10 % scale — just under either is anchored', () => {
   const diagonal = Math.hypot(W, H)
+  // Each move starts on its beat: only travel from the boundary on counts, so this is the threshold itself.
   const across = (dx: number, grow: number): Track =>
     both(cards, (t) => {
-      const u = BEATS.slice(1).reduce((sum, beat) => sum + clamp01((t - (beat - 0.1)) / 0.4), 0)
+      const u = BEATS.slice(1).reduce((sum, beat) => sum + clamp01((t - beat) / 0.4), 0)
       return { hero: { x: 100 + dx * u, y: 60, w: 400 * (1 + grow) ** u, h: 300 * (1 + grow) ** u } }
     })
   const verdicts = (dx: number, grow: number): string[] =>
@@ -237,7 +264,7 @@ test('a carry is a move of 2 % of the diagonal or a 10 % scale — just under ei
   // Scaling about its corner moves the centre too, so the scale is tested alone by keeping the centre.
   const scaled = (grow: number): Track =>
     both(cards, (t) => {
-      const u = BEATS.slice(1).reduce((sum, beat) => sum + clamp01((t - (beat - 0.1)) / 0.4), 0)
+      const u = BEATS.slice(1).reduce((sum, beat) => sum + clamp01((t - beat) / 0.4), 0)
       const s = (1 + grow) ** u
       return { hero: { x: 400 - 200 * s, y: 400 - 150 * s, w: 400 * s, h: 300 * s } }
     })
@@ -521,6 +548,71 @@ test('the speed limit is per frame of the film and scales with the frame', () =>
   assert.equal(checkFilm(meta(), big).legs.curves.limitPxPerFrame, 160)
   assert.equal(checkFilm(meta(), big).legs.curves.status, 'pass')
   assert.equal(checkFilm(meta(), film({ track: streak(150) })).legs.curves.status, 'fail')
+})
+
+test('speed is what a viewer can see: a panel growing past the frame is judged on its visible edges', () => {
+  // A panel grows about the frame's centre from 1600x900 to ten times that in a third of a second:
+  // its corners leave the frame after a few frames and go on travelling far outside it.
+  const grow = (t: number): number => 1 + 9 * clamp01((t - 2) / (10 / 30))
+  const panel: Track = (t) => ({ panel: { x: W / 2 - 800 * grow(t), y: H / 2 - 450 * grow(t), w: 1600 * grow(t), h: 900 * grow(t) } })
+  const samples = film({ track: both(hero, panel), energy: () => 0 })
+  const box = (k: number): number[] => samples.track[k]!.boxes!['panel'] as number[]
+  const unclipped = Math.hypot(box(66)[0]! - box(65)[0]!, box(66)[1]! - box(65)[1]!)
+  assert.ok(unclipped > 800, `specimen: a corner really travels ${Math.round(unclipped)} px in a frame, off screen`)
+  assert.ok(box(65)[0]! < 0 && box(65)[1]! < 0, 'specimen: and by then the panel already covers the frame')
+
+  const report = checkFilm(meta(), samples)
+  const peak = report.legs.curves.peaks.find((p) => p.id === 'panel')!
+  // On screen its edges go from 160 px inside the frame to the frame's edge, in the first frame or two.
+  assert.ok(peak.pxPerFrame <= Math.hypot(160, 90) + 0.1, `judged on the visible part: ${peak.pxPerFrame}`)
+  assert.ok(peak.pxPerFrame > 0, 'the edges reaching the frame still count')
+  assert.ok(peak.seconds <= 2.1, `and it peaks while there is an edge to see, not at ${peak.seconds} s`)
+  assert.doesNotMatch(sentence(report, 'curves'), /panel moves [3-9]\d\d/)
+
+  // The nearest thing that must still be caught: the same speed, on screen.
+  const seen = checkFilm(meta(), film({ track: streak(200), energy: () => 0 }))
+  assert.equal(seen.legs.curves.peaks.find((p) => p.id === 'streak')!.pxPerFrame, 200)
+  // …and something that comes in from outside the frame is measured from the edge it crosses.
+  const entering: Track = (t) => ({ card: { x: -400 + 1200 * clamp01((t - 2) / (4 / 30)), y: 400, w: 300, h: 300 } })
+  const came = checkFilm(meta(), film({ track: both(hero, entering), energy: () => 0 })).legs.curves.peaks.find((p) => p.id === 'card')!
+  assert.equal(came.pxPerFrame, 300)
+})
+
+test('the film\'s events come back as it gave them; a bad list is a warning with the shape, never a failure', () => {
+  const declared = (events?: DeclaredFilm['events']): DeclaredFilm => ({ present: true, kind: 'object', beats: BEATS, track: 'function', ...(events ? { events } : {}) })
+  const report = (events?: DeclaredFilm['events']): ReturnType<typeof checkFilm> => {
+    const read = readFilmMeta(declared(events), DURATION)
+    assert.ok(read.ok, 'events never refuse the film')
+    return checkFilm(read.meta, film())
+  }
+  // Fields the oracle does not know are carried through: score_sfx is what checks a score.
+  const list = [{ t: 1, material: 'knock', gain: 0.4, pan: -0.2 }, { t: 5, material: 'thump', size: 2 }]
+  const given = report({ value: list })
+  assert.deepEqual(given.events, list)
+  assert.equal(given.verdict, 'pass')
+  assert.deepEqual(report({ value: [] }).events, [])
+
+  const none = report()
+  assert.equal('events' in none, false)
+  assert.equal(none.verdict, 'pass')
+
+  for (const [events, said] of [
+    [{ threw: 'table is not defined' }, /__film\.events\(\) threw: "table is not defined"\. The film was measured without it/],
+    [{ value: { t: 1 } }, /__film\.events gave a object, not a list.*\[\{ t: 1\.2, material: 'knock' \}\]/],
+    [{ value: null }, /__film\.events gave null, not a list/],
+    [{ value: [{ t: 1, material: 'knock' }, { t: 'soon', material: 'bell' }] }, /__film\.events\(\)\[1\] is \{"t":"soon","material":"bell"\}, which has no finite t and string material/],
+    [{ value: [{ t: 2 }] }, /__film\.events\(\)\[0\] is \{"t":2\}/],
+    [{ value: [null] }, /__film\.events\(\)\[0\] is null/]
+  ] as const) {
+    const bad = report(events)
+    assert.equal('events' in bad, false, 'a list that cannot be trusted is not passed on')
+    assert.equal(bad.verdict, 'warn')
+    assert.equal(bad.legs.faults.status, 'warn')
+    assert.deepEqual(bad.findings.map((f) => `${f.leg}:${f.severity}`), ['faults:warn'])
+    assert.match(bad.findings[0]!.sentence, said)
+    // Everything else is as measured.
+    assert.equal(bad.legs.continuity.score, given.legs.continuity.score)
+  }
 })
 
 test('a jump across a declared cut is not a move', () => {
