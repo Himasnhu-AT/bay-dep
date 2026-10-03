@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { bgraToRgba, describeSizeMismatch, expectedByteLength } from './bitmap'
+import { bgraToRgba, describeSizeMismatch, expectedByteLength, lumaDelta } from './bitmap'
 
 test('red and blue swap, and alpha and green stay', () => {
   // One pixel, every channel distinct so a wrong move is visible rather than plausible.
@@ -73,4 +73,39 @@ test('a mismatch names the size the buffer actually is, which is the actionable 
   assert.match(message!, /640x360/)
   assert.match(message!, new RegExp(String(1920 * 1080)))
   assert.match(message!, /still at its previous/)
+})
+
+// The film oracle's picture energy.
+
+/** `count` BGRA pixels of one colour. */
+const flat = (count: number, b: number, g: number, r: number): Uint8Array => {
+  const out = new Uint8Array(count * 4)
+  for (let i = 0; i < count; i++) out.set([b, g, r, 255], i * 4)
+  return out
+}
+
+test('the same picture has no energy, and black to white has all of it', () => {
+  assert.equal(lumaDelta(flat(64, 30, 90, 200), flat(64, 30, 90, 200)), 0)
+  assert.ok(Math.abs(lumaDelta(flat(64, 0, 0, 0), flat(64, 255, 255, 255))! - 255) < 1e-9)
+})
+
+test('energy is the mean over the picture: a quarter of it changing is a quarter of the difference', () => {
+  const before = flat(100, 0, 0, 0)
+  const after = flat(100, 0, 0, 0)
+  for (let i = 0; i < 25; i++) after.set([255, 255, 255, 255], i * 4)
+  assert.ok(Math.abs(lumaDelta(before, after)! - 255 / 4) < 1e-9)
+})
+
+test('luma weights the channels in BGRA order: green counts most and blue least', () => {
+  const black = flat(1, 0, 0, 0)
+  const blue = lumaDelta(black, flat(1, 255, 0, 0))!
+  const green = lumaDelta(black, flat(1, 0, 255, 0))!
+  const red = lumaDelta(black, flat(1, 0, 0, 255))!
+  assert.ok(green > red && red > blue, `${green} > ${red} > ${blue}`)
+  assert.ok(Math.abs(blue + green + red - 255) < 1e-9)
+})
+
+test('two captures of different sizes are not a difference', () => {
+  assert.equal(lumaDelta(flat(4, 0, 0, 0), flat(5, 0, 0, 0)), null)
+  assert.equal(lumaDelta(new Uint8Array(0), new Uint8Array(0)), null)
 })

@@ -1,0 +1,49 @@
+<!doctype html>
+<!--
+  check_film fixture: a film that FAILS continuity and nothing else.
+
+  carried.html without its hero: the same four beats, the same four cards, each replacing the
+  last. Expected from check_film: verdict fail; carry 0.00 over 3 boundaries, bare at 1, 5 and
+  7.5 s; rhythm, curves and faults pass.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { margin: 0 }
+  .card { position: absolute; left: 500px; top: 300px; width: 900px; height: 500px; border-radius: 24px }
+</style>
+</head>
+<body>
+<div data-composition-id="film-slideshow" data-duration="12" style="width:1920px;height:1080px;position:relative;overflow:hidden;background:#101014">
+  <div class="card" id="card0" style="background:#2b59c3"></div>
+  <div class="card" id="card1" style="background:#c32b59"></div>
+  <div class="card" id="card2" style="background:#2bc38a"></div>
+  <div class="card" id="card3" style="background:#8a2bc3"></div>
+</div>
+<script>
+(function () {
+  var BEATS = [0, 1, 5, 7.5]
+  function beatAt(t) {
+    var beat = 0
+    for (var i = 1; i < BEATS.length; i += 1) if (t >= BEATS[i]) beat = i
+    return beat
+  }
+  function time(t) {
+    var beat = beatAt(t)
+    for (var i = 0; i < BEATS.length; i += 1) document.getElementById('card' + i).style.opacity = i === beat ? '1' : '0'
+  }
+  window.__timelines['film-slideshow'] = { time: time, duration: function () { return 12 } }
+  window.__film = {
+    beats: BEATS,
+    track: function (t) {
+      var boxes = {}
+      boxes['card' + beatAt(t)] = { x: 500, y: 300, w: 900, h: 500, op: 1 }
+      return boxes
+    }
+  }
+  time(0)
+})()
+</script>
+</body>
+</html>

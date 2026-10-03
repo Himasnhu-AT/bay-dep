@@ -14,6 +14,7 @@ import type { McpToolResult } from '@shared/mcp'
 import { IPC } from '@shared/ipc'
 import {
   compositionFrameAt,
+  sampleFilm,
   importCompositions,
   inspectComposition,
   release as releaseComposition,
@@ -169,6 +170,7 @@ interface ChannelApi {
   compositionWriteGenerated: BayApi['composition']['writeGenerated']
   compositionImport: BayApi['composition']['import']
   compositionFrameAt: BayApi['composition']['frameAt']
+  compositionFilm: BayApi['composition']['film']
   compositionRelease: BayApi['composition']['release']
 
   agentStart: BayApi['agent']['start']
@@ -292,6 +294,7 @@ const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
     writeTemplate(templateId, width, height),
   compositionImport: async (_event, paths) => importCompositions(paths),
   compositionFrameAt: async (_event, request) => compositionFrameAt(request),
+  compositionFilm: async (_event, request) => sampleFilm(request),
   compositionRelease: async (_event, assetId) => releaseComposition(assetId),
 
   appVersion: async () => app.getVersion(),
