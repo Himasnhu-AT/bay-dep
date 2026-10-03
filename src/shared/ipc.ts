@@ -25,6 +25,7 @@ import type {
   StartRefused
 } from './generation'
 import type { CompositionFault, CompositionInfo } from './composition'
+import type { FilmMeta, FilmSamples } from './film-oracle'
 import type { McpToolCall, McpToolResult } from './mcp'
 import type { LoudnessMeasurement, LoudnessReport, LoudnessTarget } from './loudness'
 import type { AccessStatus } from './access'
@@ -177,6 +178,31 @@ export interface CompositionFrameRequest {
     format: 'truetype' | 'opentype' | 'woff' | 'woff2'
   }[]
 }
+
+/**
+ * Sample one composition for the film oracle (`@shared/film-oracle`, `check_film`).
+ *
+ * Main opens the composition in a window of its own — never the one the preview is seeking,
+ * because two callers seeking one page take each other's pictures — reads `window.__film`,
+ * seeks every frame of the film reading `track(t)`, and, when `pictures` is set, captures a
+ * small picture twelve times a second for the stillness leg.
+ */
+export interface FilmSampleRequest {
+  assetId: string
+  path: string
+  /** The film's frame rate: the timeline's. Speeds are per frame of this. */
+  fps: number
+  /** False skips the captures: carry, curves and framing in under a second, no stillness. */
+  pictures: boolean
+  variables?: CompositionFrameRequest['variables']
+  cssVariables?: CompositionFrameRequest['cssVariables']
+  fonts?: CompositionFrameRequest['fonts']
+}
+
+export type FilmSampleResult =
+  | { ok: true; meta: FilmMeta; samples: FilmSamples; elapsedMs: number }
+  /** `contract`: the composition's `__film` is missing or wrong, one sentence per problem. */
+  | { ok: false; reason: 'contract' | 'failed'; problems: string[] }
 
 export interface CompositionFrame {
   /** Raw RGBA, `width * height * 4` bytes. The renderer turns it into an ImageBitmap. */
@@ -753,6 +779,8 @@ export interface BayApi {
     import(paths: string[]): Promise<ImportedAsset[]>
     /** One frame, at a time. Resolves null when the composition could not be opened. */
     frameAt(request: CompositionFrameRequest): Promise<CompositionFrame | null>
+    /** Sample a composition across its length for the film oracle. Changes nothing. */
+    film(request: FilmSampleRequest): Promise<FilmSampleResult>
     /**
      * Drop the offscreen window for this asset.
      *
@@ -1021,6 +1049,7 @@ export const IPC = {
   compositionWriteGenerated: 'composition:write-generated',
   compositionImport: 'composition:import',
   compositionFrameAt: 'composition:frame-at',
+  compositionFilm: 'composition:film',
   compositionRelease: 'composition:release',
 
   projectInitial: 'project:initial',

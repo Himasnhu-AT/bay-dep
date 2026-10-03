@@ -80,3 +80,70 @@ export function seekScript(compositionId: string, seconds: number): string {
     return { ok: true, at: ${seconds} }
   })()`
 }
+
+/**
+ * Read what the page declares in `window.__film`, as plain data (`DeclaredFilm` in
+ * `@shared/film-oracle`). Nothing is judged here: the page is somebody else's code, so it is
+ * asked for its values and `readFilmMeta` decides what they mean. `JSON` is the copy because a
+ * `NaN` or a function in `beats` must arrive as "not a number", not fail the call.
+ */
+export function filmDeclaredScript(): string {
+  return `(() => {
+    const film = window.__film
+    const kind = film === null ? 'null' : typeof film
+    if (!film || kind !== 'object') return { present: false, kind }
+    const plain = (value) => {
+      try { return value === undefined ? undefined : JSON.parse(JSON.stringify(value)) } catch { return 'unreadable' }
+    }
+    return {
+      present: true,
+      kind,
+      beats: plain(film.beats),
+      cuts: plain(film.cuts),
+      inFrame: plain(film.inFrame),
+      blur: plain(film.blur),
+      track: typeof film.track
+    }
+  })()`
+}
+
+/**
+ * Seek each time and read `__film.track(t)` there — no paint, no capture, so a whole film is
+ * one call. Returns `RawTrackSample`s: a box is `[x, y, w, h, op]` with `null` for anything
+ * that is not a finite number (`op` absent is 1), so a `NaN` reaches the oracle as a named
+ * fault rather than as whatever the bridge makes of it.
+ *
+ * A throw from `time` or from `track` is caught per sample and reported with which call it
+ * was: one bad second must cost one sample, not the film. `probes` are `[t, via]` pairs read
+ * as t, via, t — the purity check — and come back as `{ first, again }`.
+ */
+export function filmTrackScript(compositionId: string, times: readonly number[], probes: readonly (readonly [number, number])[]): string {
+  return `(() => {
+    const tl = window.__timelines && window.__timelines[${JSON.stringify(compositionId)}]
+    if (!tl) return { ok: false, why: 'no timeline registered as ' + ${JSON.stringify(compositionId)} }
+    const film = window.__film
+    const said = (error) => String((error && error.message) || error).slice(0, 200)
+    const num = (value) => (typeof value === 'number' && Number.isFinite(value) ? value : null)
+    const read = (t) => {
+      try { tl.time(t) } catch (error) { return { t, threw: 'time', message: said(error) } }
+      let raw
+      try { raw = film.track(t) } catch (error) { return { t, threw: 'track', message: said(error) } }
+      if (!raw || typeof raw !== 'object') return { t, shape: raw === null ? 'null' : typeof raw }
+      const boxes = {}
+      for (const id of Object.keys(raw)) {
+        const box = raw[id]
+        boxes[id] = box && typeof box === 'object'
+          ? [num(box.x), num(box.y), num(box.w), num(box.h), box.op === undefined ? 1 : num(box.op)]
+          : null
+      }
+      return { t, boxes }
+    }
+    const samples = ${JSON.stringify(times)}.map(read)
+    const purity = ${JSON.stringify(probes)}.map(([t, via]) => {
+      const first = read(t)
+      read(via)
+      return { t, via, first, again: read(t) }
+    })
+    return { ok: true, samples, purity }
+  })()`
+}

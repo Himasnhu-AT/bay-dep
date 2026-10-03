@@ -12,6 +12,7 @@ import { tool as addTransition } from './add-transition'
 import { tool as applyDub } from './apply-dub'
 import { tool as applyScript } from './apply-script'
 import { tool as browseAssets } from './browse-assets'
+import { tool as checkFilm } from './check-film'
 import { tool as deleteItems } from './delete-items'
 import { tool as detachAudio } from './detach-audio'
 import { tool as detectBeats } from './detect-beats'
@@ -97,6 +98,7 @@ export const TOOLS: ToolSpec[] = [
   writeComposition,
   addTemplate,
   readComposition,
+  checkFilm,
   importMedia,
   importUrl,
   placeAsset,
