@@ -122,7 +122,7 @@ something saves, and nothing a probe does should.
   `--strict-mcp-config` isolates the agent to bay's tools.
 - An allow-list governs what needs approval, not what exists: with one alone, `Bash` ran `id`.
 - `--tools ListMcpResourcesTool,ReadMcpResourceTool,Skill` makes every other built-in *absent* —
-  the session's tool list is bay's catalog (59 tools as of this writing — `src/shared/tools/index.ts` is the count) plus those three, and a request to run `id` had nothing to
+  the session's tool list is bay's catalog (69 tools as of this writing — `src/shared/tools/index.ts` is the count) plus those three, and a request to run `id` had nothing to
   run it with. MCP tools are not built-ins, so bay's are unaffected. `--allowedTools` narrows
   `Skill` to `Skill(<slug>)` for bay's own skills, never the bare name, which would permit every
   bundled skill (`cli.test.ts` pins both).
@@ -348,6 +348,35 @@ anything, so an error on frame 45 is a refusal with its line, not a placeholder 
 imports a `.brf` file as text and never runs it; `lib/brfImport.ts` probes it in the worker.
 Every example in `bay://guide/brf` and the worked-edits guide is compiled and run on every frame
 by `brf-code.test.ts`.
+
+**A motion film is one composition on a move library, measured by an oracle before anyone watches
+it, with its sound synthesised from its own events** (`src/shared/motion/`, `@shared/film-oracle`,
+`src/shared/sfx/`; `check_film`, `score_sfx`; the `motion-graphics` and `launch-film` skills;
+`bay://guide/motion-design`). The method is onetake's (github.com/feitangyuan/onetake): beats that
+carry into each other under one camera, judged by measurement. onetake is PolyForm Noncommercial
+and bay is commercial, so this is a reimplementation from its documents — no code and no prose of
+its is here, and where a threshold is its published number `film-oracle.ts` says so at the
+constant. The library is 60 functions and three tables, pure in `t`; a composition gets it as the
+global `BM` by writing `<script src="bay-motion.js">` (main writes the file beside it, generated
+from the TypeScript by `pnpm gen:motion`, never kept by hand) and a `.brf` as
+`import { BM } from 'bay'`. A film declares `window.__film = { beats, cuts, inFrame, blur,
+track(t), events() }`; the oracle follows the boxes `track(t)` returns, so everything it concludes
+is about what was declared, and every report carries `blind`. The film protocol is written once
+(`FILM_*` in `skills.ts`) and both skills number it; the guide's numbers are pinned to the code
+(`composition-guides.test.ts`: its curve table is `EASE_T80`, its thresholds are the oracle's
+constants, every `BM.` name it or a skill writes is an export, and every export is in its
+catalogue). **Measured:** the guide's kit — four beats, three boundaries carried by `rectMorph`,
+`pushInto` and `iris` — is run on the real generated script at every frame, and under Node
+(`film-fixtures.test.ts`) it gets faults, continuity (1.00 over 3), curves and framing `pass`, with
+`blur: false`, a two-id iris and an off-frame word each failing the leg that should catch it; its
+picture was looked at as contact sheets in a plain headless Chrome from a file, not in bay. **Not
+measured:** `check_film`, `score_sfx` and `bay-motion.js` had not been exercised in a running bay
+when this was written (another agent was doing that; this paragraph does not claim its result);
+the kit's stillness leg, which needs pictures; whether a real agent turn follows the skills; and
+the oracle's picture-energy unit, which is bay's own formula under thresholds borrowed from
+onetake's scale and has not been calibrated against any film made here — so a `rhythm` verdict is
+the least trustworthy of the five. One reach worth knowing: a boundary's carry window opens 0.25 s
+before it, so the tail of the previous move counts as a carry of the next boundary.
 
 **Beats are analysed in main, kept on the asset in source time, and mapped once**
 (`media/beat-analysis.ts`, `@shared/beats`, `detect_beats`). Spectral flux → autocorrelation picks

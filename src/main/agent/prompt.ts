@@ -33,6 +33,7 @@ export const GUIDE_ROUTES: readonly GuideRoute[] = [
   { when: 'an explainer: a presenter or narration over B-roll and graphics', uri: 'bay://guide/format/explainer' },
   { when: 'before ANY image or video generation (prompts, references, duration, cost)', uri: 'bay://guide/generation' },
   { when: 'a motion graphic, title, lower third, chart or kinetic type', uri: 'bay://guide/brf' },
+  { when: 'a motion film: a launch film, promo, title sequence, or any graphic with more than one beat', uri: 'bay://guide/motion-design' },
   { when: 'a graphic that needs a real web page', uri: 'bay://guide/composition/contract' },
   { when: 'many clips at once: reorder, retrim, a paper edit', uri: 'bay://guide/script' },
   { when: 'finding a shot by what is in the picture ("the bit with the car"), in long or many videos', uri: 'bay://guide/footage-search' },

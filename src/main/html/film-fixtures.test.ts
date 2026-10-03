@@ -12,6 +12,11 @@
  * **Not proved here**, because there is no picture: the stillness numbers, purity by picture,
  * and that Chromium runs the scripts as `vm` does. `test/app/film.mjs` is that check, against
  * the same four files, in the running app.
+ *
+ * The kit in `bay://guide/motion-design` goes through the same route at the end of this file:
+ * the example an agent starts every film from has to pass the oracle the guide teaches. It is a
+ * canvas program on `bay-motion.js`, so for it the page also gets the real library and a canvas
+ * that accepts every call and draws nothing.
  */
 
 import { test } from 'node:test'
@@ -20,40 +25,76 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { createContext, runInContext } from 'node:vm'
 import { fatalFaults, readComposition } from '@shared/composition'
-import { checkFilm, planFilm, readFilmMeta, type DeclaredFilm, type FilmReport, type FilmSamples, type RawTrackSample } from '@shared/film-oracle'
+import {
+  BEAT_CV_MIN,
+  BEAT_RATIO_MIN,
+  SAME_CURVE_BAND,
+  checkFilm,
+  planFilm,
+  readFilmMeta,
+  type DeclaredFilm,
+  type FilmReport,
+  type FilmSamples,
+  type RawTrackSample
+} from '@shared/film-oracle'
+import { MOTION_FILE } from '@shared/motion-file'
+import { checkScore } from '@shared/sfx/score'
+import { MOTION_SCRIPT } from './motion-script.generated'
 import { filmDeclaredScript, filmTrackScript } from './scripts'
 
 const FIXTURES = join(import.meta.dirname, '../../../test/app/fixtures/film')
 const FPS = 30
 
-type Sampled = { declared: DeclaredFilm; problems: string[] | null; report: FilmReport | null }
+type Sampled = { declared: DeclaredFilm; problems: string[] | null; report: FilmReport | null; events: unknown }
 
-/** What `sampleFilm` does with a composition, minus the window and the pictures. */
+/** A 2D context that accepts every call and keeps every property set on it: a canvas film runs, and draws nothing. */
+function blankCanvas(): unknown {
+  return new Proxy({} as Record<string | symbol, unknown>, {
+    get: (target, key) => (key in target ? target[key] : () => undefined),
+    set: (target, key, value) => {
+      target[key] = value
+      return true
+    }
+  })
+}
+
+/** What `sampleFilm` does with a fixture composition, minus the window and the pictures. */
 function sample(name: string): Sampled {
   const path = join(FIXTURES, name)
-  const html = readFileSync(path, 'utf8')
+  return sampleHtml(readFileSync(path, 'utf8'), name, path)
+}
+
+function sampleHtml(html: string, name: string, path?: string): Sampled {
   const { info, faults } = readComposition(html, path)
   assert.deepEqual(fatalFaults(faults), [], `${name} must be a composition bay can render`)
   assert.ok(info)
 
-  const script = /<script>([\s\S]*?)<\/script>/.exec(html)?.[1]
-  assert.ok(script, `${name} has an inline script`)
+  // The page's scripts in document order; the one file a `src` may name is the library main writes.
+  const scripts = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/g)].map((tag) => {
+    const src = /\bsrc="([^"]*)"/.exec(tag[1]!)?.[1]
+    if (src === undefined) return tag[2]!
+    assert.equal(src, MOTION_FILE, `${name} loads ${src}, which bay does not put beside a composition`)
+    return MOTION_SCRIPT
+  })
+  assert.ok(scripts.some((script) => script.includes('__timelines')), `${name} has an inline script`)
   // The preload's one job: the registry exists before the page's scripts run.
   const window: Record<string, unknown> = { __timelines: {} }
-  const elements = new Map<string, { style: Record<string, string> }>()
+  const elements = new Map<string, unknown>()
+  const element = (): unknown => ({ style: {}, width: info.width, height: info.height, getContext: blankCanvas })
   const document = {
     getElementById: (id: string) => {
-      if (!elements.has(id)) elements.set(id, { style: {} })
+      if (!elements.has(id)) elements.set(id, element())
       return elements.get(id)
-    }
+    },
+    createElement: element
   }
   const context = createContext({ window, document })
-  runInContext(script, context)
+  for (const script of scripts) runInContext(script, context)
 
   const plain = <T>(value: unknown): T => JSON.parse(JSON.stringify(value)) as T
   const declared = plain<DeclaredFilm>(runInContext(filmDeclaredScript(), context))
   const read = readFilmMeta(declared, info.durationSeconds)
-  if (!read.ok) return { declared, problems: read.problems, report: null }
+  if (!read.ok) return { declared, problems: read.problems, report: null, events: undefined }
 
   const plan = planFilm(info.durationSeconds, FPS, false)
   type Tracked = { ok: true; samples: RawTrackSample[]; purity: { t: number; via: number; first: RawTrackSample; again: RawTrackSample }[] }
@@ -71,7 +112,8 @@ function sample(name: string): Sampled {
     energyMissing: 'this test takes no pictures',
     purity: probed.purity.map((probe) => ({ ...probe, pictureDelta: null }))
   }
-  return { declared, problems: null, report: checkFilm(read.meta, samples) }
+  const events = plain<unknown>(runInContext('typeof window.__film.events === "function" ? window.__film.events() : null', context))
+  return { declared, problems: null, report: checkFilm(read.meta, samples), events }
 }
 
 const status = (report: FilmReport): Record<string, string> =>
@@ -133,4 +175,97 @@ test('undeclared.html: a composition with no __film is refused with the shape to
   assert.equal(problems?.length, 1)
   assert.match(problems![0]!, /declares nothing to measure: there is no window\.__film/)
   assert.match(problems![0]!, /track\(t\)/)
+})
+
+// ---------------------------------------------------------------------------
+// The kit in bay://guide/motion-design
+// ---------------------------------------------------------------------------
+
+const GUIDE = join(import.meta.dirname, '../mcp/docs/compositions/motion-design.md')
+
+/** The guide's one whole-document example: the film an agent is told to start from. */
+function guideKit(): string {
+  const kit = /^```html\n([\s\S]*?)^```/m.exec(readFileSync(GUIDE, 'utf8'))?.[1]
+  assert.ok(kit && kit.includes('window.__film') && kit.includes(`<script src="${MOTION_FILE}">`), 'the guide has a kit on bay-motion.js that declares __film')
+  return kit
+}
+
+/** The kit with one piece swapped, and proof the swap landed. */
+function kitWith(from: string, to: string): string {
+  const kit = guideKit()
+  assert.ok(kit.includes(from), `specimen: the kit must contain ${JSON.stringify(from)}`)
+  return kit.replace(from, to)
+}
+
+test('the motion-design kit passes the oracle it teaches: faults, continuity, curves and framing', () => {
+  const { report } = sampleHtml(guideKit(), 'the guide kit')
+  assert.ok(report)
+  // Rhythm's stillness half needs pictures, which this test cannot take; its cadence half is judged below.
+  assert.deepEqual(status(report), { faults: 'pass', continuity: 'pass', curves: 'pass', rhythm: 'unmeasured', framing: 'pass' })
+  assert.deepEqual(report.findings.map((f) => f.sentence), ['Stillness was not measured: this test takes no pictures.'])
+
+  // Three boundaries, each carried, each by the id the guide says carries it.
+  assert.equal(report.legs.continuity.score, 1)
+  const boundaries = report.legs.continuity.boundaries
+  assert.deepEqual(boundaries.map((b) => [b.seconds, b.verdict, b.exempt]), [
+    [1.3, 'carried', null],
+    [4.3, 'carried', null],
+    [5.1, 'carried', null]
+  ])
+  assert.equal(boundaries[0]!.by[0], 'panel')
+  assert.ok(boundaries[1]!.by.includes('thumb'), `the push is carried by ${boundaries[1]!.by.join(', ')}`)
+  assert.equal(boundaries[2]!.by[0], 'dot')
+
+  // Cadence: uneven, and the longest beat at least four times the shortest.
+  const rhythm = report.legs.rhythm
+  assert.deepEqual(rhythm.beatSeconds, [1.3, 3, 0.8, 4.9])
+  assert.ok(rhythm.beatCv! >= BEAT_CV_MIN && rhythm.longestOverShortest! >= BEAT_RATIO_MIN, JSON.stringify(rhythm))
+
+  // Curves: the moves are not one curve, and the fastest is over the limit — so the pass rests on the blur it declares and draws.
+  const curves = report.legs.curves
+  const t80 = curves.moves.map((move) => move.t80)
+  assert.ok(curves.moves.length >= 3 && Math.max(...t80) - Math.min(...t80) > SAME_CURVE_BAND, JSON.stringify(t80))
+  assert.equal(curves.blurDeclared, true)
+  assert.ok(curves.peaks[0]!.pxPerFrame > curves.limitPxPerFrame)
+
+  assert.deepEqual(report.legs.framing.subjects, [
+    { id: 'panel', whole: false, out: [] },
+    { id: 'word', whole: true, out: [] }
+  ])
+})
+
+test('the kit, broken on purpose, fails the leg that should catch it (the proof the pass means something)', () => {
+  // Without the blur it declares, its fast moves strobe: curves fails and nothing else moves.
+  const unblurred = sampleHtml(kitWith('blur: true,', 'blur: false,'), 'the kit without blur').report
+  assert.ok(unblurred)
+  assert.deepEqual(status(unblurred), { faults: 'pass', continuity: 'pass', curves: 'fail', rhythm: 'unmeasured', framing: 'pass' })
+
+  // The iris built from two ids — the dot, then a separate stage — is the guide's own warning:
+  // neither carries. (The boundary is still "carried", by the panel: the last 0.25 s of the push
+  // before it falls inside its window. That is the oracle's reach, and the report names it.)
+  const twoIds = sampleHtml(kitWith('boxes.dot = { x: W / 2 - ir.r', 'boxes.stage = { x: W / 2 - ir.r'), 'the kit with a two-id iris').report
+  assert.ok(twoIds)
+  const last = twoIds.legs.continuity.boundaries[2]!
+  assert.equal(last.seconds, 5.1)
+  assert.deepEqual(last.by.filter((id) => id === 'dot' || id === 'stage'), [], `${last.verdict} by ${last.by.join(', ')}`)
+  assert.doesNotMatch(last.detail, /dot|stage/)
+
+  // A camera that loses the word: framing names it.
+  const lost = sampleHtml(kitWith("const WORD = { x: 510,", "const WORD = { x: 1510,"), 'the kit with the word off the edge').report
+  assert.ok(lost)
+  assert.equal(lost.legs.framing.status, 'fail')
+  assert.deepEqual(lost.legs.framing.subjects.filter((subject) => subject.out.length > 0).map((subject) => subject.id), ['word'])
+})
+
+test('the kit\'s sound events are a score score_sfx accepts: fewer than its picture has, one loudest', () => {
+  const { events } = sampleHtml(guideKit(), 'the guide kit')
+  assert.ok(Array.isArray(events) && events.length >= 3, 'the kit declares __film.events()')
+  const checked = checkScore({ durationSeconds: 10, events })
+  assert.ok(checked.ok, checked.ok ? '' : checked.errors.join(' '))
+  assert.deepEqual(checked.warnings, [])
+  // Nine things happen in the picture (a pop, a press, an opening, a fill, a tick, a push, an iris, a landing, a line).
+  assert.ok(events.length <= 4, `${events.length} sounds`)
+  const gains = checked.score.events.map((event) => event.gain).sort((a, b) => b - a)
+  assert.ok(gains[0]! > gains[1]!, 'one hit is the loudest')
+  assert.equal(checked.score.events.find((event) => event.gain === gains[0])!.material, 'thump')
 })

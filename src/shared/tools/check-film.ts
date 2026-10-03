@@ -10,7 +10,8 @@ export const tool: ToolSpec = {
     'watch it. Run it as soon as a composition plays end to end, and again after every change to ' +
     'its beats — a failure is an edit to the composition, not a re-render. It needs the ' +
     'composition to declare window.__film = { beats, track(t) } (a composition without one is ' +
-    'refused with the shape to add). It seeks every frame, follows the boxes track(t) returns, ' +
+    'refused with the shape to add; bay://guide/motion-design has the whole contract, what to ' +
+    'change for each failing leg, and a kit that passes). It seeks every frame, follows the boxes track(t) returns, ' +
     'and answers five legs, each pass / warn / fail / unmeasured with its numbers: continuity — ' +
     'at each beat boundary, did a tracked thing survive and move or scale into the next beat ' +
     '(carried), survive unmoved (anchored), or was the picture replaced (bare); the carry score ' +

@@ -46,6 +46,78 @@ const GOLDEN =
   'or 1187 on 1080×1920. Size type from the scale 24, 39, 63, 102, 165 px. Time animations and ' +
   'staggers in 3, 5, 8, 13, 21, 34 or 55 frames at 30 fps. Put the payoff near 62% of the runtime.'
 
+/**
+ * The film protocol, said once. `motion-graphics` and `launch-film` both make a film the same
+ * way — measure the reference, three concepts, a beat sheet of rhythm and carry, one composition
+ * on the move library, the oracle before anyone watches, sound from the film's own events — so
+ * each step is one constant and both bodies number it. The detail is `bay://guide/motion-design`;
+ * these stay short enough to be read every time.
+ */
+const FILM_REFERENCE =
+  'If there is a reference video, measure it before designing anything: detect_cuts for its cut ' +
+  'times and shot lengths, frame_grid coarse and then frame by frame around each move (the ' +
+  'style-from-reference skill for a whole look). Write down what the film has to match — how ' +
+  'much of it is still, how many hard cuts and where they bunch, how small things sit in the ' +
+  'frame — because none of that shows from watching it once.'
+
+const FILM_CONCEPTS =
+  'Propose THREE concepts that differ in their central idea — the one sentence about the ' +
+  'picture the whole film is made of (one element that becomes everything; one camera move ' +
+  'through scale; a chain where each beat causes the next; one surface that never leaves) — not ' +
+  'three orders of the same cards. For each give: the hook frame; what carries every boundary; ' +
+  'what it rules out (no cards? no cuts?); and its look — ground, ink, one accent, type and how ' +
+  'the camera behaves, chosen for this concept from the product\'s own colours first, never ' +
+  'inherited from the last film. Then END YOUR TURN and let the user pick. Skip this only when ' +
+  'they have already given the concept.'
+
+const FILM_BEAT_SHEET =
+  'Write the picked concept as a beat sheet, one line per beat: t · beat · what moves · what is ' +
+  'still · what carries into the next. Two halves, both required. Rhythm: beat lengths vary, the ' +
+  'longest at least 4× the shortest; short hits come in a burst; and there are rests where ' +
+  'nothing moves at all — about a quarter of the film, one of them a second or longer. Carry: at ' +
+  'every boundary name the ONE thing that survives it and visibly moves or scales into the next ' +
+  'beat (the thing pressed becomes the result; a container becomes the scene; the camera pushes ' +
+  'into a detail until it is the frame). If nothing survives, it is a slide change however good ' +
+  'the rhythm. A bare hard cut is right only inside a burst of three or more hits and into the ' +
+  'end card. Every reaction has its cause on screen — a press, a landing, a hit. No particles, ' +
+  'confetti or sparkles.'
+
+const FILM_BUILD =
+  'Build it as ONE composition with write_composition: a single canvas redrawn by time(t), every ' +
+  'value a pure function of t. Read bay://guide/motion-design first (the rules, every move, the ' +
+  '__film contract and a tested kit to start from) and bay://guide/composition/contract. Put ' +
+  '<script src="bay-motion.js"></script> above your script and compose from BM moves — never ' +
+  'hand-roll a spring or an ease — choosing each curve by its t80: a snap for a landing, an ' +
+  'in-out for a carry or the camera. Draw the world through one keyed camera (BM.cameraAt, ' +
+  'BM.layerMatrix) that chases what each beat frames and is dead still in the rests. Real UI is ' +
+  'redrawn in code from screenshots you have looked at, not recorded. Fast moves get sub-frame ' +
+  'motion blur sized from their travel. Declare window.__film = { beats, cuts, inFrame, blur, ' +
+  'track(t), events() }: each carry is ONE id in track(t) that changes, never one id fading out ' +
+  'under another, and boxes are screen pixels (BM.boxToScreen). Then, before placing it, ' +
+  'check_film with its assetId and pictures: false, and fix until nothing fails.'
+
+const FILM_LOOK =
+  'Place it (place_asset) and look: preview_frame at every beat boundary and in the middle of ' +
+  'every move, then frame_grid over the whole film. A carry that reads as a swap, text over busy ' +
+  'picture, a subject the camera lost, a hold that drifts — fix them in the composition.'
+
+const FILM_CHECK =
+  'Run check_film again with pictures, and fix the composition until no leg fails: continuity ' +
+  '(a bare boundary — carry it with one id, or list a deliberate cut in cuts), rhythm (beats all ' +
+  'one length, or a film that never stops), curves (a move too fast without blur; every move on ' +
+  'the same curve), framing (a subject named in inFrame out of frame), faults (a throw, or one ' +
+  'time drawing two pictures). Read `blind` every time: a pass is about the boxes track(t) ' +
+  'declared, so the frame_grid is still the look, and say which legs came back unmeasured. ' +
+  'Never show as finished, or export, a film that fails.'
+
+const FILM_SOUND =
+  'Sound, if the user gave no effects of their own: send the film\'s __film.events() to ' +
+  'score_sfx — durationSeconds the film\'s length, atFrame the film clip\'s first frame — with ' +
+  'validateOnly: true first, and fix what it warns about. Score FEWER sounds than the picture ' +
+  'has events: the contacts a viewer should feel, one of each run, with rests between; pan each ' +
+  'where the thing is; save the loudest gain for the biggest moment; keep one room for the whole ' +
+  'film and leave ceilingDb at −8. Say plainly that you cannot hear it.'
+
 export const BAY_SKILLS: readonly BaySkill[] = [
   {
     slug: 'talking-head',
@@ -124,16 +196,20 @@ export const BAY_SKILLS: readonly BaySkill[] = [
   {
     slug: 'motion-graphics',
     title: 'Motion Graphics',
-    description: 'Use when the user wants a custom animated graphic, title, chart or explainer element designed for the video.',
+    description: 'Use when the user wants a custom animated graphic, title, chart or explainer element, or a short motion film or animated sequence (several beats, UI that animates, a title that transforms) designed and built for the video.',
     body: [
-      'Design a motion graphic with the user, then build it.',
+      'Design a motion graphic with the user, then build it. One element is a .brf module. Anything with several beats is a film: one continuous piece under one camera, where every beat grows out of the one before, measured by check_film before anyone watches it.',
       '',
-      '1. Decide together what the graphic must communicate in one sentence. Collect the actual content (words, numbers) and any brand or style cues. Ask; do not invent content.',
-      '2. Build it with write_brf: a JSX module written like React or Remotion (interpolate, spring, useCurrentFrame, Sequence, components, loops over data) that bay draws natively — bay://guide/brf has the elements and worked examples. It is run across its whole duration before anything changes, and an error comes back with its line and frame. Put the words and colours the user may change in export const vars. For extruded 3D text or a camera that flies through a title, use <scene3d> with <text3d> (the guide\'s "Fly through a 3D title"); keep it to one or two short lines.',
-      '3. For anything bigger than one element — a sequence, a title that transforms, UI that animates, several ideas in a row — build it as a canvas program with write_composition instead: read bay://guide/motion-design (the rules and a tested kit) and bay://guide/composition/contract. Draw one protagonist through it, morph between states rather than fading, and give every change an on-screen cause.',
-      '4. Place it (atFrame in the same write_brf call), then look at frames at its start, mid-entrance, at rest and mid-exit with preview_frame.',
+      '1. Decide together what it must communicate in one sentence. Collect the actual content (words, numbers, the real labels) and any brand or style cues. Ask; do not invent content. ' + FILM_REFERENCE,
+      '2. ' + FILM_CONCEPTS + ' For one small element whose idea is already given (this title, a chart of these numbers) go straight to step 4.',
+      '3. ' + FILM_BEAT_SHEET,
+      '4. Build. ONE ELEMENT — write_brf: a JSX module written like React or Remotion (interpolate, spring, useCurrentFrame, Sequence, components, loops over data) that bay draws natively; bay://guide/brf has the elements and worked examples. import { BM } from \'bay\' gives the same measured moves a film uses (BM.wordLand, BM.rectMorph, BM.impact…; BM.spring takes seconds and a damping ratio — it is not the spring imported beside it). It is run across its whole duration before anything changes, and an error comes back with its line and frame. Put the words and colours the user may change in export const vars; place it with atFrame in the same call. For extruded 3D text or a camera that flies through a title, use <scene3d> with <text3d> (the guide\'s "Fly through a 3D title"); keep it to one or two short lines.',
+      '   A FILM — a sequence, a title that transforms, UI that animates, several ideas in a row. ' + FILM_BUILD,
+      '5. ' + FILM_LOOK + ' For a .brf element: frames at its start, mid-entrance, at rest and mid-exit.',
       '   To put a title BEHIND the person in the shot (the words between the background and the speaker), make it large over the clip, then call put_behind_subject with the title and the clip; check a frame where the head crosses the words. The cut-out follows the clip\'s zoom, crop, keyframes and grade, so punch-ins and reframes on the clip (edit_item on the clip, never the cut-out) keep the person in front of the words.',
-      '5. Walk the user through what you made and iterate on their feedback.',
+      '6. A film only. ' + FILM_CHECK,
+      '7. A film only. ' + FILM_SOUND,
+      '8. Walk the user through it beat by beat — what carries each boundary, what check_film measured and what it could not — and iterate on their feedback. It is a draft until they accept the cut.',
       '',
       PROPOSE
     ].join('\n')
@@ -303,21 +379,18 @@ export const BAY_SKILLS: readonly BaySkill[] = [
   {
     slug: 'launch-film',
     title: 'Launch Film',
-    description: 'Use when the user wants a product launch video, promo, trailer, feature announcement or any piece that should feel designed — built as a motion-design program that redraws the product, not an edit of screen recordings.',
+    description: 'Use when the user wants a product launch video, promo, trailer, feature announcement or any piece that should feel designed — built as one continuous motion film that redraws the product and carries every beat into the next, not an edit of screen recordings.',
     body: [
-      'A launch film is motion design, not an edit. The films worth copying are programs that draw every frame: the product\'s UI redrawn in code and choreographed, one protagonist carried from the first frame to the last, and every scene turning into the next. Screen recordings with captions on top read as a slideshow — use recordings and screenshots as the reference you draw from, not as the film. Take the time this needs: plan, build, look, and rebuild several times.',
+      'A launch film is motion design, not an edit: a program that draws every frame, the product\'s UI redrawn in code and choreographed, one continuous take in which every beat grows out of the one before. Screen recordings with captions on top read as a slideshow — use recordings and screenshots as the reference you draw from, not as the film. Take the time this needs: plan, build, look, measure, rebuild.',
       '',
-      '1. Read bay://guide/motion-design first — the rules and a tested kit (curves, spring, masked words, scramble decode, tabular count-ups, morphing boxes, cursor and tap, sub-frame motion blur). If the user names a look, search_styles / read_style for tokens.',
-      '2. Study the product: frame_grid every recording and screenshot in the pool until you can redraw its key screens — proportions, radii, colours, type sizes, the real labels and demo values. Draw only what the product really does and says; no invented features, customers, prices or URLs.',
-      '3. Plan, and show the plan in your reply:',
-      '   - a style sheet: one accent on a neutral base, two type voices (a heavy sans for statements, a serif italic for the human line — fonts from the pool first), the curves and the one spring;',
-      '   - the protagonist: the one element the eye follows (often the product\'s own shape — its icon, its panel, a status dot), and how it is born in the first second and where it ends;',
-      '   - a beat map: detect_beats on the music, a whole number of bars, one idea per bar, a faster montage near the end, an end card that holds 2+ bars;',
-      '   - a scene list: for each bar, what is drawn, what the protagonist becomes, the ON-SCREEN CAUSE of every state change (a cursor press → a toggle → a count-up), the exact words, and the MORPH that hands it to the next scene. No fades. At least one transition must carry meaning (before → after, a count, cause → effect).',
-      '   Build straight after unless the user asked to approve the plan.',
-      '4. Build it as ONE composition with write_composition: a single canvas redrawn by time(t) from pure scene functions, from the kit. Redraw the UI in code so it can be choreographed; bring in a recorded clip only where real footage is itself the point (and then as a masked, moving element inside a scene, never as the whole frame with a caption). Keep the music on the timeline; put each sound effect on the timeline at the frame your code says the event happens.',
-      '5. Look and rebuild — at least three passes. Each pass: preview_frame at every scene boundary and in the middle of every transition, then frame_grid of the whole film. Check: is the protagonist continuous; is anything fading instead of morphing; does every change have a visible cause; is text ever over busy picture; is something moving in every frame; does the end frame hold clean. List what each pass changed.',
-      '6. Export when it is right: export_timeline (mp4, quality best, loudness streaming), which returns when the export is finished; check `complete` and `findings`, and describe the film beat by beat.',
+      '1. Study the product: frame_grid every recording and screenshot in the pool until you can redraw its key screens — proportions, radii, colours, type sizes, the real labels and demo values. Draw only what the product really does and says; no invented features, customers, prices or URLs. Ask for what is missing. ' + FILM_REFERENCE,
+      '2. ' + FILM_CONCEPTS + ' If the user names a look, search_styles / read_style for its tokens (product-launch-film is the built-in) and offer it as one concept\'s look.',
+      '3. ' + FILM_BEAT_SHEET + ' With music: detect_beats, make the film a whole number of bars and land every boundary on a beat — but keep the lengths uneven (hits of a beat, a hold of two bars or more); the end card holds 2+ bars. Give the exact words of every line. Show the beat sheet in your reply.',
+      '4. ' + FILM_BUILD + ' Bring in a recorded clip only where real footage is itself the point, and then as a masked, moving element inside a beat, never as the whole frame with a caption. Keep the music on the timeline.',
+      '5. ' + FILM_LOOK,
+      '6. ' + FILM_CHECK + ' Expect at least three passes of look, measure and rebuild; list what each pass changed.',
+      '7. ' + FILM_SOUND + ' Effects sit under the music.',
+      '8. Walk the user through it beat by beat. Export only once they accept the cut: export_timeline (mp4, quality best, loudness streaming), which returns when the export is finished; check `complete` and `findings`.',
       '',
       GOLDEN,
       '',
