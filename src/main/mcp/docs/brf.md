@@ -8,7 +8,8 @@ Create one with `write_brf` (pass `atFrame` to place it in the same call), look 
 `preview_frame`, change it with `read_brf` → edit → `write_brf` with the same `assetId`.
 
 Use `write_composition` (an HTML page) when you need what only a web page has: CSS layout, flexbox
-and grid, embedded video, a DOM library. Titles, lower thirds, callouts, counters, charts, kinetic
+and grid, embedded video, a DOM library — and for a film of several beats under one camera
+(`bay://guide/motion-design`). Titles, lower thirds, callouts, counters, charts, kinetic
 type, shapes and anything procedural are `.brf`.
 
 ## The module
@@ -132,6 +133,11 @@ at rest ever after.
 `BM.spring` is not the `spring` above: it takes seconds since release and a damping ratio.
 A sim (`simFollower`, `simString`, `simMagnet`) is built **once, at the top of the module** —
 it is a recording, and `.at(t)` reads it — never inside the default export.
+
+`bay://guide/motion-design` has every move with what it is for, the curves by t80, and which
+carry suits which boundary. It is also where to go when the job is more than one element: a
+sequence of beats is a film — one HTML composition on the same library, measured with
+`check_film` and scored with `score_sfx` — not a long `.brf`.
 
 ```tsx
 import { BM } from 'bay'
