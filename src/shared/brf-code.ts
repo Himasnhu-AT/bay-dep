@@ -37,6 +37,8 @@
  */
 
 import { transform } from 'sucrase'
+// The file, not the folder: Node's resolver (the test suite) does not open a directory's index.
+import * as BM from './motion/index'
 import { ease as namedEase, parseBrf, parseColor, type BrfCodeMeta, type BrfDocument, type Easing as EasingName, type Layer } from './brf'
 
 // ---------------------------------------------------------------------------
@@ -287,8 +289,13 @@ const common = {
   random
 }
 
-/** `import { … } from 'bay'` */
-export const BAY_MODULE = { ...common, interpolate, spring }
+/**
+ * `import { … } from 'bay'`. `BM` is the move library (`./motion`) — the same object, under the
+ * same name, that an HTML composition gets as a global from `bay-motion.js`, so a move is written
+ * `BM.wordLand(t, 0.2)` in both. It is one name rather than fifty because `spring` and
+ * `interpolate` already mean something here.
+ */
+export const BAY_MODULE = { ...common, interpolate, spring, BM }
 /** `import { … } from 'remotion'` — Remotion's defaults: `interpolate` extends, `spring` takes an object. */
 export const REMOTION_MODULE = { ...common, interpolate: makeInterpolate('extend'), spring: remotionSpring }
 

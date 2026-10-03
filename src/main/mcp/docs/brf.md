@@ -113,6 +113,49 @@ gives Remotion's own semantics — frames, `spring({ frame, fps, config })`, and
 extending past its range unless you pass `extrapolateRight: 'clamp'`. Draw with bay's elements
 instead of `<div>`/`<AbsoluteFill>`.
 
+### Measured moves: `BM`
+
+`import { BM } from 'bay'` is bay's move library: each move is a function of `t` that returns
+plain numbers — offsets, scales, opacity, a radius — for you to put on an element. It is the same
+library, under the same name, that an HTML composition loads as `bay-motion.js`, so a move looks
+the same in both. Times are absolute seconds: `BM.wordLand(t, 0.2)` lands a word at 0.2 s and is
+at rest ever after.
+
+| Family | Moves |
+|---|---|
+| enter | `wordLand(t, t0)` → `{op, y, s}` · `letterFall(t, t0, i)` → `{op, y, sx, sy}` · `cardPop(t, t0)` → `{op, s, dy}` · `cardLift(t, t1)` → `{op, s, dy, blur}` · `lineReveal(t, t0, i)` → `{y, visible}` · `typeOn(t, t0, text)` → `{n, str, done, caret}` · `checkTick(t, t0)` → `{on, s}` |
+| carry | `rectMorph(t, t0, t1, A, B)` → `{x, y, w, h, r, cx, cy, p}` · `iris(t, t0, t1, cx, cy)` → `{r, covered}` · `pushInto(t, t0, t1, rect)` → `{s, tx, ty, matrix}` · `arcHop(t, t0, t1, from, to)` → `{x, y}` · `converge(t, t0, t1, i, n, from, to)` → `{x, y, rot}` · `rail(t, switches)` → `{shift, index, wobble, sx, sy, textShift}` · `wordCuts(t, cuts)` → `{word, i, tau}` |
+| contact | `impact(t, tHit)` → `{ring, sx, sy}` · `press(t, tDown)` → `{s, down, active}` · `pointer(t, knots, clicks)` → `{x, y, s, down}` · `stretch(vx, vy)` → `{angle, sx, sy}` · `simFollower(target, { duration })`, `simMagnet(…)`, `simString(…)` → `{ at(t) }` |
+| camera | `cameraAt(t, keys)` → `{x, y, zoom, rot}` · `layerMatrix(camera, { depth })` · `toScreen` / `toWorld` / `boxToScreen` · `shake(t, tHit)` · `farGrid(camera)` · `frameTravel(c0, c1)` |
+| core | `spring(tau, { damping, frequency })`, `springTimed(tau, { duration, bounce })`, `EASES`, `EASE_T80`, `easeOf`, `progress`, `lerp`, `spline`, `rng(seed)` |
+
+`BM.spring` is not the `spring` above: it takes seconds since release and a damping ratio.
+A sim (`simFollower`, `simString`, `simMagnet`) is built **once, at the top of the module** —
+it is a recording, and `.at(t)` reads it — never inside the default export.
+
+```tsx
+import { BM } from 'bay'
+
+export const vars = { word: 'Carried' }
+
+const CARD = { x: 660, y: 420, w: 600, h: 240, r: 40 }
+const FULL = { x: 0, y: 0, w: 1920, h: 1080, r: 0 }
+
+export default ({ t, vars }) => {
+  const word = BM.wordLand(t, 0.2)
+  // One rect becomes the next scene's ground: a carry, not a cut.
+  const box = BM.rectMorph(t, 1.4, 2.2, CARD, FULL)
+  const hit = BM.impact(t, 0.2 + 0.35)
+  return (
+    <scene duration={3} size={[1920, 1080]} background="#0B0E14">
+      <rect anchor={[0, 0]} x={box.x} y={box.y} w={box.w} h={box.h} radius={box.r} fill="#1B2A4A" />
+      <text x={960} y={540 + word.y} size={120} weight={800} opacity={word.op}
+        sx={word.s * hit.sx} sy={word.s * hit.sy}>{vars.word}</text>
+    </scene>
+  )
+}
+```
+
 Declarative shortcuts, when they say it more briefly than code:
 
 - **Presets**: `in="up"` / `out="fade"`, or `in={['pop', 0.4, 0.2]}` = `[name, duration, delay]`.
