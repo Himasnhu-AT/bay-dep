@@ -43,12 +43,13 @@ import { sizesOf } from './media/caption-file'
 import { locate, openCaptions, readCaptions, saveCaptions } from './media/files'
 import { forgetPath, importDialog, importPaths } from './media/import'
 import { freezeFrame } from './media/freeze-frame'
+import { writeSfx } from './sfx/write'
 import { ensureSubjectMatte, subjectMattes } from './matte/host'
 import { importFromUrl } from './media/url-import'
 import { isAllowed } from './protocol'
 import { vision } from './vision/host'
 import { checkSearchRequest, checkVisionAssets } from './vision/requests'
-import { downloadsDir, stylesDir } from './paths'
+import { downloadsDir, generatedDir, stylesDir } from './paths'
 import { listUserStyles, writeUserStyle } from './styles/store'
 import * as store from './project/store'
 import { openResolve, resolveStatus } from './resolve'
@@ -125,6 +126,7 @@ interface ChannelApi {
   mediaReadCaptions: BayApi['media']['readCaptions']
   mediaSaveCaptions: BayApi['media']['saveCaptions']
   mediaFreezeFrame: BayApi['media']['freezeFrame']
+  mediaScoreSfx: BayApi['media']['scoreSfx']
   mediaSubjectMatte: BayApi['media']['subjectMatte']
   mediaSubjectMatteIndex: BayApi['media']['subjectMatteIndex']
 
@@ -409,6 +411,7 @@ const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
   mediaReadCaptions: (_event, path) => readCaptions(String(path)),
   mediaSaveCaptions: (event, defaultName, text) => saveCaptions(windowOf(event), String(defaultName), String(text)),
   mediaFreezeFrame: (_event, request) => freezeFrame(request),
+  mediaScoreSfx: (_event, name, score) => writeSfx(generatedDir(), name, score),
   mediaSubjectMatte: (_event, request) => ensureSubjectMatte(request),
   mediaSubjectMatteIndex: (_event, key) => subjectMattes().index(key),
 

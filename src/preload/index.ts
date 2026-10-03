@@ -96,6 +96,7 @@ const api: BayApi = {
     saveCaptions: (defaultName: string, text: string) =>
       ipcRenderer.invoke(IPC.mediaSaveCaptions, defaultName, text) as Promise<string | null>,
     freezeFrame: (request) => ipcRenderer.invoke(IPC.mediaFreezeFrame, request),
+    scoreSfx: (name, score) => ipcRenderer.invoke(IPC.mediaScoreSfx, name, score),
     subjectMatte: (request) => ipcRenderer.invoke(IPC.mediaSubjectMatte, request),
     subjectMatteIndex: (key) => ipcRenderer.invoke(IPC.mediaSubjectMatteIndex, key),
     pathForFile: (file: File) => {

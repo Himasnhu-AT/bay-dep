@@ -428,7 +428,8 @@ const TOOL_EXEMPT: Record<string, string> = {
   track_generation:
     'reads a job from main before it imports; generation.test.ts asserts import and place are one undo step',
   apply_dub: 'starts jobs in main and never edits the project; dub.test.ts asserts past is untouched',
-  track_dub: 'reads jobs from main before it imports; dub.test.ts asserts placement and ducking are one undo step'
+  track_dub: 'reads jobs from main before it imports; dub.test.ts asserts placement and ducking are one undo step',
+  score_sfx: 'renders a file through the bridge before it imports; sfx.test.ts asserts create-and-place is one undo step that takes both back'
 }
 
 test('every write tool in the catalog has an undo-step case or a stated exemption', () => {

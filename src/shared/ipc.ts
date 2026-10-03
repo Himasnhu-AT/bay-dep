@@ -115,6 +115,36 @@ export interface FreezeFrameRequest {
   name: string
 }
 
+/**
+ * What `media.scoreSfx` answers. Written sentence-first:
+ * - ok, measured: "9 hits, 12.0 s, peak −9.4 dBFS, −27.3 LUFS, true peak −9.1 dBTP."
+ * - ok, no loudness (`integratedLufs: null`): `loudnessNote` says why — too short or quiet for
+ *   R128's gate, or the meter failed — and the file is still good.
+ * - ok, silent (`peakDb: null`): every event had gain 0.
+ * - refused: the score's own sentences, or why the file could not be written.
+ */
+export type SfxWriteResult =
+  | {
+      ok: true
+      path: string
+      /** Length of the file. Longer than the score only with `tail: "ring"`. */
+      seconds: number
+      /** Events that made sound. */
+      events: number
+      /** Largest sample, dBFS; null for a silent file. */
+      peakDb: number | null
+      /** The most the bus limiter turned anything down, dB. 0: it never acted. */
+      limitedDb: number
+      /** EBU R128 integrated loudness of the written file, or null — see `loudnessNote`. */
+      integratedLufs: number | null
+      /** True peak of the written file, dBTP, or null when the meter gave none. */
+      truePeakDb: number | null
+      loudnessNote?: string
+      /** Things that rendered but were probably not meant. */
+      warnings: string[]
+    }
+  | { ok: false; error: string }
+
 export interface FilmstripRequest {
   assetId: string
   path: string
@@ -530,6 +560,14 @@ export interface BayApi {
      * `bay://`. A time past the last frame, or a file with no picture, is refused in words.
      */
     freezeFrame(request: FreezeFrameRequest): Promise<{ ok: true; path: string } | { ok: false; error: string }>
+    /**
+     * Render a sound-effect score (`@shared/sfx/score`) to a WAV where bay keeps what it
+     * generates (`<userData>/generated`), named by its content — the same score twice is one
+     * file, and so one asset — and measure it with bay's ffmpeg. Nothing is imported: the
+     * renderer passes the path to `importPaths`. The score is checked again in main; a bad one
+     * is refused in the sentences `checkScore` writes.
+     */
+    scoreSfx(name: string, score: unknown): Promise<SfxWriteResult>
     /**
      * The subject matte (which pixels are the person) for one source range of a file, from the
      * cache or computed now by Apple Vision in main (`main/matte/`). Content-addressed by file
@@ -992,6 +1030,7 @@ export const IPC = {
   mediaReadCaptions: 'media:read-captions',
   mediaSaveCaptions: 'media:save-captions',
   mediaFreezeFrame: 'media:freeze-frame',
+  mediaScoreSfx: 'media:score-sfx',
   mediaSubjectMatte: 'media:subject-matte',
   mediaSubjectMatteIndex: 'media:subject-matte-index',
 

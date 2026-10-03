@@ -25,6 +25,7 @@ import { handlers as promptKitsHandlers } from './promptKits'
 import { handlers as proposalsHandlers } from './proposals'
 import { handlers as readHandlers } from './read'
 import { handlers as scriptHandlers } from './script'
+import { handlers as sfxHandlers } from './sfx'
 import { handlers as speechHandlers } from './speech'
 import { handlers as stylesHandlers } from './styles'
 import { handlers as subtitlesHandlers } from './subtitles'
@@ -60,6 +61,7 @@ export const HANDLER_GROUPS: Record<string, Handlers> = {
   'proposals': proposalsHandlers,
   'read': readHandlers,
   'script': scriptHandlers,
+  'sfx': sfxHandlers,
   'speech': speechHandlers,
   'styles': stylesHandlers,
   'subtitles': subtitlesHandlers,
@@ -96,6 +98,7 @@ export const HANDLERS: Handlers = {
   ...proposalsHandlers,
   ...readHandlers,
   ...scriptHandlers,
+  ...sfxHandlers,
   ...speechHandlers,
   ...stylesHandlers,
   ...subtitlesHandlers,
