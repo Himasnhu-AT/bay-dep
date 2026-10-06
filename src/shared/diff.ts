@@ -1,3 +1,10 @@
+/** A chain as the Changes card says it: the stages in order, the ones switched off marked. */
+function effectsLine(of: string, effects: readonly AudioEffect[] | undefined): string {
+  if (!effects || effects.length === 0) return `Removed the audio effects from ${of}`
+  const stages = effects.map((e) => `${effectSpec(e.kind)?.label ?? e.kind}${e.enabled === false ? ' (off)' : ''}`)
+  return `Audio effects on ${of}: ${stages.join(', ')}`
+}
+
 /**
  * What changed between two states of a project, in the words an editor would use.
  *
@@ -9,6 +16,7 @@
  */
 
 import { findAsset, formatTimecode, type Item, type Project, type Timeline } from './project'
+import { effectSpec, type AudioEffect } from './audio-effects'
 import { formatPan as panLabel } from './inspector'
 
 export interface ChangeLine {
@@ -85,6 +93,7 @@ export function describeChanges(before: Project, after: Project): ChangeLine[] {
       if (old.hidden !== track.hidden) flag(track.hidden, 'Hid', 'Showed')
       if (old.locked !== track.locked) flag(track.locked, 'Locked', 'Unlocked')
       if ((old.solo === true) !== (track.solo === true)) flag(track.solo === true, 'Soloed', 'Unsoloed')
+      if (!same(old.audioEffects, track.audioEffects)) out.push({ kind: 'changed', text: effectsLine(`track ${track.name}`, track.audioEffects) })
     }
 
     // By track id: renaming a track is not moving every clip on it.
@@ -121,6 +130,7 @@ export function describeChanges(before: Project, after: Project): ChangeLine[] {
       if (!same(o.blendMode, item.blendMode)) out.push({ kind: 'changed', text: `Blend mode of ${name}: ${o.blendMode ?? 'normal'} → ${item.blendMode ?? 'normal'}` })
       if (!same(o.text, item.text)) out.push({ kind: 'changed', text: `Restyled the text of ${name}` })
       if (!same(o.variables, item.variables)) out.push({ kind: 'changed', text: `Changed the content of ${name}` })
+      if (!same(o.audioEffects, item.audioEffects)) out.push({ kind: 'changed', text: effectsLine(name, item.audioEffects) })
       if (!same(o.effects, item.effects)) {
         // The stack as it now is, in draw order: order is part of what changed.
         const kinds = (item.effects ?? []).map((effect) => (effect.enabled === false ? `${effect.kind} (off)` : effect.kind))

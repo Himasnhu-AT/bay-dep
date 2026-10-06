@@ -14,6 +14,7 @@ import type { AgentAttachmentInput } from './agent-attachments'
 import type { TranscriptSegment } from './transcribe'
 import type { BeatGrid } from './beats'
 import type { SubjectMatteIndex, SubjectMatteRequest, SubjectMatteResult } from './matte'
+import type { AudioBakeRequest, AudioBakeResult } from './audio-bake'
 import type { WhisperDownload, WhisperStatus } from './whisper'
 import type {
   GenerationJob,
@@ -602,6 +603,13 @@ export interface BayApi {
      * source frame the first time.
      */
     subjectMatte(request: SubjectMatteRequest): Promise<SubjectMatteResult>
+    /**
+     * A clip's sound rendered through the baked stages of an effect chain (dynamics, noise
+     * removal) by bay's ffmpeg, from the cache or now (`main/audio-fx/`). Content-addressed by the
+     * file and the chain; the result is a WAV the preview plays through `bay://` and export reads.
+     * Refused for a path `bay://` would not serve. Seconds for a long file the first time.
+     */
+    audioEffectBake(request: AudioBakeRequest): Promise<AudioBakeResult>
     /** Where a computed matte's frames are, for the compositor to read through `bay://` with Range. */
     subjectMatteIndex(key: string): Promise<{ ok: true; index: SubjectMatteIndex } | { ok: false; error: string }>
   }
@@ -1065,6 +1073,7 @@ export const IPC = {
   mediaScoreSfx: 'media:score-sfx',
   mediaSubjectMatte: 'media:subject-matte',
   mediaSubjectMatteIndex: 'media:subject-matte-index',
+  mediaAudioEffectBake: 'media:audio-effect-bake',
 
   /**
    * renderer -> main: AI generation (the fourth network exception). Keys in, set/not-set out;

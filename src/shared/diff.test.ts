@@ -263,3 +263,21 @@ test('a motion graphic rewritten in place is named, not left to "settings"', () 
   // Control: the same asset with its code unchanged reports nothing.
   assert.deepEqual(texts(describeChanges(before, project([], { assets: [{ ...panel }] }))), [])
 })
+
+test('an audio effect chain on a clip or a track is reported by its stages, and its removal as a removal', () => {
+  const chain: NonNullable<Item['audioEffects']> = [
+    { id: 'e1', kind: 'highpass', params: { frequency: 80, q: 0.7 } },
+    { id: 'e2', kind: 'compressor', enabled: false, params: { threshold: -18, ratio: 3 } }
+  ]
+  const plain = project([item('i1', 'a1', 0, 60)])
+  const onClip = project([item('i1', 'a1', 0, 60, { audioEffects: chain })])
+  assert.deepEqual(texts(describeChanges(plain, onClip)), ['Audio effects on “interview.mp4”: High-pass, Compressor (off)'])
+  assert.deepEqual(texts(describeChanges(onClip, plain)), ['Removed the audio effects from “interview.mp4”'])
+  const onTrack = project([item('i1', 'a1', 0, 60)])
+  onTrack.timelines[0]!.tracks[0]!.audioEffects = chain
+  assert.deepEqual(texts(describeChanges(plain, onTrack)), ['Audio effects on track V1: High-pass, Compressor (off)'])
+  // A parameter alone is a change too; the same chain is silence.
+  const tuned = project([item('i1', 'a1', 0, 60, { audioEffects: [{ ...chain[0]!, params: { frequency: 120, q: 0.7 } }, chain[1]!] })])
+  assert.equal(describeChanges(onClip, tuned).length, 1)
+  assert.deepEqual(describeChanges(onClip, project([item('i1', 'a1', 0, 60, { audioEffects: chain })])), [])
+})
