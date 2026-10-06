@@ -28,6 +28,8 @@ import { editingPrefs } from '@/store/editing-prefs'
 import { ASSET_DRAG_TYPE } from './MediaPanel'
 import { decodeTransitionDrag, dropJunction, TRANSITION_DRAG_TYPE } from '@/lib/transitionDrag'
 import { applyTransitionAt } from './library/transitions'
+import { addEffectTo } from './library/VideoEffects'
+import { decodeEffectDrag, EFFECT_DRAG_TYPE, effectDropTarget } from '@/lib/effectDrag'
 import { junctionsForTrack, type Junction } from '@/lib/junctions'
 import { snapFrame, snapTargets } from '@/lib/snap'
 import { Clip } from './Clip'
@@ -1076,6 +1078,13 @@ export function Timeline(): ReactNode {
                       if (dropCut?.trackId !== track.id || dropCut.cutFrame !== cut.cutFrame) setDropCut({ trackId: track.id, cutFrame: cut.cutFrame })
                       return
                     }
+                    if (event.dataTransfer.types.includes(EFFECT_DRAG_TYPE)) {
+                      // A video effect lands on the clip under the pointer; over a gap it is not a drop.
+                      if (!timeline || !effectDropTarget(project, timeline, track.id, frameAtClientX(event.clientX))) return
+                      event.preventDefault()
+                      event.dataTransfer.dropEffect = 'copy'
+                      return
+                    }
                     if (!event.dataTransfer.types.includes(ASSET_DRAG_TYPE)) return
                     event.preventDefault()
                     event.dataTransfer.dropEffect = 'copy'
@@ -1094,6 +1103,20 @@ export function Timeline(): ReactNode {
                       }
                       const cut = timeline ? dropJunction(project, timeline, track.id, frameAtClientX(event.clientX), pixelsPerFrame) : null
                       if (cut) applyTransitionAt(cut, transition.kind, transition.label)
+                      return
+                    }
+                    const effect = decodeEffectDrag(event.dataTransfer.getData(EFFECT_DRAG_TYPE))
+                    if (effect) {
+                      event.preventDefault()
+                      const target = timeline ? effectDropTarget(project, timeline, track.id, frameAtClientX(event.clientX)) : null
+                      if (!target) return
+                      if (!target.ok) {
+                        useEditor.getState().notify(target.reason)
+                        return
+                      }
+                      // Selected, so the inspector shows the clip the effect went to.
+                      useEditor.getState().select([target.item.id])
+                      addEffectTo([target.item], effect.kind, effect.label)
                       return
                     }
                     const assetId = event.dataTransfer.getData(ASSET_DRAG_TYPE)

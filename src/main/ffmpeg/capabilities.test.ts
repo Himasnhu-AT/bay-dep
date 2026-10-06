@@ -36,6 +36,7 @@ import {
 } from '../export/codec-args'
 import { buildAudioGraph } from '../export/audio-graph'
 import { masterFilter } from '../export/master'
+import { AUDIO_EFFECT_KINDS, bakeFilterGraph, defaultEffect, isBakedKind } from '@shared/audio-effects'
 import { colourFilter } from '../media/frame-grab'
 import { sceneCutFilter } from '../media/scene-cuts'
 import { LOUDNESS_FILTER, silenceFilter } from '../media/audio-analysis'
@@ -139,6 +140,23 @@ function filtersTheCodeWrites(): Set<string> {
     graphs.push(graph.filter)
   }
   graphs.push(masterFilter({ gainDb: -3, limiterCeilingDb: -1 }))
+  // Audio effects (shared/audio-effects.ts): every equaliser kind live on a clip and on a track's
+  // bus, as export writes them, and every baked kind in the graph the baker runs.
+  {
+    const fx = AUDIO_EFFECT_KINDS.map((kind, index) => {
+      const effect = defaultEffect(kind, `e${index}`)
+      // The defaults of a shelf, a band and a 1:1 stage are identities, which write no filter.
+      for (const key of ['gain', 'makeup'] as const) if (key in effect.params) effect.params[key] = 3
+      return effect
+    })
+    const eq = fx.filter((e) => !isBakedKind(e.kind))
+    const t = timeline([clip('a', 0, 60, { audioEffects: eq }), clip('b', 30, 60)])
+    t.tracks[0]!.audioEffects = eq
+    const project: Project = { id: 'p', name: 'p', version: 1, assets: [tone], timelines: [t], activeTimelineId: 'tl', createdAt: 0, updatedAt: 0 }
+    const graph = buildAudioGraph(project, t, 0, 150)
+    assert.ok(graph, 'a timeline with effects must build a graph')
+    graphs.push(graph.filter, bakeFilterGraph(fx))
+  }
   // detect_cuts (media/scene-cuts.ts): scale, scdet, metadata.
   graphs.push(sceneCutFilter(10))
   // remove_silences / detect_footage_mode (silencedetect, ametadata) and level_voices (ebur128).
@@ -184,7 +202,7 @@ test('every encoder and filter bay asks for is in the ffmpeg it ships', { skip: 
   const wanted = filtersTheCodeWrites()
   // Every name here comes from a parsed graph, none from the inline list: proof the parse ran.
   assert.ok(
-    ['amix', 'alimiter', 'setparams', 'atempo', 'aformat', 'pan', 'tile', 'trim'].every((f) => wanted.has(f)),
+    ['amix', 'alimiter', 'setparams', 'atempo', 'aformat', 'pan', 'tile', 'trim', 'equalizer', 'acompressor', 'afftdn', 'sidechaincompress'].every((f) => wanted.has(f)),
     `the graphs must parse: ${[...wanted].join(' ')}`
   )
   const missing = [

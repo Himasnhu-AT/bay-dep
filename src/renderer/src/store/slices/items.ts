@@ -57,6 +57,7 @@ type Actions = Pick<
   | 'moveTrack'
   | 'joinItems'
   | 'patchTrack'
+  | 'setAudioEffects'
 >
 
 /**
@@ -835,6 +836,22 @@ export function itemsSlice({ set, get, edit, editTimeline, currentTimeline }: St
           if (pan === 0) delete track.pan
           else track.pan = pan
         }
+      })
+    },
+
+    setAudioEffects(target, effects) {
+      editTimeline((timeline) => {
+        const holder =
+          'itemId' in target
+            ? (() => {
+                const found = findItem(timeline, target.itemId)
+                return found && !found.track.locked ? found.item : undefined
+              })()
+            : findTrack(timeline, target.trackId)
+        if (!holder) return
+        // No effects is stored as absence, so a chain added and removed saves as one never added.
+        if (effects.length === 0) delete holder.audioEffects
+        else holder.audioEffects = effects.map((e) => ({ ...e, params: { ...e.params } }))
       })
     }
   }

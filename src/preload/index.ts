@@ -100,6 +100,7 @@ const api: BayApi = {
     scoreSfx: (name, score) => ipcRenderer.invoke(IPC.mediaScoreSfx, name, score),
     subjectMatte: (request) => ipcRenderer.invoke(IPC.mediaSubjectMatte, request),
     subjectMatteIndex: (key) => ipcRenderer.invoke(IPC.mediaSubjectMatteIndex, key),
+    audioEffectBake: (request) => ipcRenderer.invoke(IPC.mediaAudioEffectBake, request),
     pathForFile: (file: File) => {
       // A `File` is one of the few complex objects contextBridge passes through intact
       // rather than proxying, which is what makes this work at all. It throws for a File

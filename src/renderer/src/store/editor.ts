@@ -31,6 +31,7 @@ function rememberedPage(): WorkspacePage {
   return WORKSPACE_PAGES.find((page) => page === kept) ?? 'edit'
 }
 import { editingSlice } from './slices/editing'
+import { effectsSlice } from './slices/effects'
 import type { EditorStore } from './types'
 
 // The store's public surface, unchanged for every importer.
@@ -141,7 +142,8 @@ export const useEditor = create<EditorStore>((set, get) => {
     ...timelineSlice(kit),
     ...itemsSlice(kit),
     ...viewSlice(kit),
-    ...editingSlice(kit)
+    ...editingSlice(kit),
+    ...effectsSlice(kit)
   }
 })
 

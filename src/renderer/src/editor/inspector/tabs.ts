@@ -101,6 +101,7 @@ export function tabForSection(id: string, shape: SelectionShape): InspectorTab |
       return 'title'
     case 'inspector.adjustments':
     case 'inspector.keyframes':
+    case 'inspector.effects':
       return 'effects'
     case 'inspector.grade':
       return 'color'

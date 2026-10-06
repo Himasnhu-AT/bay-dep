@@ -30,7 +30,8 @@ import type { Project, Timeline } from '@shared/project'
 import { findAsset, findTimeline, timelineDuration } from '@shared/project'
 import { exportScratchDir } from '../paths'
 import { ffmpegBin, ffprobeBin, MediaToolError, run } from '../ffmpeg/ffmpeg'
-import { buildAudioGraph, type CompositionSounds } from './audio-graph'
+import { bakesNeeded, buildAudioGraph, type CompositionSounds } from './audio-graph'
+import { renderBakes } from '../audio-fx/host'
 import { inspectComposition } from '../html/compositions'
 import type { CompositionSound } from '@shared/composition'
 import { checkExportDestination } from './destination'
@@ -412,10 +413,13 @@ async function sourceChannels(paths: readonly string[]): Promise<Map<string, num
 /** The job's audio graph, with its sources' channel counts probed first. */
 async function audioGraphFor(job: Job): Promise<ReturnType<typeof buildAudioGraph>> {
   const sounds = await declaredSounds(job)
-  const first = buildAudioGraph(job.project, job.timeline, job.fromFrame, job.toFrame, sounds)
+  // Dynamics and noise removal are rendered into processed files first (cached by content, so a
+  // clip the preview already played costs nothing); a bake that fails fails the export here.
+  const bakes = await renderBakes(bakesNeeded(job.project, job.timeline, job.fromFrame, job.toFrame))
+  const first = buildAudioGraph(job.project, job.timeline, job.fromFrame, job.toFrame, sounds, undefined, bakes)
   if (!first) return null
   const channels = await sourceChannels(first.inputs)
-  return buildAudioGraph(job.project, job.timeline, job.fromFrame, job.toFrame, sounds, channels)
+  return buildAudioGraph(job.project, job.timeline, job.fromFrame, job.toFrame, sounds, channels, bakes)
 }
 
 async function buildAudioTrack(job: Job): Promise<string | null> {

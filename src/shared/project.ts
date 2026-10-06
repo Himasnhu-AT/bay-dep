@@ -21,6 +21,8 @@ import type { BeatGrid } from './beats'
 import type { Grade, LutData } from './grade'
 import type { Mask, SubjectMatte } from './matte'
 import type { DeliverySettings } from './loudness'
+import type { AudioEffect } from './audio-effects'
+import type { Effect } from './effects/spec'
 
 /**
  * `lut` is a colour look-up table (`.cube`): it has no picture of its own and is never placed on a
@@ -563,6 +565,20 @@ export interface Item {
    * clip at the same source time. Absent is the fast path. Optional and additive.
    */
   masks?: Mask[]
+  /**
+   * Effects on this clip's sound, in order (`@shared/audio-effects`): equaliser bands, which run
+   * live in the preview and as ffmpeg filters in export from one table, and dynamics and noise
+   * removal, which are rendered once into a processed file both paths play. Before the clip's
+   * volume and fades. Absent, empty or all switched off costs nothing. Optional and additive.
+   */
+  audioEffects?: AudioEffect[]
+  /**
+   * Video effects (`@shared/effects`): an ordered stack of shader passes — blurs, glow, glitch,
+   * chroma key and the rest of the catalog — drawn by the compositor inside `#drawSource`, after
+   * the grade and before the masks, first entry first. Absent, empty, all switched off or all at
+   * their identity runs no pass. Optional and additive.
+   */
+  effects?: Effect[]
 }
 
 /**
@@ -644,6 +660,12 @@ export interface Track {
    */
   pan?: number
   items: Item[]
+  /**
+   * Effects on everything this track plays (`@shared/audio-effects`), after each clip's own.
+   * Equaliser bands run on the track's bus; a dynamics or noise-removal stage is applied to each
+   * clip of the track (`itemEffectPlan` says why). Absent is none. Optional and additive.
+   */
+  audioEffects?: AudioEffect[]
 }
 
 /**
