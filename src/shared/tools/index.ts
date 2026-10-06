@@ -12,6 +12,7 @@ import { tool as addTransition } from './add-transition'
 import { tool as applyDub } from './apply-dub'
 import { tool as applyScript } from './apply-script'
 import { tool as applyTextLook } from './apply-text-look'
+import { tool as audioEffects } from './audio-effects'
 import { tool as browseAssets } from './browse-assets'
 import { tool as checkFilm } from './check-film'
 import { tool as deleteItems } from './delete-items'
@@ -20,6 +21,7 @@ import { tool as detectBeats } from './detect-beats'
 import { tool as detectCuts } from './detect-cuts'
 import { tool as detectFootageMode } from './detect-footage-mode'
 import { tool as editAsset } from './edit-asset'
+import { tool as editEffects } from './edit-effects'
 import { tool as editItem } from './edit-item'
 import { tool as estimateSpeech } from './estimate-speech'
 import { tool as exportTimeline } from './export-timeline'
@@ -107,8 +109,10 @@ export const TOOLS: ToolSpec[] = [
   placeAsset,
   editAsset,
   editItem,
+  editEffects,
   applyTextLook,
   detachAudio,
+  audioEffects,
   putBehindSubject,
   trimItem,
   applyScript,

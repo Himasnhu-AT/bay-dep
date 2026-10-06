@@ -8,6 +8,7 @@ import { cn } from '@/lib/cn'
 import { useSelectedItems } from '@/lib/useSelectedItems'
 import { selectTimeline, useEditor } from '@/store/editor'
 import { AudioSection } from '../AudioSection'
+import { ClipAudioEffects, TrackAudioEffects } from './ClipAudioEffects'
 import { KeyDiamond, KeyNavigation, relativeFrame } from '../KeyframeControls'
 
 export interface AudioPanelProps {
@@ -63,6 +64,8 @@ export function AudioPanel({ className }: AudioPanelProps): ReactNode {
             }
           />
         )}
+        {timeline && <ClipAudioEffects items={soundItems} project={project} timeline={timeline} />}
+        {timeline && <TrackAudioEffects project={project} timeline={timeline} preferTrackId={single?.trackId} />}
         {timeline && <MixSummary project={project} timeline={timeline} />}
         </SectionBars>
       </ScrollArea>

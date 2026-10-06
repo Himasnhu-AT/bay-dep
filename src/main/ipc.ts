@@ -46,6 +46,7 @@ import { forgetPath, importDialog, importPaths } from './media/import'
 import { freezeFrame } from './media/freeze-frame'
 import { writeSfx } from './sfx/write'
 import { ensureSubjectMatte, subjectMattes } from './matte/host'
+import { ensureAudioBake } from './audio-fx/host'
 import { importFromUrl } from './media/url-import'
 import { isAllowed } from './protocol'
 import { vision } from './vision/host'
@@ -130,6 +131,7 @@ interface ChannelApi {
   mediaScoreSfx: BayApi['media']['scoreSfx']
   mediaSubjectMatte: BayApi['media']['subjectMatte']
   mediaSubjectMatteIndex: BayApi['media']['subjectMatteIndex']
+  mediaAudioEffectBake: BayApi['media']['audioEffectBake']
 
   projectInitial: BayApi['project']['initial']
   projectSave: BayApi['project']['save']
@@ -417,6 +419,7 @@ const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
   mediaScoreSfx: (_event, name, score) => writeSfx(generatedDir(), name, score),
   mediaSubjectMatte: (_event, request) => ensureSubjectMatte(request),
   mediaSubjectMatteIndex: (_event, key) => subjectMattes().index(key),
+  mediaAudioEffectBake: (_event, request) => ensureAudioBake(request),
 
   // The project restored at launch (or double-clicked in Finder) is an open too — but only one
   // read from a file; the empty project a first launch starts with is not.

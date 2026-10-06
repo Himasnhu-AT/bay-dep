@@ -3,12 +3,14 @@
 
 import type { Handlers } from './helpers'
 import { handlers as assetsHandlers } from './assets'
+import { handlers as audioEffectsHandlers } from './audioEffects'
 import { handlers as beatsHandlers } from './beats'
 import { handlers as brfHandlers } from './brf'
 import { handlers as captionsHandlers } from './captions'
 import { handlers as compositionsHandlers } from './compositions'
 import { handlers as cutsHandlers } from './cuts'
 import { handlers as dubHandlers } from './dub'
+import { handlers as effectsHandlers } from './effects'
 import { handlers as exportsHandlers } from './exports'
 import { handlers as feedbackHandlers } from './feedback'
 import { handlers as filmHandlers } from './film'
@@ -41,12 +43,14 @@ import { handlers as writeHandlers } from './write'
 /** Each module’s handlers, separately, so a tool claimed twice can be found. */
 export const HANDLER_GROUPS: Record<string, Handlers> = {
   'assets': assetsHandlers,
+  'audioEffects': audioEffectsHandlers,
   'beats': beatsHandlers,
   'brf': brfHandlers,
   'captions': captionsHandlers,
   'compositions': compositionsHandlers,
   'cuts': cutsHandlers,
   'dub': dubHandlers,
+  'effects': effectsHandlers,
   'exports': exportsHandlers,
   'feedback': feedbackHandlers,
   'film': filmHandlers,
@@ -80,12 +84,14 @@ export const HANDLER_GROUPS: Record<string, Handlers> = {
 /** Tool name → handler, for the dispatcher. */
 export const HANDLERS: Handlers = {
   ...assetsHandlers,
+  ...audioEffectsHandlers,
   ...beatsHandlers,
   ...brfHandlers,
   ...captionsHandlers,
   ...compositionsHandlers,
   ...cutsHandlers,
   ...dubHandlers,
+  ...effectsHandlers,
   ...exportsHandlers,
   ...feedbackHandlers,
   ...filmHandlers,
