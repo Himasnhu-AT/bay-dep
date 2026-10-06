@@ -591,7 +591,7 @@ test('describeIncomplete: grade issues are deduplicated with their own ranges, a
   const titleAt = report.message.indexOf('"Title"')
   assert.ok(gradeAt > 0 && titleAt > gradeAt, report.message)
   assert.match(report.message, /no WebGL2 \(frames 10-12\)/)
-  assert.match(report.message, /fix the grade, then export again/)
+  assert.match(report.message, /fix the grade or effect it names, then export again/)
   assert.match(report.message, /2 frames were written before everything on them had rendered/)
 })
 
@@ -666,6 +666,98 @@ test('frames written with a grade that could not run are reported, naming the cl
     assert.match(report.gradeIssues[0]?.issue ?? '', /itm_graded/)
     assert.deepEqual(report.items, [])
     assert.match(report.message, /itm_graded/)
+  } finally {
+    if (!hadDocument) delete (globalThis as { document?: unknown }).document
+  }
+})
+
+// The same promise for the effect stack, which draws in the grade's slot and reports through its
+// channel: with no WebGL2 to run a pass, a clip with a live effect is drawn without it and the
+// export says so — while a stack that resolves to nothing never attempts a pass, so it has
+// nothing to fail at. That second half is the `'none'` rule seen from the outside: were an idle
+// stack to reach the pass, this export would report it too.
+test('frames written with an effect that could not run are reported, and an idle stack is not', { timeout: 10_000 }, async () => {
+  class FakeImage extends (globalThis as unknown as { HTMLImageElement: new () => object }).HTMLImageElement {
+    complete = true
+    naturalWidth = 16
+    naturalHeight = 8
+    width = 16
+    height = 8
+    crossOrigin: string | null = null
+    decoding = 'auto'
+    src = ''
+    addEventListener(): void {}
+    removeEventListener(): void {}
+    removeAttribute(): void {}
+  }
+  const hadDocument = 'document' in globalThis
+  Object.defineProperty(globalThis, 'document', {
+    value: { createElement: () => new FakeImage() },
+    configurable: true,
+    writable: true
+  })
+  try {
+    const p = project()
+    p.assets.push({
+      id: 'ast_still',
+      kind: 'image',
+      name: 'still.png',
+      path: '/stills/still.png',
+      durationUs: 0,
+      width: 16,
+      height: 8,
+      fps: 0,
+      hasAudio: false,
+      hasVideo: true,
+      posterPath: null,
+      waveformPath: null,
+      createdAt: 1
+    })
+    const clip = (id: string, from: number, effects: Item['effects']): Item => ({
+      id,
+      assetId: 'ast_still',
+      trackId: 'v1',
+      from,
+      durationInFrames: 2,
+      sourceStartUs: 0,
+      layout: { left: 0, top: 0, width: 16, height: 8, opacity: 1, rotation: 0 },
+      volume: 1,
+      fadeInFrames: 0,
+      fadeOutFrames: 0,
+      speed: 1,
+      ...(effects ? { effects } : {})
+    })
+    const glow = { amount: 0.6, radius: 16, threshold: 0.6, color: '#FFFFFF' }
+    p.timelines[0]?.tracks[0]?.items.push(
+      // 0..1: a glow that draws.
+      clip('itm_glow', 0, [{ id: 'fx_on', kind: 'glow', params: glow }]),
+      // 2..3: the same glow at amount 0, and one switched off — nothing to draw.
+      clip('itm_idle', 2, [
+        { id: 'fx_zero', kind: 'glow', params: { ...glow, amount: 0 } },
+        { id: 'fx_off', kind: 'glow', enabled: false, params: glow }
+      ]),
+      // 4..5: an effect from a build this one is not.
+      clip('itm_newer', 4, [{ id: 'fx_new', kind: 'lens-flare', params: {} }]),
+      // 6..7: the plain control.
+      clip('itm_plain', 6, undefined)
+    )
+
+    const encoder = fakeEncoder()
+    encoder.install()
+    encoder.releaseAll()
+    const exporter = new FrameExporter({ project: p, timelineId: 'tl', jobId: 'job-fx1', fromFrame: 0, toFrame: 7, seekTimeoutMs: 5 })
+    const outcome = await exporter.run()
+    assert.equal(outcome.framesWritten, 8)
+    assert.ok(lastContext && lastContext.draws >= 8, 'every clip was drawn on every frame — without its effect, not missing')
+    const report = outcome.incomplete
+    assert.ok(report, 'an export that wrote a clip without its effects must not come back clean')
+    assert.deepEqual(report.ranges, [[0, 1], [4, 5]], 'the live effect and the unknown one; the idle stack and the plain clip are right as drawn')
+    const issues = report.gradeIssues.map((g) => g.issue)
+    assert.equal(issues.length, 2)
+    assert.ok(issues.some((issue) => /itm_glow was drawn without its effects/.test(issue)), issues.join(' | '))
+    assert.ok(issues.some((issue) => /itm_newer/.test(issue) && /lens-flare/.test(issue)), issues.join(' | '))
+    assert.ok(!issues.some((issue) => /itm_idle|itm_plain/.test(issue)), issues.join(' | '))
+    assert.match(report.message, /A grade or effect was not applied/)
   } finally {
     if (!hadDocument) delete (globalThis as { document?: unknown }).document
   }

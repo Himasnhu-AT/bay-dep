@@ -38,6 +38,7 @@ import type { WhisperDownload } from '@shared/whisper'
 import type { ClipboardPayload, PasteAttribute } from '@shared/clipboard'
 import type { FreezeResult } from '@shared/freeze-frame'
 import type { LoudnessTarget } from '@shared/loudness'
+import type { Effect, EffectParamValue } from '@shared/effects/spec'
 import type { AgentCheckpoint, AgentRevert } from './agent-turns'
 
 /** What `placeDub` lays down: lines on one audio track, and what happens to the original sound. */
@@ -679,6 +680,22 @@ export interface EditorActions {
    */
   beginGesture(): void
   endGesture(): void
+  /**
+   * A clip's video effect stack (`@shared/effects`, `slices/effects.ts`). Each is one undo step;
+   * a clip on a locked track is left alone; a value outside a parameter's range is refused with a
+   * toast and changes nothing. `addEffect` puts the effect last (drawn last) unless `index` says
+   * where, stores every parameter at its default under `params`, and returns the new effect's id.
+   */
+  addEffect(itemId: string, kind: string, options?: { params?: Record<string, EffectParamValue>; index?: number }): string | null
+  /** Merges `params` over the effect's own and, when `enabled` is given, switches it on or off. */
+  patchEffect(itemId: string, effectId: string, patch: { params?: Record<string, EffectParamValue>; enabled?: boolean }): void
+  /** Moves an effect to `toIndex` in the stack; 0 is drawn first. */
+  moveEffect(itemId: string, effectId: string, toIndex: number): void
+  removeEffect(itemId: string, effectId: string): void
+  /** Switches one effect off, or back on. Off, it stays in the stack and runs no pass. */
+  toggleEffect(itemId: string, effectId: string): void
+  /** Replaces the whole stack with one already checked (`applyEffectOps`); empty removes it. */
+  setEffects(itemId: string, effects: Effect[]): void
 }
 
 export type EditorStore = EditorState & EditorActions
