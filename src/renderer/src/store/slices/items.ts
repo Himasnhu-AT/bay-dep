@@ -8,6 +8,7 @@ import { rippleDelete, type RippleDeleteResult } from '@shared/ripple'
 import { splitItemAt } from '@shared/split'
 import { joinItems, noCutReason, type JoinResult } from '@shared/heal'
 import { planTrackMove } from '@shared/track-order'
+import { createBin, moveAssetsToBin, removeBin, renameBin } from '@shared/bins'
 import { applyRelinks } from '@shared/relink'
 import { shiftKeyframes, withKeyframe } from '@shared/keyframes'
 import { applyTrimPlan, planTrim, type TrimPlan } from '@shared/trim'
@@ -48,6 +49,10 @@ type Actions = Pick<
   | 'patchLayout'
   | 'setKeyframe'
   | 'addTrack'
+  | 'createBin'
+  | 'renameBin'
+  | 'removeBin'
+  | 'moveAssetsToBin'
   | 'removeTrack'
   | 'moveTrack'
   | 'joinItems'
@@ -702,6 +707,43 @@ export function itemsSlice({ set, get, edit, editTimeline, currentTimeline }: St
         if (next) found.item.keyframes = next
         else delete found.item.keyframes
       })
+    },
+
+    // -- bins --------------------------------------------------------------
+    // Each plans against the project as it is (so a refusal is an answer, not a silent no-op)
+    // and then runs the same function on the clone inside `edit()`.
+    createBin(name) {
+      const id = newId('bin')
+      const planned = createBin(clone(get().project), name, id)
+      if ('error' in planned) return planned
+      edit((project) => void createBin(project, name, id), { label: `New bin “${planned.bin.name}”` })
+      return planned
+    },
+
+    renameBin(binId, name) {
+      const planned = renameBin(clone(get().project), binId, name)
+      if ('error' in planned) return planned
+      edit((project) => void renameBin(project, binId, name), { label: `Rename bin “${planned.was}” to “${planned.bin.name}”` })
+      return planned
+    },
+
+    removeBin(binId) {
+      const planned = removeBin(clone(get().project), binId)
+      if ('error' in planned) return planned
+      edit((project) => void removeBin(project, binId), { label: `Remove bin “${planned.removed.name}”` })
+      return planned
+    },
+
+    moveAssetsToBin(assetIds, binId) {
+      const planned = moveAssetsToBin(clone(get().project), assetIds, binId)
+      if ('error' in planned) return planned
+      const count = planned.moved.length
+      edit((project) => void moveAssetsToBin(project, assetIds, binId), {
+        label: planned.bin
+          ? `Move ${count} asset${count === 1 ? '' : 's'} to “${planned.bin.name}”`
+          : `Take ${count} asset${count === 1 ? '' : 's'} out of ${count === 1 ? 'its bin' : 'their bins'}`
+      })
+      return planned
     },
 
     // -- tracks -------------------------------------------------------------

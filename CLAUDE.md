@@ -117,6 +117,23 @@ A value read through a store snapshot taken *before* an action is the old value:
 ~28 edits in the open project; unwinding `past` restores it. The fixture on disk only changes if
 something saves, and nothing a probe does should.
 
+**Autosave writes a sidecar, and stands down while a probe drives** (`@shared/autosave`,
+`lib/autosave.ts`, `main/project/persistence.ts`; Preferences › Editing › Autosave). A dirty
+project goes to `<file>.bay.autosave` (or `<userData>/autosave/<id>.bay.autosave` when never
+saved) 3 s after the last edit and at least every 30 s; opening a project whose sidecar's
+`updatedAt` is later than the file's offers Restore / Discard, and until that is answered nothing
+is autosaved, because the sidecar is the only copy of what is on offer. `attach()` in
+`test/app/cdp.mjs` holds `window.__bayProbeSnapshot` for as long as a probe drives; while it is
+there autosave neither writes, nor deletes, nor asks about recovery — judged when the timer
+fires, not when it was set. So **a probe of autosave itself must not `attach()`**: drive it with
+`agent-browser --session bay eval` on a scratch project, and say that is what you did. A probe
+killed before its restore leaves the snapshot behind and autosave paused until the window
+reloads (Preferences says so). Save, "Don't save" and undoing back to the saved state each
+remove the sidecar; a crash, a force quit and a quit with unsaved changes leave it. **Measured:**
+the scheduler, the offer for each sidecar state from literal files, and the store's side, under
+Node. **Not measured:** any of it in a running bay — `test/app/parity-structure.mjs` is written
+and unrun.
+
 **The in-app agent's sandbox is `--tools`, not a deny list.** Measured, each one:
 - `--setting-sources ''` does not stop MCP servers loading; only `--mcp-config` plus
   `--strict-mcp-config` isolates the agent to bay's tools.

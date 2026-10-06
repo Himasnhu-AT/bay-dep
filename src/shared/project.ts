@@ -137,6 +137,11 @@ export interface Asset {
    */
   subjectMattes?: SubjectMatte[]
   createdAt: number
+  /**
+   * The Media Pool bin this asset is listed in (`Project.bins`, `@shared/bins`). Absent is the
+   * top of the pool. Only where it is listed: nothing about a clip or the picture reads it.
+   */
+  binId?: string
   /** Set when probing failed; the asset still lists, but cannot be placed. */
   error?: string
 }
@@ -813,6 +818,17 @@ export interface Project {
    * the timeline lives in DaVinci Resolve and the agent drives it there.
    */
   host?: 'bay' | 'resolve'
+  /**
+   * Folders in the Media Pool, in the order they were made (`@shared/bins`). Absent is none, and
+   * a project with none has no key: additive, so an older build carries it through untouched.
+   */
+  bins?: Bin[]
+}
+
+/** A folder in the Media Pool. One level: a bin holds assets (`Asset.binId`), not other bins. */
+export interface Bin {
+  id: string
+  name: string
 }
 
 /**

@@ -34,6 +34,8 @@ import { audioFinishReport } from './audioFinish'
 import { resolveGrade } from '@shared/grade'
 import { describeKeyframes } from '@shared/keyframes'
 import { linkedPartners } from '@shared/links'
+import { binOf, binsOf } from '@shared/bins'
+import type { Bin } from '@shared/project'
 import { describeFont, importedFonts } from '@shared/fonts'
 
 function describeItem(item: Item): Record<string, unknown> {
@@ -132,8 +134,19 @@ export function browseAssets(): Record<string, unknown> {
       note: 'The media pool is empty. Use import_media with absolute paths before placing anything.'
     }
   }
+  const bins = binsOf(p)
+  const binSummary = (bin: Bin | null): { id: string; name: string } | null => (bin ? { id: bin.id, name: bin.name } : null)
   return {
     timeUnit: 'frames',
+    ...(bins.length > 0
+      ? {
+          bins: bins.map((bin) => ({
+            id: bin.id,
+            name: bin.name,
+            assetCount: p.assets.filter((asset) => binOf(p, asset)?.id === bin.id).length
+          }))
+        }
+      : {}),
     assets: p.assets.map((asset) => ({
       id: asset.id,
       name: asset.name,
@@ -149,6 +162,8 @@ export function browseAssets(): Record<string, unknown> {
       hasAudio: asset.hasAudio,
       // Only when import recorded it (1 mono, 2 stereo); older assets simply do not say.
       ...(asset.channels ? { channels: asset.channels } : {}),
+      // Only in a pool that has bins, and then on every asset: null is the top of the pool.
+      ...(bins.length > 0 ? { bin: binSummary(binOf(p, asset)) } : {}),
       ...(asset.error
         ? { error: asset.error, placeable: false }
         : asset.kind === 'font'

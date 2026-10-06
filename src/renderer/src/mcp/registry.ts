@@ -4,6 +4,7 @@
 import type { Handlers } from './helpers'
 import { handlers as assetsHandlers } from './assets'
 import { handlers as beatsHandlers } from './beats'
+import { handlers as binsHandlers } from './bins'
 import { handlers as brfHandlers } from './brf'
 import { handlers as captionsHandlers } from './captions'
 import { handlers as compositionsHandlers } from './compositions'
@@ -42,6 +43,7 @@ import { handlers as writeHandlers } from './write'
 export const HANDLER_GROUPS: Record<string, Handlers> = {
   'assets': assetsHandlers,
   'beats': beatsHandlers,
+  'bins': binsHandlers,
   'brf': brfHandlers,
   'captions': captionsHandlers,
   'compositions': compositionsHandlers,
@@ -81,6 +83,7 @@ export const HANDLER_GROUPS: Record<string, Handlers> = {
 export const HANDLERS: Handlers = {
   ...assetsHandlers,
   ...beatsHandlers,
+  ...binsHandlers,
   ...brfHandlers,
   ...captionsHandlers,
   ...compositionsHandlers,

@@ -30,6 +30,7 @@ import type { OpenSpanResult } from '@shared/insert-edit'
 import type { TrackMove } from '@shared/track-move'
 import type { TrackMoved } from '@shared/track-order'
 import type { JoinResult } from '@shared/heal'
+import type { Bin } from '@shared/project'
 import type { TrimPlan, TrimRefusal, TrimSpec } from '@shared/trim'
 import type { DetachResult, ReattachResult } from '@shared/links'
 import type { BehindSubjectResult, BehindSubjectSpec } from '@shared/behind-subject'
@@ -335,6 +336,15 @@ export interface EditorActions {
   // assets -------------------------------------------------------------------
   addAssets(assets: Asset[]): void
   removeAsset(assetId: string): void
+  /**
+   * Media Pool bins (`@shared/bins`): make one, rename it, remove it (what was in it goes back
+   * to the top of the pool; no media is removed), and file assets in one or — `binId` null — out
+   * of any. Each is one undo step and refuses, changing nothing, with a reason.
+   */
+  createBin(name: string): { bin: Bin } | { error: string }
+  renameBin(binId: string, name: string): { bin: Bin; was: string } | { error: string }
+  removeBin(binId: string): { removed: Bin; released: string[] } | { error: string }
+  moveAssetsToBin(assetIds: readonly string[], binId: string | null): { moved: string[]; alreadyThere: string[]; bin: Bin | null } | { error: string }
   /**
    * Change what an asset *is*, for every item that places it: its name, and for a text asset
    * the words it draws. An undoable edit, unlike `patchAsset`, which exists for poster and

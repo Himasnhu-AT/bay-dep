@@ -294,6 +294,11 @@ const TOOL_CASES: Record<string, ToolCase[]> = {
       args: () => ({ itemIds: state().project.timelines[0]!.tracks.flatMap((t) => t.items).filter((i) => i.from < 60).map((i) => i.id) })
     }
   ],
+  // A bin made by naming it, and an asset filed in it: two store calls, one step.
+  organize_assets: [
+    { delta: 1, args: () => ({ assetIds: [ASSET.id], bin: 'Footage' }) },
+    { delta: 1, args: () => ({ bin: 'Music' }) }
+  ],
   // A track that renames two others as it passes them: one step, names included.
   move_track: [{ delta: 1, args: (f) => ({ trackId: f.v1, position: 3 }) }],
   delete_items: [
@@ -697,6 +702,41 @@ const STORE_CASES: Record<string, StoreCase> = {
   },
   addTrack: { delta: 1, run: () => { state().addTrack('video') } },
   moveTrack: { delta: 1, run: (f) => { state().moveTrack(f.v1, 3) } },
+  createBin: { delta: 1, run: () => { state().createBin('Interviews') } },
+  renameBin: {
+    delta: 1,
+    run: () => {
+      const made = state().createBin('Interviews')
+      assert.ok('bin' in made)
+      const before = past()
+      state().renameBin(made.bin.id, 'Talking heads')
+      // Measured here rather than by the caller: making the bin is an edit too.
+      assert.equal(past() - before, 1)
+    }
+  },
+  moveAssetsToBin: {
+    delta: 1,
+    run: () => {
+      const made = state().createBin('Interviews')
+      assert.ok('bin' in made)
+      const before = past()
+      state().moveAssetsToBin([ASSET.id], made.bin.id)
+      assert.equal(past() - before, 1)
+    }
+  },
+  removeBin: {
+    delta: 1,
+    run: () => {
+      const made = state().createBin('Interviews')
+      assert.ok('bin' in made)
+      state().moveAssetsToBin([ASSET.id], made.bin.id)
+      // A second bin that stays: removing the only one puts the project back as it began.
+      state().createBin('Music')
+      const before = past()
+      state().removeBin(made.bin.id)
+      assert.equal(past() - before, 1)
+    }
+  },
   joinItems: {
     delta: 1,
     run: (f) => {
@@ -964,7 +1004,10 @@ for (const [action, spec] of Object.entries(STORE_CASES)) {
       'reattachAudio',
       'unlinkItems',
       'closeGapAt',
-      'joinItems'
+      'joinItems',
+      'renameBin',
+      'moveAssetsToBin',
+      'removeBin'
     ]
     if (!selfMeasured.includes(action)) {
       assert.equal(

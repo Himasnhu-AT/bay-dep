@@ -38,6 +38,7 @@ import { tool as listProjects } from './list-projects'
 import { tool as markHighlights } from './mark-highlights'
 import { tool as moveTrack } from './move-track'
 import { tool as openProject } from './open-project'
+import { tool as organizeAssets } from './organize-assets'
 import { tool as placeAsset } from './place-asset'
 import { tool as planDub } from './plan-dub'
 import { tool as previewFrame } from './preview-frame'
@@ -108,6 +109,7 @@ export const TOOLS: ToolSpec[] = [
   importUrl,
   placeAsset,
   editAsset,
+  organizeAssets,
   editItem,
   detachAudio,
   putBehindSubject,
