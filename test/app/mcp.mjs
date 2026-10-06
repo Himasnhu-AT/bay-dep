@@ -102,7 +102,10 @@ const placed = await call('place_asset', { assetId, atFrame: 0 })
 check('place_asset returns an item id', placed.ok === true && !!placed.value.itemId,
   placed.ok ? `${placed.value.itemId} on ${placed.value.trackName}` : placed.error)
 const itemId = placed.ok ? placed.value.itemId : null
-check('place_asset actually changed the store', await state('items.length') === 1)
+// Pictures, not items: a placed video's sound is its own linked clip on A1 by default, so the
+// one call makes two items. Counting items read 2 and called a working tool dead.
+check('place_asset actually changed the store', await state(`items.filter((i) => i.id === ${JSON.stringify(itemId)}).length`) === 1,
+  `${await state('items.length')} item(s) on the timeline`)
 
 // The ids a tool hands back must be the ids the other tools accept — the whole surface
 // depends on read_project's output being usable without translation.

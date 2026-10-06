@@ -198,6 +198,19 @@ export function dryRunRequest(spec: ToolSpec, args: Record<string, unknown>): Dr
 // ---------------------------------------------------------------------------
 
 /**
+ * Each id cut where it stops looking like any other in the list (and never shorter than 12):
+ * what to type instead. A fixed 12 characters named two clips made in one call by the same
+ * twelve, which is a hint that cannot be followed.
+ */
+export function distinguishingPrefixes(ids: readonly string[]): string[] {
+  return ids.map((id) => {
+    let length = 12
+    while (length < id.length && ids.some((other) => other !== id && other.startsWith(id.slice(0, length)))) length += 1
+    return id.slice(0, length)
+  })
+}
+
+/**
  * Resolve an id an agent gave us against the ids that exist.
  *
  * Accepts a prefix because a full uuid is a lot of tokens to copy accurately, and a model
@@ -222,7 +235,7 @@ export function resolveId(
       ok: false,
       error:
         `"${needle}" matches ${matches.length} ids — it is too short to be unambiguous. ` +
-        `Use more of the id: ${matches.map((m) => m.slice(0, 12)).join(', ')}.`
+        `Use more of the id: ${distinguishingPrefixes(matches).join(', ')}.`
     }
   }
   return {
