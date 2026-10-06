@@ -122,7 +122,7 @@ export interface LutData {
  * The asset kinds a grade can draw on: the ones the compositor paints as a picture source. Text
  * draws its own glyphs and audio has no picture, so a grade there would be stored and do nothing.
  */
-export const GRADEABLE_KINDS = ['video', 'image', 'gif', 'html', 'brf'] as const
+export const GRADEABLE_KINDS = ['video', 'image', 'gif', 'html', 'brf', 'adjustment'] as const
 
 export function isGradeableKind(kind: string | undefined): boolean {
   return (GRADEABLE_KINDS as readonly string[]).includes(kind ?? '')

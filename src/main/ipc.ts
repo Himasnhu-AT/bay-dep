@@ -514,7 +514,7 @@ function trackImports(imported: readonly ImportedAsset[]): readonly ImportedAsse
   for (const { asset, reused } of imported) {
     if (!reused && !asset.error) counts.set(asset.kind, (counts.get(asset.kind) ?? 0) + 1)
   }
-  for (const [kind, count] of counts) telemetry.track('import_media', { kind: kind as AssetKind, count })
+  for (const [kind, count] of counts) telemetry.track('import_media', { kind: kind as Exclude<AssetKind, 'adjustment'>, count })
   return imported
 }
 

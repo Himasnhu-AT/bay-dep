@@ -44,6 +44,7 @@ import { TRIM_TOOL_MODES, useTimelineTool } from '@/lib/timelineTool'
 import { pointerHint } from '@/lib/pointerHint'
 import { planTrackShift, type TrackMove } from '@shared/track-move'
 import { applyRippleTrim, rippleHeadRoom } from './timeline/rippleTrim'
+import { addAdjustmentLayerHere } from './AdjustmentLayerButton'
 
 const CLIP_MENU_PAGE_NAME: Record<ClipMenuPage, string> = { main: '', trim: 'Trim', audio: 'Audio', ripple: 'Ripple Delete' }
 
@@ -903,6 +904,11 @@ export function Timeline(): ReactNode {
                   : 'Add text here',
             disabled: laneMenuTrack.kind !== 'video' || laneMenuTrack.locked,
             onSelect: () => addTextAt(laneMenu.frame, laneMenuTrack.id)
+          },
+          {
+            // Always above everything, whichever lane was clicked: a layer changes the tracks below it.
+            label: 'Add adjustment layer at this frame',
+            onSelect: () => addAdjustmentLayerHere(laneMenu.frame)
           },
           {
             label: 'Add marker here',

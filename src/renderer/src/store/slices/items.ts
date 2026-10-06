@@ -11,6 +11,8 @@ import { shiftKeyframes, withKeyframe } from '@shared/keyframes'
 import { applyTrimPlan, planTrim, type TrimPlan } from '@shared/trim'
 import { detachAudio, linkedPartners, reattachAudio, unlinkItems, withLinked } from '@shared/links'
 import { CUTOUT_PICTURE_FIELDS, cutoutPartner, planBehindSubject, type BehindSubjectResult } from '@shared/behind-subject'
+import { checkMasks } from '@shared/matte'
+import { planAdjustmentLayer, type AdjustmentLayerResult } from '@shared/adjustment-layer'
 import { describeDuplicate, duplicateClips, type DuplicateResult } from '@shared/clipboard'
 import { formatTimecode } from '@shared/timecode'
 import { applySpeedPlan, planSpeed, retimedLength, type SpeedPlan } from '@shared/speed'
@@ -45,6 +47,8 @@ type Actions = Pick<
   | 'putBehindSubject'
   | 'patchLayout'
   | 'setKeyframe'
+  | 'setShapeMasks'
+  | 'addAdjustmentLayer'
   | 'addTrack'
   | 'removeTrack'
   | 'patchTrack'
@@ -698,6 +702,50 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
         if (next) found.item.keyframes = next
         else delete found.item.keyframes
       })
+    },
+
+    setShapeMasks(itemId, masks) {
+      editTimeline((timeline) => {
+        const found = findItem(timeline, pictureTarget(timeline, itemId))
+        if (!found || found.track.locked) return
+        // The subject mask, if the clip has one, stays first; the shapes after it are replaced.
+        const subject = found.item.masks?.filter((mask) => mask.kind === 'subject') ?? []
+        const checked = checkMasks([...subject, ...masks.filter((mask) => (mask as { kind: string }).kind !== 'subject')])
+        // A list the compositor could not draw is never stored: the clip would be a grey card.
+        if (!checked.ok) return
+        if (checked.masks.length === 0) delete found.item.masks
+        else found.item.masks = checked.masks
+      })
+    },
+
+    addAdjustmentLayer(spec) {
+      const state = get()
+      const active = activeTimeline(state.project)
+      if (!active) return { ok: false, error: 'No timeline is open.' }
+      // With clips selected and no span given, the layer covers them; otherwise it starts at the
+      // playhead and runs for a still's default length (Preferences › Editing).
+      const chosen = spec?.from === undefined && spec?.durationInFrames === undefined
+        ? state.selection.map((id) => findItem(active, id)?.item).filter((item): item is Item => item !== undefined)
+        : []
+      const start = chosen.length > 0 ? Math.min(...chosen.map((item) => item.from)) : (spec?.from ?? state.playhead)
+      const length = chosen.length > 0
+        ? Math.max(...chosen.map((item) => itemEnd(item))) - start
+        : (spec?.durationInFrames ?? stillDurationFrames(active.fps))
+      const holder: { value: AdjustmentLayerResult } = { value: { ok: false, error: 'No timeline is open.' } }
+      editTimeline((tl, project) => {
+        holder.value = planAdjustmentLayer(project, tl, { from: start, durationInFrames: length, ...(spec?.trackId ? { trackId: spec.trackId } : {}) }, {
+          makeId: newId,
+          now: Date.now,
+          makeVideoTrack: (timeline) => {
+            const track = makeTrack('video', 1)
+            track.name = nextTrackName(timeline, 'video')
+            return track
+          }
+        })
+      })
+      const result = holder.value
+      if (result.ok) set({ selection: [result.itemId] })
+      return result
     },
 
     // -- tracks -------------------------------------------------------------

@@ -200,6 +200,8 @@ export function inspectItem(args: Record<string, unknown>): Record<string, unkno
     // Same absent-means-unset convention: a grade that exists is reported whole, with whether the
     // compositor will actually run it, since an all-neutral grade is stored and changes nothing.
     ...(item.grade ? { grade: item.grade, gradeActive: resolveGrade(item.grade) !== null } : {}),
+    // Masks as stored: a subject cut-out's `{ kind: 'subject' }`, then any shapes, in the order they combine.
+    ...(item.masks ? { masks: item.masks } : {}),
     // `edit_item` accepts `crop` and `variables`, and this reported neither — so an agent could
     // set them and had no way to read them back. That breaks three things at once: it cannot
     // verify its own edit, it cannot make a relative change ("crop a little more"), and it

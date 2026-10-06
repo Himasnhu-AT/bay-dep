@@ -11,7 +11,8 @@ import {
   Plus,
   Sparkles,
   Type as TypeIcon,
-  type LucideIcon
+  type LucideIcon,
+  SlidersHorizontal
 } from 'lucide-react'
 import type { Asset, AssetKind } from '@shared/project'
 import { assetFacts } from '@shared/media-library'
@@ -41,7 +42,8 @@ const KIND_ICON: Record<AssetKind, LucideIcon> = {
   html: Code2,
   brf: Sparkles,
   lut: Palette,
-  font: TypeIcon
+  font: TypeIcon,
+  adjustment: SlidersHorizontal
 }
 
 /**
@@ -57,7 +59,8 @@ const KIND_NOTE: Record<AssetKind, string> = {
   html: 'HTML composition',
   brf: 'Motion graphic',
   lut: 'Colour LUT',
-  font: 'Font'
+  font: 'Font',
+  adjustment: 'Changes the tracks below it'
 }
 
 /** A font or LUT is applied from elsewhere, never placed: it gets no + and no double-click. */

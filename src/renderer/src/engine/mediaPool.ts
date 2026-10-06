@@ -122,6 +122,9 @@ function elementKindFor(asset: Asset): 'video' | 'audio' | 'image' | null {
     case 'font':
       // A typeface, registered as a FontFace (`engine/importedFonts.ts`). Never placed.
       return null
+    case 'adjustment':
+      // An adjustment layer draws the frame under it (`engine/adjustmentLayer.ts`); nothing to load.
+      return null
     case 'html':
       // A composition has no media element. It is a page that gets seeked and captured, and
       // its frames arrive as bitmaps from the composition pool — giving it a <video> or an

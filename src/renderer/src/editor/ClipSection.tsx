@@ -26,7 +26,8 @@ const KIND_LABEL: Record<Asset['kind'], string> = {
   html: 'Composition',
   brf: 'Motion graphic',
   lut: 'LUT',
-  font: 'Font'
+  font: 'Font',
+  adjustment: 'Adjustment layer'
 }
 
 /**

@@ -327,6 +327,8 @@ const TOOL_CASES: Record<string, ToolCase[]> = {
     { delta: 1, before: (f) => { state().detachAudio([f.a, f.c]) }, args: (f) => ({ itemIds: [f.a, f.c], action: 'reattach' }) }
   ],
   add_track: [{ delta: 1, args: () => ({ kind: 'audio' }) }],
+  // A new asset, a new track above everything and the layer's clip on it: three changes, one step.
+  add_adjustment_layer: [{ delta: 1, args: () => ({ from: 0, durationInFrames: 90 }) }],
   add_transition: [
     { delta: 1, args: (f) => ({ fromItemId: f.a, toItemId: f.b, kind: 'cross-dissolve' }) }
   ],
@@ -667,6 +669,14 @@ const STORE_CASES: Record<string, StoreCase> = {
   patchLayout: { delta: 1, run: (f) => state().patchLayout(f.a, { left: 10, opacity: 0.5 }) },
   setCrop: { delta: 1, run: (f) => state().setCrop(f.a, 'left', 0.1) },
   setKeyframe: { delta: 1, run: (f) => state().setKeyframe(f.a, 'scale', 10, 1.1) },
+  setShapeMasks: { delta: 1, run: (f) => state().setShapeMasks(f.a, [{ kind: 'ellipse', x: 0.5, y: 0.5, width: 0.5, height: 0.5 }]) },
+  addAdjustmentLayer: {
+    delta: 1,
+    run: () => {
+      const result = state().addAdjustmentLayer({ from: 0, durationInFrames: 90 })
+      assert.ok(result.ok, JSON.stringify(result))
+    }
+  },
   setCompositionVariable: {
     delta: 1,
     run: () => {

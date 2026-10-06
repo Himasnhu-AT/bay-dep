@@ -43,6 +43,7 @@ import { selectTimeline, useEditor } from '@/store/editor'
 import type { InspectorTab } from '@/store/types'
 import { AdjustmentsSection, BlendSection, adjustmentsTouched } from './AdjustmentsSection'
 import { GradeSection } from './GradeSection'
+import { MasksSection } from './MasksSection'
 import { isGradeableKind } from '@shared/grade'
 import { CompositionSection } from './CompositionSection'
 import { TextStyleSection } from './TextStyleSection'
@@ -704,6 +705,9 @@ export function Inspector(): ReactNode {
           </div>
         </Section>
       )}
+
+      {/* Shape masks reach what a crop reaches: a drawn source. */}
+      {sourceItems.length > 0 && <MasksSection items={sourceItems} />}
 
       <BlendSection items={visualItems} timeline={timeline} title="Composite" />
       {retime}

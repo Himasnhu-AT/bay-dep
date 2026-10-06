@@ -2,6 +2,7 @@
 // A module takes part by exporting `handlers: Handlers`; then run `pnpm gen:tools`.
 
 import type { Handlers } from './helpers'
+import { handlers as adjustmentLayerHandlers } from './adjustmentLayer'
 import { handlers as assetsHandlers } from './assets'
 import { handlers as beatsHandlers } from './beats'
 import { handlers as brfHandlers } from './brf'
@@ -39,6 +40,7 @@ import { handlers as writeHandlers } from './write'
 
 /** Each module’s handlers, separately, so a tool claimed twice can be found. */
 export const HANDLER_GROUPS: Record<string, Handlers> = {
+  'adjustmentLayer': adjustmentLayerHandlers,
   'assets': assetsHandlers,
   'beats': beatsHandlers,
   'brf': brfHandlers,
@@ -77,6 +79,7 @@ export const HANDLER_GROUPS: Record<string, Handlers> = {
 
 /** Tool name → handler, for the dispatcher. */
 export const HANDLERS: Handlers = {
+  ...adjustmentLayerHandlers,
   ...assetsHandlers,
   ...beatsHandlers,
   ...brfHandlers,

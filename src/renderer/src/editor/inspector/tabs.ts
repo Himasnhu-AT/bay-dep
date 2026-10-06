@@ -91,6 +91,7 @@ export function tabForSection(id: string, shape: SelectionShape): InspectorTab |
       return shape.visual > 0 ? 'video' : 'audio'
     case 'inspector.transform':
     case 'inspector.crop':
+    case 'inspector.masks':
     case 'inspector.blend':
       return 'video'
     case 'inspector.type':
