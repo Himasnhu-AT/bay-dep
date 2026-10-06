@@ -10,6 +10,7 @@ import { handlers as captionsHandlers } from './captions'
 import { handlers as compositionsHandlers } from './compositions'
 import { handlers as cutsHandlers } from './cuts'
 import { handlers as dubHandlers } from './dub'
+import { handlers as effectsHandlers } from './effects'
 import { handlers as exportsHandlers } from './exports'
 import { handlers as feedbackHandlers } from './feedback'
 import { handlers as filmHandlers } from './film'
@@ -48,6 +49,7 @@ export const HANDLER_GROUPS: Record<string, Handlers> = {
   'compositions': compositionsHandlers,
   'cuts': cutsHandlers,
   'dub': dubHandlers,
+  'effects': effectsHandlers,
   'exports': exportsHandlers,
   'feedback': feedbackHandlers,
   'film': filmHandlers,
@@ -87,6 +89,7 @@ export const HANDLERS: Handlers = {
   ...compositionsHandlers,
   ...cutsHandlers,
   ...dubHandlers,
+  ...effectsHandlers,
   ...exportsHandlers,
   ...feedbackHandlers,
   ...filmHandlers,

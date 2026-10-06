@@ -22,6 +22,7 @@ import type { Grade, LutData } from './grade'
 import type { Mask, SubjectMatte } from './matte'
 import type { DeliverySettings } from './loudness'
 import type { AudioEffect } from './audio-effects'
+import type { Effect } from './effects/spec'
 
 /**
  * `lut` is a colour look-up table (`.cube`): it has no picture of its own and is never placed on a
@@ -566,6 +567,13 @@ export interface Item {
    * volume and fades. Absent, empty or all switched off costs nothing. Optional and additive.
    */
   audioEffects?: AudioEffect[]
+  /**
+   * Video effects (`@shared/effects`): an ordered stack of shader passes — blurs, glow, glitch,
+   * chroma key and the rest of the catalog — drawn by the compositor inside `#drawSource`, after
+   * the grade and before the masks, first entry first. Absent, empty, all switched off or all at
+   * their identity runs no pass. Optional and additive.
+   */
+  effects?: Effect[]
 }
 
 /**

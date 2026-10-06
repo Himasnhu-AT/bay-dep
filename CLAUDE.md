@@ -442,6 +442,39 @@ screened in RGB: in YUV it casts violet. A render target created while its textu
 for reading is a WebGL feedback loop — the first halation draw of every new size failed until
 `target()` unbound it; `test/app/grade.mjs` caught it as an export/preview mismatch.
 
+**Video effects are an ordered stack of shader passes in the grade's slot, and what the stack
+leaves out is as deliberate as what it has** (`item.effects`, `@shared/effects/`, `engine/effects.ts`,
+`engine/effectShaders.ts`, `edit_effects`). A clip draws grade → effects, first to last → mask →
+adjustments and blend, all inside `#drawSource`, so preview, `preview_frame` and export run one
+implementation. An effect is a file in `src/shared/effects/` declaring typed parameters (number,
+`#RRGGBB`, `[x, y]` point, boolean — nothing else, so each is addressable as
+`effects[<id>].<param>` for a keyframe pass that does not exist yet) plus passes of the same kind
+in `effectShaders.ts`; `catalog.test.ts` and `effectShaders.test.ts` fail when a file is missing
+from the index, a kind has no shader, or a plan sets a uniform its shader does not declare. Twelve
+ship: chroma-key, directional-blur, zoom-blur, sharpen, glow, chromatic-aberration, pixelate,
+glitch, duotone, tint, flip, mirror. **Not in the stack, because each already has one mapping:**
+an even blur is `adjustments.blur` (a CSS filter, drawn last), and vignette, grain and halation
+are the grade's — a second "gaussian blur" or "vignette" would be the duplicated-mapping fault
+again. Glow stays although halation is its cousin: halation is fixed in the grade's order and
+tinted like film, glow can follow a key and spreads past a transparent edge. `resolveEffects` is
+the one reading of a stack: switched off or at its identity is not in the list, and a stack of
+nothing resolves to `null` — no pass, no upload. The passes run in the grade's WebGL context with
+programs and a vertex array of their own; the rules for sharing it are at the top of
+`effects.ts` (units 0 and 1 only — the grade keeps its curve and LUT bound on 3 and 4 and re-binds
+them only when they change; make unit 0 active before `target()`; unbind both units and the VAO
+afterwards). With a grade, the grade draws into a target (`GradeRequest.into`) and the stack
+starts from it. Textures are premultiplied throughout, which is what makes a blur across a keyed
+edge and the key's own output composite without a fringe. Glitch is a function of the timeline
+frame and a seed through the grade's `grainHash`, never a clock. A stack that cannot run — a shader
+that will not compile, no WebGL2, an effect kind from a newer build — is reported through
+`DrawStats.gradeIssues`, so `preview_frame` says so under `gradeWarnings` and an export that wrote
+the frame is `complete: false`. `edit_effects` and the store's actions both go through
+`applyEffectOps`, which refuses an out-of-range value naming the range; the draw clamps what
+arrives some other way. **Measured: only under Node** — parameter checks, identity, order, the
+plans, the arithmetic the GLSL is written from (`@shared/effects/math`), and the reporting when
+no pass can run. **Not measured: any pixel.** No shader here has been compiled; `test/app/effects.mjs`
+compares preview, `preview_frame` and export per effect and is marked unrun.
+
 **Text behind the subject is a subject matte, a linked cut-out and one shared element**
 (`@shared/matte`, `@shared/behind-subject`, `main/matte/`, `engine/subjectMatte.ts`,
 `engine/subjectMask.ts`, `put_behind_subject`). Apple Vision person segmentation runs in one

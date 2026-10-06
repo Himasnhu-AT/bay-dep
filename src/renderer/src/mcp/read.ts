@@ -33,6 +33,7 @@ import {
 import { fail, project, resolveItem, store, timeline, usToFramesAtTimeline, type Handlers } from './helpers'
 import { audioFinishReport } from './audioFinish'
 import { resolveGrade } from '@shared/grade'
+import { describeEffects } from './effects'
 import { describeKeyframes } from '@shared/keyframes'
 import { linkedPartners } from '@shared/links'
 import { describeFont, importedFonts } from '@shared/fonts'
@@ -203,6 +204,9 @@ export function inspectItem(args: Record<string, unknown>): Record<string, unkno
     // Same absent-means-unset convention: a grade that exists is reported whole, with whether the
     // compositor will actually run it, since an all-neutral grade is stored and changes nothing.
     ...(item.grade ? { grade: item.grade, gradeActive: resolveGrade(item.grade) !== null } : {}),
+    // The effect stack in draw order, each with its id (what edit_effects addresses) and whether
+    // it will run a pass. Absent means the clip has none.
+    ...(item.effects && item.effects.length > 0 ? { effects: describeEffects(item) } : {}),
     // `edit_item` accepts `crop` and `variables`, and this reported neither — so an agent could
     // set them and had no way to read them back. That breaks three things at once: it cannot
     // verify its own edit, it cannot make a relative change ("crop a little more"), and it

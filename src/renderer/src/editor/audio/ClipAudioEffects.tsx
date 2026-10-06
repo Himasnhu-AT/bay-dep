@@ -24,7 +24,7 @@ export function ClipAudioEffects({
   const track = timeline.tracks.find((t) => t.id === item.trackId)
   if (own.length > 1 || !track) {
     return (
-      <Section title="Effects" collapsible id="audio-effects-clip">
+      <Section title="Audio effects" collapsible id="audio-effects-clip">
         <p className="text-[11px] text-pretty text-ink-2">
           Select one clip to edit its effects. To give several clips the same effects, put them on the clips’ track
           — Audio page, Track effects.
@@ -37,7 +37,7 @@ export function ClipAudioEffects({
       key={item.id}
       target={{ itemId: item.id }}
       effects={item.audioEffects}
-      title="Effects"
+      title="Audio effects"
       clips={[{ item, track }]}
       project={project}
     />

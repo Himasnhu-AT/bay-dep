@@ -350,8 +350,9 @@ export function describeIncomplete(wrong: readonly WrittenFrameIssues[]): Incomp
   const parts: string[] = [`${frames} frame${frames === 1 ? '' : 's'} of this export ${frames === 1 ? 'is' : 'are'} not the picture the timeline describes (${spellRanges(ranges)}).`]
   if (gradeIssues.length > 0) {
     parts.push(
-      `A grade was not applied: ${gradeIssues.map((g) => `${g.issue} (${spellRanges(g.ranges)})`).join('; ')}. ` +
-        `preview_frame at one of those frames reports the same under gradeWarnings; fix the grade, then export again.`
+      // Effects report here too (`#drawSource`): the same kind of fault — a pass that did not run.
+      `A grade or effect was not applied: ${gradeIssues.map((g) => `${g.issue} (${spellRanges(g.ranges)})`).join('; ')}. ` +
+        `preview_frame at one of those frames reports the same under gradeWarnings; fix the grade or effect it names, then export again.`
     )
   }
   if (items.length > 0) {
