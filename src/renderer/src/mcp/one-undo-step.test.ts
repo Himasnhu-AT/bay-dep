@@ -291,6 +291,20 @@ const TOOL_CASES: Record<string, ToolCase[]> = {
   // Two pauses removed, each a ripple across every track: one step.
   remove_silences: [{ delta: 1, args: (f) => ({ itemId: f.d }) }],
   set_item_enabled: [{ delta: 1, args: (f) => ({ itemIds: [f.a, f.c, f.d], enabled: false }) }],
+  // Three effects added and one of them changed and moved, in one batch: one step.
+  edit_effects: [
+    {
+      delta: 1,
+      args: (f) => ({
+        itemId: f.a,
+        operations: [
+          { op: 'add', kind: 'glow' },
+          { op: 'add', kind: 'flip' },
+          { op: 'add', kind: 'pixelate', params: { size: 24 }, index: 0 }
+        ]
+      })
+    }
+  ],
   // Detaching both angles' sound, then razoring and disabling both: one step.
   switch_speakers: [
     { delta: 1, args: (f) => ({ angles: [{ videoItemId: f.a }, { videoItemId: f.c }], thresholdDb: -40, minShotSec: 0.2 }) }
@@ -851,6 +865,49 @@ const STORE_CASES: Record<string, StoreCase> = {
   openSpan: { delta: 1, run: () => { state().openSpan(15, 10, 'insert') } },
   // The still and the insert across every track, one step (`@shared/freeze-frame`).
   setItemsEnabled: { delta: 1, run: (f) => { state().setItemsEnabled([f.a, f.c, f.d], false) } },
+  // The effect stack (`slices/effects.ts`). Each needs an effect to act on, so each measures its
+  // own step after adding one.
+  addEffect: { delta: 1, run: (f) => { state().addEffect(f.a, 'glow') } },
+  setEffects: { delta: 1, run: (f) => { state().setEffects(f.a, [{ id: 'fx_set', kind: 'flip', params: { horizontal: true, vertical: false } }]) } },
+  patchEffect: {
+    delta: 1,
+    run: (f) => {
+      const id = state().addEffect(f.a, 'glow') ?? ''
+      const before = past()
+      state().patchEffect(f.a, id, { params: { amount: 1.2 } })
+      assert.equal(past() - before, 1)
+    }
+  },
+  moveEffect: {
+    delta: 1,
+    run: (f) => {
+      const id = state().addEffect(f.a, 'glow') ?? ''
+      state().addEffect(f.a, 'flip')
+      const before = past()
+      state().moveEffect(f.a, id, 1)
+      assert.equal(past() - before, 1)
+    }
+  },
+  removeEffect: {
+    delta: 1,
+    run: (f) => {
+      // A second effect stays, so the project is not back to what it was before the run.
+      state().addEffect(f.a, 'flip')
+      const id = state().addEffect(f.a, 'glow') ?? ''
+      const before = past()
+      state().removeEffect(f.a, id)
+      assert.equal(past() - before, 1)
+    }
+  },
+  toggleEffect: {
+    delta: 1,
+    run: (f) => {
+      const id = state().addEffect(f.a, 'glow') ?? ''
+      const before = past()
+      state().toggleEffect(f.a, id)
+      assert.equal(past() - before, 1)
+    }
+  },
   // Two angles razored and disabled: one step.
   applyAngleSwitch: {
     delta: 1,
@@ -936,7 +993,11 @@ for (const [action, spec] of Object.entries(STORE_CASES)) {
       'removeComment',
       'reattachAudio',
       'unlinkItems',
-      'closeGapAt'
+      'closeGapAt',
+      'patchEffect',
+      'moveEffect',
+      'removeEffect',
+      'toggleEffect'
     ]
     if (!selfMeasured.includes(action)) {
       assert.equal(

@@ -12,27 +12,29 @@
  * edge. The hole and the add use the same coverage canvas (`ShapeMaskCache`), so they cancel
  * where the layer changes nothing.
  *
- * **The seam for the effect stack:** the snapshot goes through `#drawSource` as any clip's
- * picture does, so whatever that function applies to an item — today the grade, shape masks and
- * the CSS adjustments — applies to a layer. An `effects` list read there needs nothing here but
- * its line in `adjustmentChangesPicture`, which already counts a non-empty `effects` array as a
- * change so such a layer is never skipped.
+ * **The effect stack reaches a layer through the same door:** the snapshot goes through
+ * `#drawSource` as any clip's picture does, so whatever that function applies to an item — the
+ * grade, the effect stack (`effects.ts`), shape masks and the CSS adjustments — applies to a
+ * layer with no code of its own. The one line here that knows effects exist is in
+ * `adjustmentChangesPicture`: a layer whose only look is an effect must not be skipped.
  */
 
 import type { BlendMode, Item } from '@shared/project'
 import { resolveGrade } from '@shared/grade'
+import { resolveEffects } from '@shared/effects/resolve'
 import { adjustmentFilter, NO_FILTER } from './looks'
 
 /**
- * Whether drawing this layer could change a pixel. A layer with no grade (or an all-neutral one)
- * and identity adjustments would copy the frame and add it back unchanged; skipping it is what
- * makes an untouched layer free.
+ * Whether drawing this layer could change a pixel. A layer with no grade (or an all-neutral one),
+ * identity adjustments and no effect that draws would copy the frame and add it back unchanged;
+ * skipping it is what makes an untouched layer free.
  */
 export function adjustmentChangesPicture(item: Item): boolean {
   if (item.grade && resolveGrade(item.grade) !== null) return true
   if (adjustmentFilter(item.adjustments) !== NO_FILTER) return true
-  const effects = (item as { effects?: unknown }).effects
-  return Array.isArray(effects) && effects.length > 0
+  // A stack with something to draw, or something to report (an effect this build lacks): the
+  // same test `#drawSource` applies before running the pass.
+  return resolveEffects(item.effects) !== null
 }
 
 export interface AdjustmentPlan {

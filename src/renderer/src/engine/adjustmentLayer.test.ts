@@ -197,8 +197,11 @@ test('a layer with no look is skipped: nothing copied, nothing drawn, the frame 
   assert.equal(busy.stats.drawn, plain.stats.drawn + 1)
   assert.ok(busy.ctx.sources.length > plain.ctx.sources.length)
   assert.equal(adjustmentChangesPicture(layer(INVERT)), true)
-  // A layer carrying effects is never skipped, whatever else it has — the effect stack's seam.
-  assert.equal(adjustmentChangesPicture({ ...layer(), effects: [{ kind: 'blur' }] } as unknown as Item), true)
+  // A layer whose only look is an effect is not skipped; one whose effects are all switched off is.
+  assert.equal(adjustmentChangesPicture(layer({ effects: [{ id: 'fx_1', kind: 'flip', params: { horizontal: true } }] })), true)
+  assert.equal(adjustmentChangesPicture(layer({ effects: [{ id: 'fx_1', kind: 'flip', enabled: false, params: { horizontal: true } }] })), false)
+  // An effect this build does not have is something to report, so the layer is still drawn.
+  assert.equal(adjustmentChangesPicture(layer({ effects: [{ id: 'fx_2', kind: 'not-an-effect' }] } as unknown as Partial<Item>)), true)
 })
 
 // -- when it cannot be applied ---------------------------------------------------------------------

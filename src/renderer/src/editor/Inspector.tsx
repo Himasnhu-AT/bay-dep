@@ -54,6 +54,7 @@ import { CLIP_SPEED_RANGE, retimedLength, speedNote, type SpeedPlan } from '@sha
 import { AudioSection } from './AudioSection'
 import { ClipSection, Readout } from './ClipSection'
 import { KeyframesSection } from './KeyframesSection'
+import { EffectStackSection, effectsTouched } from './EffectStackSection'
 import { chooseTab, inspectorTabs, tabForSection, type SelectionShape } from './inspector/tabs'
 import { TimelineTab } from './inspector/TimelineTab'
 import { TransitionTab, transitionCount } from './inspector/TransitionTab'
@@ -398,7 +399,7 @@ export function Inspector(): ReactNode {
   const badges: Partial<Record<InspectorTab, number>> = {
     video: [transformTouched, cropped, blended, visualItems.length > 0 && retimed].filter(Boolean).length,
     audio: soundTouched ? 1 : 0,
-    effects: [visualItems.length > 0 && adjustmentsTouched(visualItems), animated].filter(Boolean).length,
+    effects: [visualItems.length > 0 && adjustmentsTouched(visualItems), animated, effectsTouched(sourceItems)].filter(Boolean).length,
     transition: transitionCount(project, timeline, visualItems),
     color: graded ? 1 : 0
   }
@@ -777,6 +778,9 @@ export function Inspector(): ReactNode {
     <>
       {/* Adjustments apply to anything with a picture, text included (its glyphs are drawn
           through the same look). Audio-only items have nothing to filter. Blend is in Video. */}
+      {/* The shader stack, on what has a picture to run it over (a title draws its own glyphs). First,
+          because it is drawn before the adjustments below it. */}
+      {sourceItems.length > 0 && <EffectStackSection items={sourceItems} />}
       {visualItems.length > 0 && <AdjustmentsSection items={visualItems} timeline={timeline} blend={false} />}
       <KeyframesSection items={selected} />
       {visualItems.length === 0 && !hasKeyframes && (

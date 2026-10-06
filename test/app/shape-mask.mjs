@@ -17,8 +17,8 @@
  *   3. the mask follows the clip: a crop leaves it on the picture, a zoom scales it;
  *   4. export: the same frame decoded from the encoded file matches `preview_frame`, inside,
  *      outside and across the ramp;
- *   5. adjustment layer: a grade on a layer equals the grade on the single full-frame clip under
- *      it; through a mask it changes only inside; the export matches;
+ *   5. adjustment layer: a grade (and an effect) on a layer equals the same on the single
+ *      full-frame clip under it; through a mask it changes only inside; the export matches;
  *   6. the agent's surface: `edit_item.masks` and `add_adjustment_layer`, with a refusal read for
  *      its content beside a legal call.
  *
@@ -154,6 +154,15 @@ await runProbe(async () => {
   const sharp = await samples([[{ asset: red, masks: [{ kind: 'rect', x: 0.25, y: 0.5, width: 0.25, height: 0.5 }] }]], [[166, 186]])
   check(kept(sharp.rgb[0]) > 0.97, 'control: with square corners that corner pixel is inside', f2(kept(sharp.rgb[0])))
 
+  // An effected clip must still be masked: the effect stack draws in the slot before the mask, and
+  // a version of that slot that drew its result straight to the canvas would skip the mask.
+  const FLIP = [{ id: 'fx_probe', kind: 'flip', params: { horizontal: true, vertical: false } }]
+  const fx = await samples([[{ asset: red, effects: FLIP, masks: [shapes[0].mask] }]], [shapes[0].inside, shapes[0].outside])
+  check(fx.pending === 0 && !fx.issues && kept(fx.rgb[0]) > 0.97 && kept(fx.rgb[1]) < 0.03, 'a clip with an effect and a mask is masked',
+    `inside ${f2(kept(fx.rgb[0]))}, outside ${f2(kept(fx.rgb[1]))}, issues ${JSON.stringify(fx.issues)}`)
+  const gr = await samples([[{ asset: red, grade: { gain: { r: 0, g: 0.2, b: 0 } }, masks: [shapes[0].mask] }]], [shapes[0].outside])
+  check(kept(gr.rgb[0]) < 0.03, 'a graded clip with a mask is masked', f2(kept(gr.rgb[0])))
+
   // -- combine modes on two overlapping rectangles ------------------------------------------------
   const A = { kind: 'rect', x: 0.3, y: 0.5, width: 0.3, height: 0.5 }      // x 192..576
   const B = { kind: 'rect', x: 0.45, y: 0.5, width: 0.3, height: 0.5 }     // x 384..768
@@ -269,6 +278,14 @@ await runProbe(async () => {
   const dimDirect = await samples([[{ asset: bars, adjustments }]], grid)
   const dimThrough = await samples([[{ asset: bars }], [{ asset: layerAsset, adjustments }]], grid)
   check(maxDiff(dimDirect, dimThrough) <= 2, 'adjustments on a layer equal adjustments on the clip (±2)', `worst ${maxDiff(dimDirect, dimThrough)}`)
+
+  // An effect on a layer reaches what is under it: a horizontal flip of the bars is the bars flipped.
+  const FLIPPED = [{ id: 'fx_probe', kind: 'flip', params: { horizontal: true, vertical: false } }]
+  const flipDirect = await samples([[{ asset: bars, effects: FLIPPED }]], grid)
+  const flipThrough = await samples([[{ asset: bars }], [{ asset: layerAsset, effects: FLIPPED }]], grid)
+  check(!flipThrough.issues && maxDiff(flipDirect, flipThrough) <= 2 && maxDiff(ungraded, flipThrough) > 20,
+    'an effect on an adjustment layer equals the effect on the clip under it (±2), and is not the unflipped frame',
+    `direct-vs-layer worst ${maxDiff(flipDirect, flipThrough)}, plain-vs-layer worst ${maxDiff(ungraded, flipThrough)}, issues ${JSON.stringify(flipThrough.issues)}`)
 
   // Through a mask: graded inside, untouched outside.
   const window_ = { kind: 'rect', x: 0.25, y: 0.5, width: 0.5, height: 1 }   // the left half
