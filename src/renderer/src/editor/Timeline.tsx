@@ -36,6 +36,7 @@ import { TransitionDialog } from './TransitionDialog'
 import { hideCoveredRulerLabels, TimelineRuler } from './TimelineRuler'
 import { TimelineToolbar } from './TimelineToolbar'
 import { TrackHeader } from './TrackHeader'
+import { trackNumbers } from '@shared/track-order'
 import { ClipDialogs, clipMenuEntries, rippleDeleteEntries, type ClipMenuPage } from './ClipCommands'
 import { detachToEntries, rippleDeleteThisTrack, trimModeEntries } from './clipMenuExtras'
 import { canDetachAudio, canReattachAudio, isLinked, runAudioLink } from './timeline/audioLink'
@@ -244,12 +245,7 @@ export function Timeline(): ReactNode {
   // Listed top to bottom as the picture stacks: the front video layer first, audio below.
   const ordered = useMemo(() => displayOrder(tracks), [tracks])
   // Resolve's track numbers: V1 is the first video track in the stack (drawn lowest), A1 the first audio.
-  const badges = useMemo(() => {
-    const out = new Map<string, string>()
-    const count = { video: 0, audio: 0 }
-    for (const track of tracks) out.set(track.id, `${track.kind === 'video' ? 'V' : 'A'}${++count[track.kind]}`)
-    return out
-  }, [tracks])
+  const badges = useMemo(() => trackNumbers(tracks), [tracks])
   const heightOf = useCallback(
     (track: Track): number => trackHeightFor(track.kind, trackSizes[track.id]),
     [trackSizes]

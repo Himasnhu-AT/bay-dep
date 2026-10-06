@@ -28,6 +28,7 @@ import type { AgentEntry, AgentEvent, AgentProvider, AgentTuning } from '@shared
 import type { AgentAttachmentInput } from '@shared/agent-attachments'
 import type { McpToolCall, McpToolResult } from '@shared/mcp'
 import type { Project } from '@shared/project'
+import type { AutosaveTarget, OpenedProject, RecoveryOffer } from '@shared/autosave'
 import type { WhisperDownload } from '@shared/whisper'
 import type { VisionStatus } from '@shared/visual-search'
 import type { AccessStatus } from '@shared/access'
@@ -203,6 +204,16 @@ const api: BayApi = {
     recent: () => ipcRenderer.invoke(IPC.projectRecent) as Promise<RecentProject[]>,
     autosave: (project: Project) =>
       ipcRenderer.invoke(IPC.projectAutosave, project) as Promise<void>,
+    recovery: (opened: OpenedProject) =>
+      ipcRenderer.invoke(IPC.projectRecovery, opened) as Promise<RecoveryOffer | null>,
+    unsaved: () => ipcRenderer.invoke(IPC.projectUnsaved) as Promise<RecoveryOffer[]>,
+    recover: (target: AutosaveTarget) => ipcRenderer.invoke(IPC.projectRecover, target) as Promise<Project>,
+    discardRecovery: (target: AutosaveTarget) =>
+      ipcRenderer.invoke(IPC.projectDiscardRecovery, target) as Promise<void>,
+    revealRecovery: (target: AutosaveTarget) =>
+      ipcRenderer.invoke(IPC.projectRevealRecovery, target) as Promise<void>,
+    setAsideRecovery: (target: AutosaveTarget) =>
+      ipcRenderer.invoke(IPC.projectSetAsideRecovery, target) as Promise<string>,
     launchRequest: () => ipcRenderer.invoke(IPC.projectLaunchRequest) as Promise<Project | null>,
     create: (options?: { host?: ProjectHost }) =>
       ipcRenderer.invoke(IPC.projectCreate, options) as Promise<Project>,

@@ -1,6 +1,7 @@
 import { gapAt } from '@shared/editing'
 import { selectDuration, selectFps, selectSelectedItems, selectTimeline } from '@/store/editor'
 import { useTimelineTool } from '@/lib/timelineTool'
+import { moveTrackBeside, selectedTrackId } from '@/lib/timelineStructure'
 import type { CommandContext, Handlers } from './types'
 
 const inEditor = ({ state }: CommandContext): boolean => state.screen === 'editor'
@@ -13,7 +14,20 @@ function timelineScroller(): HTMLElement | null {
   return document.querySelector<HTMLElement>('[data-timeline-scroller]')
 }
 
+function moveSelectedTrack(direction: 'up' | 'down') {
+  return {
+    when: inEditor,
+    run: ({ state }: CommandContext) => {
+      const trackId = selectedTrackId()
+      if (trackId) moveTrackBeside(trackId, direction)
+      else state.notify('Select a clip on the track to move — or drag the track by its header.')
+    }
+  }
+}
+
 export const timelineHandlers = {
+  'timeline.moveTrackUp': moveSelectedTrack('up'),
+  'timeline.moveTrackDown': moveSelectedTrack('down'),
   'timeline.zoomIn': { when: inEditor, run: ({ state }) => state.zoomBy(1.25) },
   'timeline.zoomOut': { when: inEditor, run: ({ state }) => state.zoomBy(1 / 1.25) },
   'timeline.zoomToFit': {

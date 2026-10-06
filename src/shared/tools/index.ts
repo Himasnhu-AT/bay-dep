@@ -32,9 +32,11 @@ import { tool as importMedia } from './import-media'
 import { tool as importUrl } from './import-url'
 import { tool as indexFootage } from './index-footage'
 import { tool as inspectItem } from './inspect-item'
+import { tool as joinItems } from './join-items'
 import { tool as levelVoices } from './level-voices'
 import { tool as listProjects } from './list-projects'
 import { tool as markHighlights } from './mark-highlights'
+import { tool as moveTrack } from './move-track'
 import { tool as openProject } from './open-project'
 import { tool as placeAsset } from './place-asset'
 import { tool as planDub } from './plan-dub'
@@ -44,6 +46,7 @@ import { tool as putBehindSubject } from './put-behind-subject'
 import { tool as readBrf } from './read-brf'
 import { tool as readComposition } from './read-composition'
 import { tool as readFeedback } from './read-feedback'
+import { tool as readHistory } from './read-history'
 import { tool as readProject } from './read-project'
 import { tool as readScript } from './read-script'
 import { tool as readStyle } from './read-style'
@@ -111,6 +114,7 @@ export const TOOLS: ToolSpec[] = [
   trimItem,
   applyScript,
   splitAt,
+  joinItems,
   deleteItems,
   removeRange,
   removeSilences,
@@ -119,6 +123,7 @@ export const TOOLS: ToolSpec[] = [
   syncAngles,
   levelVoices,
   addTrack,
+  moveTrack,
   addTransition,
   removeTransition,
   addSubtitles,
@@ -131,6 +136,7 @@ export const TOOLS: ToolSpec[] = [
   resolveFeedback,
   addComment,
   setPlayhead,
+  readHistory,
   undo,
   exportTimeline,
   trackExport,

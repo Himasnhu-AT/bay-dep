@@ -138,6 +138,12 @@ interface ChannelApi {
   projectOpenPath: BayApi['project']['openPath']
   projectRecent: BayApi['project']['recent']
   projectAutosave: BayApi['project']['autosave']
+  projectRecovery: BayApi['project']['recovery']
+  projectUnsaved: BayApi['project']['unsaved']
+  projectRecover: BayApi['project']['recover']
+  projectDiscardRecovery: BayApi['project']['discardRecovery']
+  projectRevealRecovery: BayApi['project']['revealRecovery']
+  projectSetAsideRecovery: BayApi['project']['setAsideRecovery']
   projectLaunchRequest: BayApi['project']['launchRequest']
   projectCreate: BayApi['project']['create']
   resolveStatus: BayApi['resolve']['status']
@@ -430,6 +436,12 @@ const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
   projectOpenPath: async (_event, filePath) => trackProjectOpen(await store.openPath(filePath)),
   projectRecent: () => store.recent(),
   projectAutosave: (_event, project) => store.autosave(project),
+  projectRecovery: (_event, opened) => store.recovery(opened),
+  projectUnsaved: () => store.unsaved(),
+  projectRecover: (_event, target) => store.recover(target),
+  projectDiscardRecovery: (_event, target) => store.discardRecovery(target),
+  projectRevealRecovery: async (_event, target) => store.revealRecovery(target),
+  projectSetAsideRecovery: (_event, target) => store.setAsideRecovery(target),
   projectLaunchRequest: () => store.launchRequest(),
   projectCreate: (_event, options) => store.create(parseHost(options?.host)),
   resolveStatus: () => resolveStatus(),

@@ -90,6 +90,8 @@ export function clipMenuEntries(
             : 'Split at Playhead — playhead is not over the clip',
       { disabled: !playheadInside || locked }
     ),
+    // The reverse of Split: the refusal, when the cut is a real one, says what differs.
+    row('clip.join', selected.length > 1 ? 'Join Clips' : 'Join with Next Clip', { disabled: locked }),
     row('clip.duplicate', 'Duplicate', { disabled: locked }),
     row('clip.freezeFrame', 'Add Freeze Frame', { disabled: locked || !freezable || !playheadOver }),
     row('clip.toggleEnabled', item.disabled ? 'Enable Clip' : 'Disable Clip', { disabled: locked }),

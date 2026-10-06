@@ -7,6 +7,8 @@ import { useCommands } from '@/lib/commands'
 import { registerMcpExecutor } from '@/mcp'
 import { useEditor } from '@/store/editor'
 import { ExportDialog } from '@/editor/ExportDialog'
+import { RecoveryDialog } from '@/editor/RecoveryDialog'
+import { discardUnsavedWork, startAutosave } from '@/lib/autosave'
 import { ShortcutsDialog } from '@/editor/ShortcutsDialog'
 import { NewProjectDialog } from '@/editor/NewProjectDialog'
 import { ProjectsHome } from '@/home/ProjectsHome'
@@ -76,7 +78,9 @@ export function App(): ReactNode {
   //
   // Every way out of a project goes through `guardLeave`: Home, File › New Project, File ›
   // Open… and a document handed over by Finder. Each of them replaces the project and clears
-  // its undo history, and nothing autosaves, so an unguarded one is a keystroke that loses work.
+  // its undo history, so an unguarded one is a keystroke that loses work. Autosave
+  // (`@/lib/autosave`) is for the exits nobody chose — a crash, a force quit — and "Don't save"
+  // here removes its sidecar: work the user chose to leave is not offered back to them.
   const [leaving, setLeaving] = useState<{ to: string; go: () => void } | null>(null)
   const guardLeave = useCallback((to: string, go: () => void): void => {
     const { dirty, screen } = useEditor.getState()
@@ -88,6 +92,10 @@ export function App(): ReactNode {
     setLeaving(null)
     go?.()
   }, [leaving])
+  const leaveWithoutSaving = useCallback((): void => {
+    void discardUnsavedWork(useEditor.getState().project)
+    leave()
+  }, [leave])
   const leaveToHome = useCallback((): void => {
     void bay()?.agent.dispose()
     showHome()
@@ -206,6 +214,9 @@ export function App(): ReactNode {
    * outlives every panel.
    */
   useEffect(() => registerMcpExecutor(), [])
+
+  // Autosave and the crash-recovery question, for the life of the window (`@/lib/autosave`).
+  useEffect(() => startAutosave(), [])
 
   /**
    * The agent's events, subscribed here for the same reason.
@@ -345,6 +356,7 @@ export function App(): ReactNode {
 
       <ExportDialog open={exportOpen} onClose={() => setExportOpen(false)} />
       <ProjectSettingsDialog />
+      <RecoveryDialog />
       <SettingsDialog />
       <ShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
       {newProjectDialog}
@@ -358,7 +370,7 @@ export function App(): ReactNode {
           // macOS order: the destructive choice apart on the left, Cancel beside the default.
           // "Don't save" throws work away, so it reads as the one that does.
           <>
-            <Button variant="danger" onClick={leave} className="mr-auto">
+            <Button variant="danger" onClick={leaveWithoutSaving} className="mr-auto">
               Don't save
             </Button>
             <Button variant="subtle" onClick={() => setLeaving(null)}>

@@ -5,6 +5,7 @@ import { ContextMenu, IconButton, Menu, Tooltip, useFloatingTrigger, type MenuEn
 import { cn } from '@/lib/cn'
 import { insertIndexFor, type TrackSize } from '@/lib/timelineLayout'
 import { useTimelineView } from '@/lib/timelineView'
+import { moveTrackBeside, placeBeside, trackDragHandlers, useTrackDrag } from '@/lib/timelineStructure'
 import { selectTimeline, useEditor } from '@/store/editor'
 
 export interface TrackHeaderProps {
@@ -63,6 +64,12 @@ export function TrackHeader({ track, badge, height, size, removable }: TrackHead
   const inputRef = useRef<HTMLInputElement>(null)
   const nameRef = useRef<HTMLButtonElement>(null)
   const more = useFloatingTrigger('menu')
+  // Reordering by drag: this header is the one being dragged, or the one it would land on.
+  const dragged = useTrackDrag((state) => state.draggingId === track.id)
+  const dropTarget = useTrackDrag((state) => state.overId === track.id && state.draggingId !== null && state.draggingId !== track.id)
+  // Whether there is a row above or below among tracks of this kind, for the menu's Move rows.
+  const canMoveUp = useEditor((state) => placeBeside(selectTimeline(state)?.tracks ?? [], track.id, 'up') !== null)
+  const canMoveDown = useEditor((state) => placeBeside(selectTimeline(state)?.tracks ?? [], track.id, 'down') !== null)
 
   useEffect(() => {
     if (!renaming) return
@@ -105,6 +112,10 @@ export function TrackHeader({ track, badge, height, size, removable }: TrackHead
     { kind: 'separator' },
     { label: `Add ${kindWord} track above`, onSelect: () => addBeside('above') },
     { label: `Add ${kindWord} track below`, onSelect: () => addBeside('below') },
+    { kind: 'separator' },
+    // The keyboard's way to what dragging the track number does. Video rows are layers: up is in front.
+    { label: video ? 'Move up (in front)' : 'Move up', disabled: !canMoveUp, onSelect: () => moveTrackBeside(track.id, 'up') },
+    { label: video ? 'Move down (behind)' : 'Move down', disabled: !canMoveDown, onSelect: () => moveTrackBeside(track.id, 'down') },
     { kind: 'separator' },
     { label: 'Lock', checked: track.locked, onSelect: () => patchTrack(track.id, { locked: !track.locked }) },
     // Hide governs picture only, so an audio track has nothing to hide (see the toggles below).
@@ -187,11 +198,15 @@ export function TrackHeader({ track, badge, height, size, removable }: TrackHead
   )
 
   // The track number on a chip of the kind's colour: the track reads as V1 or A1 at a glance.
+  // It is also the grip: drag it onto another track of the same kind to take that track's place.
+  // Not a button — the menu's Move up / Move down are the keyboard's way to the same thing.
   const badgeChip = (
     <span
       aria-hidden="true"
+      title="Drag to reorder"
+      {...trackDragHandlers(track)}
       className={cn(
-        'inline-flex h-[18px] min-w-6 shrink-0 items-center justify-center rounded-xs px-1 text-[10px] font-bold text-on-media tabular-nums',
+        'inline-flex h-[18px] min-w-6 shrink-0 cursor-grab touch-none items-center justify-center rounded-xs px-1 text-[10px] font-bold text-on-media tabular-nums active:cursor-grabbing',
         video ? 'bg-clip-video-edge' : 'bg-clip-audio-edge'
       )}
     >
@@ -238,6 +253,8 @@ export function TrackHeader({ track, badge, height, size, removable }: TrackHead
   return (
     <div
       style={{ height }}
+      data-track-header={track.id}
+      data-track-kind={track.kind}
       onContextMenu={(event) => {
         if (renaming) return
         event.preventDefault()
@@ -247,7 +264,9 @@ export function TrackHeader({ track, badge, height, size, removable }: TrackHead
       className={cn(
         'flex w-full border-b border-l-2 border-b-line px-1.5',
         compact ? 'flex-row items-center gap-1' : 'flex-col justify-center gap-1',
-        video ? 'border-l-clip-video-edge' : 'border-l-clip-audio-edge'
+        video ? 'border-l-clip-video-edge' : 'border-l-clip-audio-edge',
+        dragged && 'opacity-50',
+        dropTarget && 'bg-accent/10 outline-1 -outline-offset-1 outline-accent'
       )}
     >
       {compact ? (

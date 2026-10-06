@@ -13,6 +13,8 @@ import {
   useEditingPrefs
 } from '@/store/editing-prefs'
 import { AboutUpdates, useUpdate } from '@/update/UpdateBanner'
+import { useAutosave } from '@/store/autosave-prefs'
+import { AUTOSAVE_BURST_SECONDS, AUTOSAVE_DEFAULTS, AUTOSAVE_IDLE_SECONDS, autosaveSkipSentence } from '@shared/autosave'
 import type { CanvasFit } from '@shared/project'
 import {
   AGENT_EFFORTS,
@@ -297,7 +299,59 @@ export function EditingSection(): ReactNode {
           onChange={setSeparateClipAudio}
         />
       </Group>
+      <AutosaveGroup />
     </Section>
+  )
+}
+
+/**
+ * Autosave: the switch, how long bay waits after the last edit, and what it last did — including
+ * why it is not writing, when it is not (`autosaveSkipSentence`).
+ */
+function AutosaveGroup(): ReactNode {
+  const enabled = useAutosave((state) => state.enabled)
+  const idleSeconds = useAutosave((state) => state.idleSeconds)
+  const setEnabled = useAutosave((state) => state.setEnabled)
+  const setIdleSeconds = useAutosave((state) => state.setIdleSeconds)
+  const lastWrittenAt = useAutosave((state) => state.lastWrittenAt)
+  const lastSkip = useAutosave((state) => state.lastSkip)
+  const lastError = useAutosave((state) => state.lastError)
+  const paused = enabled ? (lastSkip ? autosaveSkipSentence(lastSkip) : null) : autosaveSkipSentence('off')
+  const status =
+    lastError !== null
+      ? `The last autosave failed: ${lastError}`
+      : paused ?? (lastWrittenAt === null ? 'Nothing has been autosaved in this session yet.' : `Last autosaved at ${new Date(lastWrittenAt).toLocaleTimeString()}.`)
+  return (
+    <Group title="Autosave">
+      <SwitchRow
+        label="Keep unsaved work"
+        description="While a project has unsaved changes, bay writes them to a recovery file beside it — never over the project itself. If bay quits unexpectedly, opening the project offers the work back. Saving, or leaving with Don't save, removes the recovery file."
+        checked={enabled}
+        onChange={setEnabled}
+      />
+      <Row
+        label="Write after"
+        hint={`How long after your last change. During a long run of changes bay writes every ${AUTOSAVE_BURST_SECONDS} seconds regardless.`}
+      >
+        <NumberField
+          label="Delay"
+          ariaLabel="Autosave delay after the last change, in seconds"
+          value={idleSeconds}
+          step={1}
+          min={AUTOSAVE_IDLE_SECONDS.min}
+          max={AUTOSAVE_IDLE_SECONDS.max}
+          precision={0}
+          suffix="s"
+          onCommit={setIdleSeconds}
+          defaultValue={AUTOSAVE_DEFAULTS.idleSeconds}
+          disabled={!enabled}
+          className="w-28"
+        />
+      </Row>
+      <div className="px-3 py-2">
+        <Note tone={lastError !== null ? 'danger' : 'muted'}>{status}</Note>
+      </div>
+    </Group>
   )
 }
 

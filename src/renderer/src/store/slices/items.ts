@@ -6,6 +6,8 @@ import { brfAssetFields, brfCodeAssetFields } from '@shared/brf'
 import { activeTimeline, assetTrackKind, placementLayout, normaliseCrop, isCropped, NO_CROP, defaultLayout, defaultTextStyle, findAsset, findItem, findTrack, framesToUs, itemEnd, itemsOverlap, usToFrames, type Item, type Timeline, type TrackKind } from '@shared/project'
 import { rippleDelete, type RippleDeleteResult } from '@shared/ripple'
 import { splitItemAt } from '@shared/split'
+import { joinItems, noCutReason, type JoinResult } from '@shared/heal'
+import { planTrackMove } from '@shared/track-order'
 import { applyRelinks } from '@shared/relink'
 import { shiftKeyframes, withKeyframe } from '@shared/keyframes'
 import { applyTrimPlan, planTrim, type TrimPlan } from '@shared/trim'
@@ -47,6 +49,8 @@ type Actions = Pick<
   | 'setKeyframe'
   | 'addTrack'
   | 'removeTrack'
+  | 'moveTrack'
+  | 'joinItems'
   | 'patchTrack'
 >
 
@@ -60,7 +64,7 @@ function pictureTarget(timeline: Timeline, itemId: string): string {
   return (found && cutoutPartner(timeline, found.item)?.id) ?? itemId
 }
 
-export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions {
+export function itemsSlice({ set, get, edit, editTimeline, currentTimeline }: StoreKit): Actions {
   return {
     // -- assets -------------------------------------------------------------
     addAssets(assets) {
@@ -723,6 +727,51 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
         if (remaining <= 1) return
         timeline.tracks = timeline.tracks.filter((t) => t.id !== trackId)
       })
+    },
+
+    moveTrack(trackId, position) {
+      const timeline = currentTimeline()
+      if (!timeline) return { error: 'There is no timeline open.' }
+      const plan = planTrackMove(timeline, trackId, Math.round(position))
+      if ('error' in plan) return plan
+      const { from, to, kind } = plan.moved
+      const letter = kind === 'video' ? 'V' : 'A'
+      edit(
+        (project) => {
+          const target = activeTimeline(project)
+          if (!target) return
+          // Planned against the clone, not carried over from the plan above: the tracks in a
+          // plan are the store's own objects, and a mutator may only put its own in the project.
+          const again = planTrackMove(target, trackId, to)
+          if ('tracks' in again) target.tracks = again.tracks
+        },
+        { label: `Move track ${letter}${from} to ${letter}${to}` }
+      )
+      return plan.moved
+    },
+
+    joinItems(ids, options) {
+      const state = get()
+      const timeline = currentTimeline()
+      if (!timeline) return { error: 'There is no timeline open.' }
+      const named = ids ?? state.selection
+      const outcome: { value: JoinResult } = { value: { joined: [], refused: [] } }
+      edit(
+        (project) => {
+          const target = activeTimeline(project)
+          if (target) outcome.value = joinItems(target, project.assets, named, options)
+        },
+        { label: 'Join clips' }
+      )
+      const result = outcome.value
+      if (result.joined.length === 0) {
+        const first = result.refused[0]
+        return first ? { error: first.reason, ...(first.hint ? { hint: first.hint } : {}) } : { error: noCutReason(timeline, named) }
+      }
+      // What is left of the selection: the clips that remain, never an id that is gone.
+      const gone = new Set(result.joined.map((join) => join.removedId))
+      set({ selection: get().selection.filter((id) => !gone.has(id)) })
+      return result
     },
 
     patchTrack(trackId, patch) {

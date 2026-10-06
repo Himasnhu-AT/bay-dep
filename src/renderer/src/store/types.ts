@@ -28,6 +28,8 @@ import type { RippleDeleteResult } from '@shared/ripple'
 import type { SwitchSegment } from '@shared/speaker-switch'
 import type { OpenSpanResult } from '@shared/insert-edit'
 import type { TrackMove } from '@shared/track-move'
+import type { TrackMoved } from '@shared/track-order'
+import type { JoinResult } from '@shared/heal'
 import type { TrimPlan, TrimRefusal, TrimSpec } from '@shared/trim'
 import type { DetachResult, ReattachResult } from '@shared/links'
 import type { BehindSubjectResult, BehindSubjectSpec } from '@shared/behind-subject'
@@ -259,6 +261,17 @@ export interface EditorState {
 export interface EditorActions {
   // project ------------------------------------------------------------------
   setProject(project: Project, options?: { resetHistory?: boolean }): void
+  /**
+   * Step through the undo history to `position` — how many steps are applied, 0 being before the
+   * first (`@shared/history`). A run of undos or redos, so everything a single one does still
+   * happens. A position outside the history is refused, not clamped.
+   */
+  jumpToHistory(position: number): { position: number } | { error: string }
+  /**
+   * Put recovered work (an autosave sidecar, read by main) in the window. Over the project it
+   * belongs to it is one undoable step; a project never saved opens as itself. Unsaved either way.
+   */
+  restoreRecovered(project: Project): void
   renameProject(name: string): void
   /** A named canvas size, refitting clips the way `resizeCanvas` (and `set_canvas`) does. */
   setCanvasPreset(presetId: string, fit?: CanvasFit): { refitted: number } | { error: string }
@@ -496,6 +509,20 @@ export interface EditorActions {
    */
   addTrack(kind: TrackKind, index?: number): string
   removeTrack(trackId: string): void
+  /**
+   * Move a track to `position` among tracks of its kind — 1 is V1 (drawn lowest) or A1. Its clips
+   * go with it; a track still named by its number takes the new one (`@shared/track-order`). One
+   * undo step. Refused, changing nothing, for an unknown track, a place that does not exist, or
+   * the place it is already in.
+   */
+  moveTrack(trackId: string, position: number): TrackMoved | { error: string }
+  /**
+   * Heal through-edits: join each cut where two of `ids` meet on one track, when the two are one
+   * take with a cut in it (`@shared/heal`). One id joins that clip to the one after it; no ids
+   * uses the selection. Linked clips join with them unless `linked: false`. One undo step. Real
+   * cuts are left alone and reported with why.
+   */
+  joinItems(ids?: readonly string[], options?: { linked?: boolean }): JoinResult | { error: string; hint?: string }
   patchTrack(trackId: string, patch: Partial<Pick<Track, 'locked' | 'muted' | 'hidden' | 'name' | 'solo' | 'volume' | 'pan'>>): void
 
   // transitions ---------------------------------------------------------------

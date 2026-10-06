@@ -846,13 +846,29 @@ export function setPlayhead(args: Record<string, unknown>): Record<string, unkno
   }
 }
 
-export function undo(): Record<string, unknown> {
+export function undo(args: Record<string, unknown> = {}): Record<string, unknown> {
   const state = store()
+  const before = timelineDuration(timeline())
+  const itemsBefore = allItems(timeline()).length
+  if (args.position !== undefined) {
+    // To a point in the history (`read_history`), back or forward: as many undos or redos as
+    // that takes, each a real one. Refused, with the range there is, for a point that is not.
+    const was = state.past.length
+    const jumped = state.jumpToHistory(Number(args.position))
+    if ('error' in jumped) fail(`${jumped.error} Call read_history for the positions.`)
+    const after = timeline()
+    return {
+      position: jumped.position,
+      undid: Math.max(0, was - jumped.position),
+      redid: Math.max(0, jumped.position - was),
+      remainingUndoSteps: store().past.length,
+      timeline: { durationInFrames: timelineDuration(after), itemCount: allItems(after).length },
+      changed: { durationWas: before, itemCountWas: itemsBefore }
+    }
+  }
   if (state.past.length === 0) {
     fail('There is nothing to undo — no change has been made to this project yet.')
   }
-  const before = timelineDuration(timeline())
-  const itemsBefore = allItems(timeline()).length
   state.undo()
   const after = timeline()
   return {
@@ -875,5 +891,5 @@ export const handlers: Handlers = {
   remove_range: (args) => removeRange(args),
   add_track: (args) => addTrack(args),
   set_playhead: (args) => setPlayhead(args),
-  undo: () => undo(),
+  undo: (args) => undo(args),
 }

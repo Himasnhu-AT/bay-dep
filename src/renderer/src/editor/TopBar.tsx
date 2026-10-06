@@ -18,6 +18,7 @@ import { cn } from '@/lib/cn'
 import { runCommand, shortcutOf } from '@/lib/commands'
 import { useElementSize } from '@/lib/useElementSize'
 import { useEditor, type LayoutMode, type RegionId } from '@/store/editor'
+import { HistoryMenu } from './HistoryMenu'
 
 export interface TopBarProps {
   /** Export the timeline now (the quick export dialog). */
@@ -260,6 +261,7 @@ export function TopBar({ onExport, saving, regions, panelToggles }: TopBarProps)
           disabled={!canRedo}
           onClick={redo}
         />
+        <HistoryMenu />
         <span aria-hidden="true" className="mx-1 h-4 w-px shrink-0 bg-line-strong" />
         {/* Named "Settings", as its dialog is; Resolve calls the same thing Preferences. */}
         <ToolButton

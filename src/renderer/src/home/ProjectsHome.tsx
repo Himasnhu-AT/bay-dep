@@ -31,6 +31,7 @@ import { formatShortcut, runCommand, shortcutOf } from '@/lib/commands'
 import { cn } from '@/lib/cn'
 import { useEditor } from '@/store/editor'
 import { STORAGE_REPAIRED_EVENT, StorageRepairButton, useStorageStatus } from '@/editor/StorageRepair'
+import { UnsavedWork } from './UnsavedWork'
 
 /**
  * The projects screen: what bay shows at launch, and what the Home button goes back to.
@@ -266,6 +267,7 @@ export function ProjectsHome(): ReactNode {
               <StorageRepairButton />
             </InlineAlert>
           )}
+          <UnsavedWork />
 
           <div className="min-h-0 flex-1 overflow-y-auto p-4">
             {recents !== null && recents.length === 0 ? (
