@@ -35,6 +35,8 @@ import type { TrimPlan, TrimRefusal, TrimSpec } from '@shared/trim'
 import type { DetachResult, ReattachResult } from '@shared/links'
 import type { BehindSubjectResult, BehindSubjectSpec } from '@shared/behind-subject'
 import type { SpeedPlan } from '@shared/speed'
+import type { ShapeMask } from '@shared/shape-mask'
+import type { AdjustmentLayerResult, AdjustmentLayerSpec } from '@shared/adjustment-layer'
 import type { CaptionCue } from '@shared/captions'
 import type { ScriptOp } from '@shared/script'
 import type { WhisperDownload } from '@shared/whisper'
@@ -457,6 +459,21 @@ export interface EditorActions {
    * `value` null, remove the key at that frame. The inspector's diamond and auto-key both land here.
    */
   setKeyframe(itemId: string, property: KeyframeProperty, frame: Frames, value: number | null): void
+  /**
+   * Replace a clip's shape masks (`@shared/shape-mask`: rect, ellipse, path), in list order; an
+   * empty list removes them. A subject mask the clip already has stays first. Aimed at a subject
+   * cut-out, it lands on the cut-out's clip, whose picture the cut-out draws. A list that fails
+   * `checkMasks` changes nothing.
+   */
+  setShapeMasks(itemId: string, masks: ShapeMask[]): void
+  /**
+   * "Add adjustment layer" (`@shared/adjustment-layer`): a clip with no picture of its own whose
+   * grade, adjustments and masks apply to everything drawn under it. The asset (one per project)
+   * and the item are one undo step, and the new layer is selected. With no span given it covers
+   * the selected clips, or starts at the playhead; with no track, it goes above everything.
+   * Returns what it made, or why not.
+   */
+  addAdjustmentLayer(spec?: Partial<AdjustmentLayerSpec>): AdjustmentLayerResult
 
   // editing verbs (slices/editing.ts) ---------------------------------------------
   /** Copy the selected clips (with linked partners when linked selection is on). Returns how many. */

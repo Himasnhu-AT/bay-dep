@@ -220,6 +220,8 @@ export function inspectItem(args: Record<string, unknown>): Record<string, unkno
     // Same absent-means-unset convention: a grade that exists is reported whole, with whether the
     // compositor will actually run it, since an all-neutral grade is stored and changes nothing.
     ...(item.grade ? { grade: item.grade, gradeActive: resolveGrade(item.grade) !== null } : {}),
+    // Masks as stored: a subject cut-out's `{ kind: 'subject' }`, then any shapes, in the order they combine.
+    ...(item.masks ? { masks: item.masks } : {}),
     // The effect stack in draw order, each with its id (what edit_effects addresses) and whether
     // it will run a pass. Absent means the clip has none.
     ...(item.effects && item.effects.length > 0 ? { effects: describeEffects(item) } : {}),

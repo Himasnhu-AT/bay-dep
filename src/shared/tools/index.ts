@@ -2,6 +2,7 @@
 // A tool is a file here exporting `order` and `tool`; add one, then run `pnpm gen:tools`.
 
 import type { ToolSpec } from './spec'
+import { tool as addAdjustmentLayer } from './add-adjustment-layer'
 import { tool as addCaptions } from './add-captions'
 import { tool as addComment } from './add-comment'
 import { tool as addMarker } from './add-marker'
@@ -119,6 +120,7 @@ export const TOOLS: ToolSpec[] = [
   detachAudio,
   audioEffects,
   putBehindSubject,
+  addAdjustmentLayer,
   trimItem,
   applyScript,
   splitAt,

@@ -26,7 +26,9 @@ const GROUP_OF: Record<AssetKind, MediaKindGroup> = {
   html: 'composition',
   brf: 'brf',
   font: 'font',
-  lut: 'lut'
+  lut: 'lut',
+  // An adjustment layer has no file; it sits with the clips it is placed over.
+  adjustment: 'video'
 }
 
 /** In the order the filter lists them, which is also the order `kind` sorts by. */

@@ -32,10 +32,12 @@ import {
 import { animatedItemAt, keyedItemAt } from '@shared/keyframes'
 import { animationForDraw, animationRevealAt, textUnitsAt } from '@shared/animation'
 import { paintOverflow, paintText, planText } from './textPaint'
-import { matteRecordAt, MAX_MASK_FEATHER, subjectMaskOf } from '@shared/matte'
+import { matteRecordAt, MAX_MASK_FEATHER, shapeMasksOf, subjectMaskOf } from '@shared/matte'
 import { cutoutAsDrawn, cutoutPartner } from '@shared/behind-subject'
 import { subjectMattes, type MatteImage } from './subjectMatte'
 import { MaskScratch, maskedPicture, matteRect } from './subjectMask'
+import { copiedPicture, ShapeMaskCache, shapedPicture, shapeView } from './shapeMask'
+import { adjustmentChangesPicture, AdjustmentScratch, planAdjustment } from './adjustmentLayer'
 import { MediaPool, isDrawable, type MediaEntry } from './mediaPool'
 import type { CompositionPool } from './compositionPool'
 import { planTransition } from './transitions'
@@ -247,6 +249,10 @@ export class Compositor {
   readonly #compositions: CompositionPool | null
   /** Scratch surfaces for a subject-masked draw (`subjectMask.ts`), reused per size. */
   readonly #maskScratch = new MaskScratch()
+  /** Coverage canvases for shape-masked draws (`shapeMask.ts`), kept by what they were made from. */
+  readonly #shapeMasks = new ShapeMaskCache()
+  /** Where an adjustment layer copies the frame so far (`adjustmentLayer.ts`). Untouched without one. */
+  readonly #adjustmentScratch = new AdjustmentScratch()
   /** The project of the frame being drawn — where a graded clip's LUT asset is looked up. */
   #project: Project | null = null
   /** The timeline of the frame being drawn — where a subject cut-out finds the clip it draws its picture from. */
@@ -398,6 +404,8 @@ export class Compositor {
     this.#seekLatency.clear()
     this.#brf.reset()
     this.#maskScratch.release()
+    this.#shapeMasks.release()
+    this.#adjustmentScratch.release()
     releaseGlassBuffers()
   }
 
@@ -428,6 +436,11 @@ export class Compositor {
     const transform = ctx.getTransform()
     const scaleX = Math.hypot(transform.a, transform.b) || 1
     const scaleY = Math.hypot(transform.c, transform.d) || 1
+
+    // Shape masks (`@shared/shape-mask`), applied in the mask slot below. Null for a clip with none.
+    const shapes = shapeMasksOf(item)
+    // Why a shape-masked picture could not be drawn; reported once the transform is put back.
+    let shapeFault: string | null = null
 
     ctx.save()
     ctx.globalAlpha = alpha
@@ -485,7 +498,9 @@ export class Compositor {
           const drawn = drawEffects(effects.active, { ...pass, grade })
           if (drawn.ok) {
             for (const warning of drawn.warnings) noteGradeIssue(stats, `clip ${item.id}: ${warning}`)
-            if (!mask) {
+            // Shape masks need the mask slot below as much as a subject matte does: drawn here,
+            // an effected clip would come out unmasked.
+            if (!mask && !shapes) {
               ctx.drawImage(drawn.canvas, 0, 0, drawn.width, drawn.height, dest.dx, dest.dy, dest.dw, dest.dh)
               return
             }
@@ -500,7 +515,7 @@ export class Compositor {
         const graded = gradeSource(grade, pass)
         if (graded.ok) {
           if (graded.warning) noteGradeIssue(stats, `clip ${item.id}: ${graded.warning}`)
-          if (!mask) {
+          if (!mask && !shapes) {
             ctx.drawImage(graded.canvas, 0, 0, graded.width, graded.height, dest.dx, dest.dy, dest.dw, dest.dh)
             return
           }
@@ -514,19 +529,34 @@ export class Compositor {
       // preview, `preview_frame` and export mask through this one line. The matte covers the whole
       // source frame, so the crop rect maps onto it by scale (`matteRect`) — which is also what
       // stretches Vision's 4:3 mask back over a 16:9 frame.
-      if (mask && src.sw > 0 && src.sh > 0) {
-        const masked = maskedPicture(
-          {
-            ...picture,
-            width: deviceWidth,
-            height: deviceHeight,
-            matte: mask.matte,
-            ...matteRect(src, sourceWidth, sourceHeight, mask.matte),
-            invert: mask.invert,
-            featherPx: mask.feather * scaleX * zoomOf(item)
-          },
-          this.#maskScratch
-        )
+      //
+      // Shape masks follow on the same surface: the picture (matted or not) has its alpha
+      // multiplied by `rasterMasks`' coverage of the part of the clip's frame it shows. The frame
+      // is the item's box, so layout, crop, keys, zoom and rotation carry the shapes with the clip.
+      if ((mask || shapes) && src.sw > 0 && src.sh > 0) {
+        let masked = mask
+          ? maskedPicture(
+              {
+                ...picture,
+                width: deviceWidth,
+                height: deviceHeight,
+                matte: mask.matte,
+                ...matteRect(src, sourceWidth, sourceHeight, mask.matte),
+                invert: mask.invert,
+                featherPx: mask.feather * scaleX * zoomOf(item)
+              },
+              this.#maskScratch
+            )
+          : copiedPicture({ ...picture, width: deviceWidth, height: deviceHeight }, this.#maskScratch)
+        if (shapes) {
+          if ('error' in shapes) {
+            masked = null
+            shapeFault = shapes.error
+          } else if (masked) {
+            masked = shapedPicture(masked, shapes, shapeView(box, dest, deviceWidth, deviceHeight), this.#shapeMasks)
+            if (!masked) shapeFault = `its ${shapes.length === 1 ? 'mask' : `${shapes.length} masks`} could not be drawn at ${deviceWidth}×${deviceHeight}`
+          }
+        }
         if (masked) ctx.drawImage(masked as unknown as CanvasImageSource, 0, 0, deviceWidth, deviceHeight, dest.dx, dest.dy, dest.dw, dest.dh)
         return
       }
@@ -541,6 +571,10 @@ export class Compositor {
       // went away). One missing item must not abandon the rest of the frame.
     } finally {
       ctx.restore()
+      // A shape mask that could not be applied: the clip was not drawn (never unmasked — the part
+      // the mask was hiding would be in the picture, looking deliberate), and the frame says so.
+      // Here, after the transform is put back, because the mask slot leaves by `return`.
+      if (shapeFault && stats) this.#placeholder(ctx, item, stats, 'Mask could not be drawn', `clip ${item.id} (${shapeFault})`)
     }
   }
 
@@ -708,6 +742,12 @@ export class Compositor {
       return
     }
 
+    // An adjustment layer has no source of its own: its picture is the frame drawn so far.
+    if (asset.kind === 'adjustment') {
+      this.#paintAdjustment(ctx, item, frame, stats, opts.alphaMul)
+      return
+    }
+
     const entry = this.#pool.acquire(asset, slot)
     if (entry.status === 'error') {
       this.#placeholder(ctx, item, stats, asset.name, `${asset.name} (could not be decoded)`)
@@ -826,6 +866,61 @@ export class Compositor {
     const mask = this.#subjectMatte(ctx, project, item, asset, entry.element, frame, fps, mode, stats)
     if (mask === 'skip') return
     this.#drawSource(ctx, entry.element, item, frame, opts.alphaMul, stats, [], mask)
+    stats.drawn += 1
+  }
+
+  /**
+   * An adjustment layer: everything drawn so far, redrawn through this item's grade, adjustments
+   * and masks (`adjustmentLayer.ts` has the arithmetic). The copy of the frame goes through
+   * `#drawSource` like any clip's picture, so a layer is graded, masked and filtered by the code
+   * that does it for clips — in the preview, `preview_frame` and export alike.
+   *
+   * A layer that would change nothing is skipped before anything is copied. One that cannot be
+   * applied leaves the picture under it as it was and says so on the frame (`gradeIssues`, which
+   * the export's `incompleteFrames` and `preview_frame`'s `gradeWarnings` carry): a grey card over
+   * the whole frame would hide the edit to report a missing look.
+   */
+  #paintAdjustment(ctx: RenderTarget, item: Item, frame: number, stats: DrawStats, alphaMul = 1): void {
+    if (!adjustmentChangesPicture(item)) return
+    const alpha = clamp01(finite(item.layout.opacity, 1) * fadeGainAt(item, frame) * clamp01(alphaMul))
+    if (alpha <= 0) return
+    const size = { width: Math.max(1, finite(this.#timeline?.width ?? 1, 1)), height: Math.max(1, finite(this.#timeline?.height ?? 1, 1)) }
+    const shapes = shapeMasksOf(item)
+    if (shapes && 'error' in shapes) {
+      noteGradeIssue(stats, `adjustment layer ${item.id} was not applied: ${shapes.error}`)
+      return
+    }
+    const plan = planAdjustment(item, size, ctx.getTransform())
+    const snapshot = plan ? this.#adjustmentScratch.copy(ctx.canvas, plan) : null
+    if (!plan || !snapshot) {
+      noteGradeIssue(stats, `adjustment layer ${item.id} was not applied: the frame under it could not be copied`)
+      return
+    }
+    // The hole: what is there, less the layer's share of it — its mask coverage times its alpha.
+    let cover: unknown = null
+    if (shapes) {
+      const box = { left: 0, top: 0, ...size }
+      try {
+        cover = this.#shapeMasks.get(shapes, size, shapeView(box, { dx: 0, dy: 0, dw: size.width, dh: size.height }, plan.width, plan.height).view)
+      } catch {
+        cover = null
+      }
+      if (!cover) {
+        noteGradeIssue(stats, `adjustment layer ${item.id} was not applied: its masks could not be drawn at ${plan.width}×${plan.height}`)
+        return
+      }
+    }
+    ctx.save()
+    ctx.globalAlpha = alpha
+    ctx.globalCompositeOperation = 'destination-out'
+    if (cover) ctx.drawImage(cover as CanvasImageSource, 0, 0, plan.width, plan.height, 0, 0, size.width, size.height)
+    else {
+      ctx.fillStyle = '#000000'
+      ctx.fillRect(0, 0, size.width, size.height)
+    }
+    ctx.restore()
+    // …and the adjusted copy, added back at that same share.
+    this.#drawSource(ctx, snapshot, plan.item, frame, alphaMul, stats)
     stats.drawn += 1
   }
 

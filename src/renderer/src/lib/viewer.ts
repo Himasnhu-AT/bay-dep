@@ -39,6 +39,13 @@ interface ViewerState {
    */
   cropMode: boolean
   setCropMode(on: boolean): void
+  /**
+   * Which of the selected clip's shape masks has its handles on the viewer (an index among its
+   * shapes), or null. While set, the viewer's pointer edits that mask instead of the clip. Not
+   * remembered, like crop mode.
+   */
+  maskEdit: number | null
+  setMaskEdit(index: number | null): void
   /** The live engine, set by `Preview` while mounted — the meters read its analysers. */
   engine: EngineHandle | null
   toggleSafeAreas(): void
@@ -55,7 +62,12 @@ export const useViewer = create<ViewerState>((set, get) => ({
   fullscreen: false,
   cropMode: false,
   setCropMode(on) {
-    set({ cropMode: on })
+    set({ cropMode: on, ...(on ? { maskEdit: null } : {}) })
+  },
+  maskEdit: null,
+  setMaskEdit(index) {
+    // One mode at a time: both take the viewer's pointer.
+    set({ maskEdit: index, ...(index !== null ? { cropMode: false } : {}) })
   },
   engine: null,
   toggleSafeAreas() {
