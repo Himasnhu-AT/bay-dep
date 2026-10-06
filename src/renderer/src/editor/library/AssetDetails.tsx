@@ -13,7 +13,8 @@ const KIND_NAME: Record<Asset['kind'], string> = {
   html: 'HTML composition',
   brf: 'Motion graphic',
   lut: 'Colour LUT',
-  font: 'Font'
+  font: 'Font',
+  adjustment: 'Adjustment layer'
 }
 
 /**

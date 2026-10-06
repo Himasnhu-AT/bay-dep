@@ -19,6 +19,7 @@
  */
 
 import { itemEnd, sourceTimeAt, type Asset, type Item, type Micros } from './project'
+import { checkShapeMask, isShapeMask, MAX_SHAPE_MASKS, type ShapeMask } from './shape-mask'
 
 // ---------------------------------------------------------------------------
 // The model: what the project stores
@@ -26,10 +27,14 @@ import { itemEnd, sourceTimeAt, type Asset, type Item, type Micros } from './pro
 
 /**
  * A mask on an item. An array on the item (`Item.masks`) from day one: a single `mask` retyped to
- * an array later would be a format change under bay's own rules, and shape masks and track mattes
- * are the planned next kinds. This slice has one kind.
+ * an array later would be a format change under bay's own rules. Two families, told apart by
+ * `kind`: the subject matte below, and the shape masks of `./shape-mask` (`rect`, `ellipse`,
+ * `path`). A subject mask is stored exactly as it was before shapes existed.
+ *
+ * A list holds at most one subject mask, first, and up to `MAX_SHAPE_MASKS` shapes after it. The
+ * shapes combine among themselves in list order; with a subject mask the result is what both keep.
  */
-export type Mask = SubjectMask
+export type Mask = SubjectMask | ShapeMask
 
 /**
  * Keep only the subject (a person) of a clip — or, inverted, everything but the subject.
@@ -188,33 +193,58 @@ export { sourceFrameOnTimeline } from './matte-space'
 // Validation, for tools and the loader
 // ---------------------------------------------------------------------------
 
-/** `masks` as a tool or file gave it, checked; the error names the field and what is allowed. */
+/** One subject mask, checked. */
+function checkSubjectMask(m: Record<string, unknown>, index: number): { ok: true; mask: SubjectMask } | { ok: false; error: string } {
+  const mask: SubjectMask = { kind: 'subject' }
+  if (m.assetId !== undefined) {
+    if (typeof m.assetId !== 'string' || !m.assetId) return { ok: false, error: `masks[${index}].assetId must be an asset id from read_project` }
+    mask.assetId = m.assetId
+  }
+  if (m.invert !== undefined) {
+    if (typeof m.invert !== 'boolean') return { ok: false, error: `masks[${index}].invert must be true or false` }
+    if (m.invert) mask.invert = true
+  }
+  if (m.feather !== undefined) {
+    if (typeof m.feather !== 'number' || !Number.isFinite(m.feather) || m.feather < 0 || m.feather > MAX_MASK_FEATHER) {
+      return { ok: false, error: `masks[${index}].feather must be a number of pixels from 0 to ${MAX_MASK_FEATHER}; got ${JSON.stringify(m.feather)}` }
+    }
+    if (m.feather > 0) mask.feather = m.feather
+  }
+  return { ok: true, mask }
+}
+
+/**
+ * `masks` as a tool or file gave it, checked; the error names the field and what is allowed.
+ * The masks come back canonical (a default is stored as absence), in the order given.
+ */
 export function checkMasks(value: unknown): { ok: true; masks: Mask[] } | { ok: false; error: string } {
-  if (!Array.isArray(value)) return { ok: false, error: 'masks must be a list, e.g. [{ "kind": "subject" }]' }
-  if (value.length > 1) {
-    return { ok: false, error: `masks takes one mask in this version (a subject mask); got ${value.length}` }
+  if (!Array.isArray(value)) {
+    return { ok: false, error: 'masks must be a list, e.g. [{ "kind": "ellipse", "x": 0.5, "y": 0.5, "width": 0.6, "height": 0.8, "feather": 40 }] — or [] to remove every mask' }
   }
   const out: Mask[] = []
+  let shapes = 0
   for (const [index, raw] of value.entries()) {
-    if (!raw || typeof raw !== 'object') return { ok: false, error: `masks[${index}] must be an object like { "kind": "subject" }` }
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ok: false, error: `masks[${index}] must be an object like { "kind": "rect", "x": 0.5, "y": 0.5, "width": 0.5, "height": 0.5 }` }
     const m = raw as Record<string, unknown>
-    if (m.kind !== 'subject') return { ok: false, error: `masks[${index}].kind must be "subject" (the only kind so far); got ${JSON.stringify(m.kind)}` }
-    const mask: SubjectMask = { kind: 'subject' }
-    if (m.assetId !== undefined) {
-      if (typeof m.assetId !== 'string' || !m.assetId) return { ok: false, error: `masks[${index}].assetId must be an asset id from read_project` }
-      mask.assetId = m.assetId
-    }
-    if (m.invert !== undefined) {
-      if (typeof m.invert !== 'boolean') return { ok: false, error: `masks[${index}].invert must be true or false` }
-      if (m.invert) mask.invert = true
-    }
-    if (m.feather !== undefined) {
-      if (typeof m.feather !== 'number' || !Number.isFinite(m.feather) || m.feather < 0 || m.feather > MAX_MASK_FEATHER) {
-        return { ok: false, error: `masks[${index}].feather must be a number of pixels from 0 to ${MAX_MASK_FEATHER}; got ${JSON.stringify(m.feather)}` }
+    if (m.kind === 'subject') {
+      // `subjectMaskOf` reads the first entry, and a clip has one subject: a second matte of the
+      // same person would be the same pixels.
+      if (index !== 0) {
+        return { ok: false, error: `masks[${index}] is a subject mask, and a subject mask must be first in the list and the only one; put it at masks[0] and the shapes after it` }
       }
-      if (m.feather > 0) mask.feather = m.feather
+      const subject = checkSubjectMask(m, index)
+      if (!subject.ok) return subject
+      out.push(subject.mask)
+      continue
     }
-    out.push(mask)
+    const shape = checkShapeMask(raw, `masks[${index}]`)
+    if (!shape.ok) return shape
+    shapes += 1
+    if (shapes > MAX_SHAPE_MASKS) {
+      const given = value.filter((entry) => isShapeMask(entry as { kind: string } | null)).length
+      return { ok: false, error: `masks takes at most ${MAX_SHAPE_MASKS} shape masks on one clip; got ${given}. Draw several shapes as one "path" mask, or split the clip and mask each part.` }
+    }
+    out.push(shape.value)
   }
   return { ok: true, masks: out }
 }
@@ -224,6 +254,32 @@ export function subjectMaskOf(item: Item): SubjectMask | null {
   const mask = item.masks?.[0]
   return mask && mask.kind === 'subject' ? mask : null
 }
+
+/**
+ * The shape masks an item draws with, in list order; null when it has none (the fast path), an
+ * error when one cannot be drawn as written. A `.bay` is data anyone can write, so the list is
+ * checked here as strictly as the tool checks it: a mask this build cannot read — a kind from a
+ * later build, a size that is not a number — is a named fault, never a clip drawn unmasked.
+ * Answers are remembered per list, so a clip drawn sixty times a second is checked once.
+ */
+export function shapeMasksOf(item: Item): ShapeMask[] | null | { error: string } {
+  const masks = item.masks
+  if (!masks || masks.length === 0) return null
+  const known = SHAPES_OF.get(masks)
+  if (known !== undefined) return known
+  let answer: ShapeMask[] | null | { error: string } = null
+  const rest = masks[0]?.kind === 'subject' ? masks.slice(1) : masks
+  if (rest.length > 0) {
+    const checked = checkMasks(rest)
+    if (!checked.ok) answer = { error: checked.error }
+    else if (checked.masks.some((mask) => mask.kind === 'subject')) answer = { error: 'a subject mask must be first in the list and the only one' }
+    else answer = checked.masks as ShapeMask[]
+  }
+  SHAPES_OF.set(masks, answer)
+  return answer
+}
+
+const SHAPES_OF = new WeakMap<readonly Mask[], ShapeMask[] | null | { error: string }>()
 
 // ---------------------------------------------------------------------------
 // What main answers over IPC

@@ -26,7 +26,7 @@ import {
 // ---------------------------------------------------------------------------
 
 /** Every kind that draws a picture on the canvas. Text draws its own glyphs; it is still a picture. */
-export const VISUAL_KINDS = ['video', 'image', 'gif', 'text', 'html', 'brf'] as const
+export const VISUAL_KINDS = ['video', 'image', 'gif', 'text', 'html', 'brf', 'adjustment'] as const
 
 /**
  * Whether a clip draws anything anyone can see — and so gets Transform, Opacity, keyframes on

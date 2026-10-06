@@ -2,9 +2,11 @@
 // A module takes part by exporting `handlers: Handlers`; then run `pnpm gen:tools`.
 
 import type { Handlers } from './helpers'
+import { handlers as adjustmentLayerHandlers } from './adjustmentLayer'
 import { handlers as assetsHandlers } from './assets'
 import { handlers as audioEffectsHandlers } from './audioEffects'
 import { handlers as beatsHandlers } from './beats'
+import { handlers as binsHandlers } from './bins'
 import { handlers as brfHandlers } from './brf'
 import { handlers as captionsHandlers } from './captions'
 import { handlers as compositionsHandlers } from './compositions'
@@ -30,6 +32,7 @@ import { handlers as readHandlers } from './read'
 import { handlers as scriptHandlers } from './script'
 import { handlers as sfxHandlers } from './sfx'
 import { handlers as speechHandlers } from './speech'
+import { handlers as structureHandlers } from './structure'
 import { handlers as stylesHandlers } from './styles'
 import { handlers as subtitlesHandlers } from './subtitles'
 import { handlers as templatesHandlers } from './templates'
@@ -42,9 +45,11 @@ import { handlers as writeHandlers } from './write'
 
 /** Each module’s handlers, separately, so a tool claimed twice can be found. */
 export const HANDLER_GROUPS: Record<string, Handlers> = {
+  'adjustmentLayer': adjustmentLayerHandlers,
   'assets': assetsHandlers,
   'audioEffects': audioEffectsHandlers,
   'beats': beatsHandlers,
+  'bins': binsHandlers,
   'brf': brfHandlers,
   'captions': captionsHandlers,
   'compositions': compositionsHandlers,
@@ -70,6 +75,7 @@ export const HANDLER_GROUPS: Record<string, Handlers> = {
   'script': scriptHandlers,
   'sfx': sfxHandlers,
   'speech': speechHandlers,
+  'structure': structureHandlers,
   'styles': stylesHandlers,
   'subtitles': subtitlesHandlers,
   'templates': templatesHandlers,
@@ -83,9 +89,11 @@ export const HANDLER_GROUPS: Record<string, Handlers> = {
 
 /** Tool name → handler, for the dispatcher. */
 export const HANDLERS: Handlers = {
+  ...adjustmentLayerHandlers,
   ...assetsHandlers,
   ...audioEffectsHandlers,
   ...beatsHandlers,
+  ...binsHandlers,
   ...brfHandlers,
   ...captionsHandlers,
   ...compositionsHandlers,
@@ -111,6 +119,7 @@ export const HANDLERS: Handlers = {
   ...scriptHandlers,
   ...sfxHandlers,
   ...speechHandlers,
+  ...structureHandlers,
   ...stylesHandlers,
   ...subtitlesHandlers,
   ...templatesHandlers,

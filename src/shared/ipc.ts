@@ -9,6 +9,7 @@
  */
 
 import type { Asset, Project } from './project'
+import type { AutosaveTarget, OpenedProject, RecoveryOffer } from './autosave'
 import type { AgentEntry, AgentEvent, AgentProvider, AgentProviderStatus, AgentTuning } from './agent'
 import type { AgentAttachmentInput } from './agent-attachments'
 import type { TranscriptSegment } from './transcribe'
@@ -853,6 +854,19 @@ export interface BayApi {
     /** Fire-and-forget autosave. Resolves once written. */
     autosave(project: Project): Promise<void>
     /**
+     * Crash recovery (`@shared/autosave`). `recovery` asks whether the project just opened has
+     * unsaved work in its sidecar; `unsaved` lists projects autosaved and never saved; `recover`
+     * loads a sidecar through the same migrations as a `.bay` (the sidecar stays until a save);
+     * `discardRecovery` deletes one; `revealRecovery` shows it in Finder; `setAsideRecovery`
+     * renames one that will not load so the next autosave cannot overwrite it, and says where.
+     */
+    recovery(opened: OpenedProject): Promise<RecoveryOffer | null>
+    unsaved(): Promise<RecoveryOffer[]>
+    recover(target: AutosaveTarget): Promise<Project>
+    discardRecovery(target: AutosaveTarget): Promise<void>
+    revealRecovery(target: AutosaveTarget): Promise<void>
+    setAsideRecovery(target: AutosaveTarget): Promise<string>
+    /**
      * The project the OS asked bay to open at launch — a `.bay` double-clicked in Finder — or
      * null. The projects screen is skipped for it: the user already said which one they wanted.
      */
@@ -1111,6 +1125,12 @@ export const IPC = {
   projectOpenPath: 'project:open-path',
   projectRecent: 'project:recent',
   projectAutosave: 'project:autosave',
+  projectRecovery: 'project:recovery',
+  projectUnsaved: 'project:unsaved',
+  projectRecover: 'project:recover',
+  projectDiscardRecovery: 'project:discard-recovery',
+  projectRevealRecovery: 'project:reveal-recovery',
+  projectSetAsideRecovery: 'project:set-aside-recovery',
   projectLaunchRequest: 'project:launch-request',
   projectCreate: 'project:create',
   resolveStatus: 'resolve:status',

@@ -117,6 +117,23 @@ A value read through a store snapshot taken *before* an action is the old value:
 ~28 edits in the open project; unwinding `past` restores it. The fixture on disk only changes if
 something saves, and nothing a probe does should.
 
+**Autosave writes a sidecar, and stands down while a probe drives** (`@shared/autosave`,
+`lib/autosave.ts`, `main/project/persistence.ts`; Preferences › Editing › Autosave). A dirty
+project goes to `<file>.bay.autosave` (or `<userData>/autosave/<id>.bay.autosave` when never
+saved) 3 s after the last edit and at least every 30 s; opening a project whose sidecar's
+`updatedAt` is later than the file's offers Restore / Discard, and until that is answered nothing
+is autosaved, because the sidecar is the only copy of what is on offer. `attach()` in
+`test/app/cdp.mjs` holds `window.__bayProbeSnapshot` for as long as a probe drives; while it is
+there autosave neither writes, nor deletes, nor asks about recovery — judged when the timer
+fires, not when it was set. So **a probe of autosave itself must not `attach()`**: drive it with
+`agent-browser --session bay eval` on a scratch project, and say that is what you did. A probe
+killed before its restore leaves the snapshot behind and autosave paused until the window
+reloads (Preferences says so). Save, "Don't save" and undoing back to the saved state each
+remove the sidecar; a crash, a force quit and a quit with unsaved changes leave it. **Measured:**
+the scheduler, the offer for each sidecar state from literal files, and the store's side, under
+Node. **Not measured:** any of it in a running bay — `test/app/parity-structure.mjs` is written
+and unrun.
+
 **The in-app agent's sandbox is `--tools`, not a deny list.** Measured, each one:
 - `--setting-sources ''` does not stop MCP servers loading; only `--mcp-config` plus
   `--strict-mcp-config` isolates the agent to bay's tools.
@@ -493,6 +510,41 @@ grade and adjustments, read at draw time (`cutoutPartner`/`cutoutAsDrawn`), so a
 moves the cut-out; picture edits aimed at the cut-out go to the clip (store) or are refused naming it
 (`edit_item`). `test/app/mask.mjs` needs `MASK_CLIP` (a clip with a
 person; the repo has none). MODNet is a documented seam (`MatteEngine`), not built.
+
+**A shape mask is a coverage function, and the picture is drawn from that function**
+(`@shared/shape-mask`, `engine/shapeMask.ts`, `edit_item.masks`, Inspector › Video › Masks,
+`viewer/MaskOverlay.tsx`). `Item.masks` is a union now: at most one subject mask, first, stored
+exactly as before (`mask-format.test.ts` holds the old bytes), then up to eight `rect` / `ellipse` /
+`path` shapes combined add / subtract / intersect in list order. Geometry is fractions of the clip's
+own frame — its layout box — so layout, crop, keys, zoom and a cut-out's borrowed framing carry a
+mask without knowing it exists; rotation and feather are in that box's pixels. `masksCoverage` is
+exact signed distance through a smoothstep ramp whose width *is* the feather (an output pixel when
+there is none — the antialiasing); `rasterMasks` is that function per pixel, and the compositor's
+mask slot multiplies the picture's alpha by the grid. No blur filter, no shader twin: the unit
+tests' numbers are the numbers on screen. The grid is kept by (masks, frame, view), so a still mask
+costs one raster; a clip whose drawn size changes every frame (a keyframed zoom) rasterises every
+frame, in script. The ellipse distance is iterative because the obvious formula is tens of pixels
+out on an eccentric one — and "walk out along the long axis" is not a walk away from the edge
+inside such an ellipse, which the first feather test assumed. A mask this build cannot read is a
+named placeholder, never the clip unmasked. **`#drawSource`'s mask slot leaves by `return`**, so
+anything reported after it must be in the `finally` — the first fault report sat below the `try`
+and never ran, which the placeholder test caught. Text items are not masked (they do not pass
+through `#drawSource`); bezier handles are agent-only; mask parameters take no keyframes yet.
+
+**An adjustment layer is a clip whose picture is the frame so far** (`@shared/adjustment-layer`,
+`engine/adjustmentLayer.ts`, `add_adjustment_layer`, Effects Library › Effects, the lane menu). An
+ordinary item of a `kind: 'adjustment'` asset (one per project). `#paintItem` copies the canvas,
+erases the layer's share of it (`destination-out`, by mask coverage × opacity × fade) and adds the
+copy back through `#drawSource` with `lighter` — `original × (1 − m) + adjusted × m` exactly, alpha
+included, where a plain draw of the adjusted copy over the original thickens every soft edge of a
+transparent export. Going through `#drawSource` is the point: the grade, effects, adjustments and
+masks reach a layer by the code that applies them to clips. It always covers the whole frame —
+its `layout` box, crop and blend mode are not read, and `edit_item` refuses them by name — and a
+layer with no look is skipped before anything is copied. One that cannot be applied leaves the
+picture and records a `gradeIssues` line, not a grey card over the whole frame. **Measured under
+Node only**, on a software canvas (`softCanvas.testkit.ts`) with CSS adjustments: neither a real
+canvas, nor the WebGL grade through a layer, nor an export has been run — `test/app/shape-mask.mjs`
+is written for all three and is marked unrun.
 
 **An export that wrote a wrong frame says so; it never finishes as a plain `done`.** The exporter
 waits for pending items for a bounded time and then writes the frame anyway. That frame is a wrong

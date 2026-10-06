@@ -17,7 +17,7 @@
  */
 
 import { itemEnd, sameSourceTiming, type Item, type Timeline, type Track } from './project'
-import { subjectMaskOf, type SubjectMask } from './matte'
+import { subjectMaskOf, type Mask, type SubjectMask } from './matte'
 
 export interface BehindSubjectSpec {
   /** The clip with the person in it. */
@@ -234,5 +234,20 @@ export function cutoutAsDrawn(item: Item, partner: Item | null): Item {
     if (partner[field] === undefined) delete out[field]
     else (out as unknown as Record<string, unknown>)[field] = partner[field]
   }
+  // The clip's shape masks are part of its picture too: a clip shown through an ellipse must not
+  // have its person standing outside the ellipse. The cut-out keeps its own subject mask, first.
+  const shapes = partner.masks?.some((mask) => mask.kind !== 'subject') ? partner.masks : undefined
+  if (shapes && item.masks) out.masks = cutoutMasks(item.masks, shapes)
   return out
+}
+
+const CUTOUT_MASKS = new WeakMap<Mask[], { own: Mask[]; masks: Mask[] }>()
+
+/** The cut-out's subject mask followed by its clip's shapes — the same list object for the same two lists, so per-list caches hold. */
+function cutoutMasks(own: Mask[], clip: Mask[]): Mask[] {
+  const known = CUTOUT_MASKS.get(clip)
+  if (known && known.own === own) return known.masks
+  const masks = [...own.filter((mask) => mask.kind === 'subject'), ...clip.filter((mask) => mask.kind !== 'subject')]
+  CUTOUT_MASKS.set(clip, { own, masks })
+  return masks
 }

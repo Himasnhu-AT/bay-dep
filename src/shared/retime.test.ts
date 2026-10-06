@@ -13,6 +13,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { itemAudioGainAt } from './audio-gain'
 import { timelineFrameAt, beatFramesForItem, type BeatGrid } from './beats'
+import { joinPair } from './heal'
 import { insertTime } from './insert-edit'
 import { animationStateAt, animationWindows, isAtRest } from './animation'
 import { KEYFRAME_REGISTRY, WRITABLE_KEYFRAME_PROPERTIES, keyframeInfo } from './keyframe-registry'
@@ -24,6 +25,7 @@ import {
   KEYFRAME_PROPERTIES,
   plainTime,
   sameSourceTiming,
+  sourceEdgeAt,
   sourceSpanOf,
   sourceTimeAt,
   type Asset,
@@ -84,6 +86,9 @@ const DIP: Keyframe[] = [
   { frame: 60, value: 0.25, ease: 'inOut' },
   { frame: 70, value: 1 }
 ]
+
+/** Where `item` reads `rel` frames in — the read point a head trim of `rel` frames leaves it with. */
+const sourceTimeAtBoundary = (item: Item, rel: number): number => sourceEdgeAt(item, rel, FPS)
 
 /** The source time every timeline frame of track `trackId` plays, by frame — "what plays". */
 function plays(timeline: Timeline, trackId: string): Map<number, string> {
@@ -457,6 +462,51 @@ test('an In and an Out preset stay glued to a ramped clip’s first and last fra
   const right = splitItemAt(reversed, reversed.from + 50, FPS, 'r')!
   assert.deepEqual([reversed.animation, right.animation], [{ in: animation.in }, { out: animation.out }])
   assert.ok(speedKeysOf(right) && right.reverse, 'the right half is still ramped and reversed')
+})
+
+for (const [name, over] of [
+  ['reversed', { reverse: true, sourceStartUs: 5_000_000 }],
+  ['ramped', { keyframes: { speed: DIP } }],
+  ['reversed and ramped', { reverse: true, sourceStartUs: 6_000_000, keyframes: { speed: DIP } }]
+] as const) {
+  test(`a split ${name} clip is a through-edit: joining it gives back the clip that was split`, () => {
+    const { project, timeline } = fixture(structuredClone(over) as Partial<Item>)
+    const original = structuredClone(findItem(timeline, 'a')!.item)
+    const before = plays(timeline, 'v1')
+    for (const at of [112, 145, 171]) {
+      const copy = structuredClone(timeline)
+      copy.tracks[0]!.items.push(splitItemAt(findItem(copy, 'a')!.item, at, FPS, 'r')!)
+      copy.tracks[0]!.items.sort((x, y) => x.from - y.from)
+      const joined = joinPair(copy, project.assets, 'a', 'r')
+      assert.ok('joined' in joined, 'joined' in joined ? '' : `split at ${at}: ${joined.reason}`)
+      assert.deepEqual(findItem(copy, 'a')!.item, original, `split at ${at}, joined: the clip it was`)
+      assert.ok(!findItem(copy, 'r'), 'the second half is gone')
+      assertSamePicture(before, plays(copy, 'v1'), (frame) => frame, `joined at ${at}`)
+    }
+
+    // The refusal beside it: the same pair with a frame trimmed off the second half is a real cut,
+    // and is told which way — in the order the clips play, not the order of the file.
+    const cut = structuredClone(timeline)
+    const right = splitItemAt(findItem(cut, 'a')!.item, 145, FPS, 'r')!
+    right.sourceStartUs = sourceTimeAtBoundary(right, 6)
+    cut.tracks[0]!.items.push(right)
+    const refused = joinPair(cut, project.assets, 'a', 'r')
+    assert.ok('reason' in refused)
+    assert.match('reason' in refused ? refused.reason : '', /starts 0\.\d\ds later in the source than the first one ends: footage was removed/)
+  })
+}
+
+test('a forward half and a reversed half are not one take, and the join says what differs', () => {
+  const { project, timeline } = fixture()
+  const right = splitItemAt(findItem(timeline, 'a')!.item, 145, FPS, 'r')!
+  right.reverse = true
+  timeline.tracks[0]!.items.push(right)
+  const refused = joinPair(timeline, project.assets, 'a', 'r')
+  assert.ok('reason' in refused)
+  assert.match('reason' in refused ? refused.reason : '', /differ in reverse/)
+  // The twin: without the flag the same pair joins.
+  delete right.reverse
+  assert.ok('joined' in joinPair(timeline, project.assets, 'a', 'r'))
 })
 
 // ---------------------------------------------------------------------------

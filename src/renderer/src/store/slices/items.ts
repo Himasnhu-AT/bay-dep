@@ -6,11 +6,16 @@ import { brfAssetFields, brfCodeAssetFields } from '@shared/brf'
 import { activeTimeline, assetTrackKind, placementLayout, normaliseCrop, isCropped, NO_CROP, defaultLayout, defaultTextStyle, findAsset, findItem, findTrack, footageBeyond, itemEnd, itemsOverlap, plainTime, sourceEdgeAt, usToFrames, type Item, type Timeline, type TrackKind } from '@shared/project'
 import { rippleDelete, type RippleDeleteResult } from '@shared/ripple'
 import { splitItemAt } from '@shared/split'
+import { joinItems, noCutReason, type JoinResult } from '@shared/heal'
+import { planTrackMove } from '@shared/track-order'
+import { createBin, moveAssetsToBin, removeBin, renameBin } from '@shared/bins'
 import { applyRelinks } from '@shared/relink'
 import { shiftKeyframes, withKeyframe } from '@shared/keyframes'
 import { applyTrimPlan, planTrim, type TrimPlan } from '@shared/trim'
 import { detachAudio, linkedPartners, reattachAudio, unlinkItems, withLinked } from '@shared/links'
 import { CUTOUT_PICTURE_FIELDS, cutoutPartner, planBehindSubject, type BehindSubjectResult } from '@shared/behind-subject'
+import { checkMasks } from '@shared/matte'
+import { planAdjustmentLayer, type AdjustmentLayerResult } from '@shared/adjustment-layer'
 import { describeDuplicate, duplicateClips, type DuplicateResult } from '@shared/clipboard'
 import { formatTimecode } from '@shared/timecode'
 import { applySpeedPlan, footageLength, planRetime, planSpeed, type SpeedPlan } from '@shared/speed'
@@ -46,8 +51,16 @@ type Actions = Pick<
   | 'putBehindSubject'
   | 'patchLayout'
   | 'setKeyframe'
+  | 'setShapeMasks'
+  | 'addAdjustmentLayer'
   | 'addTrack'
+  | 'createBin'
+  | 'renameBin'
+  | 'removeBin'
+  | 'moveAssetsToBin'
   | 'removeTrack'
+  | 'moveTrack'
+  | 'joinItems'
   | 'patchTrack'
   | 'setAudioEffects'
 >
@@ -62,7 +75,7 @@ function pictureTarget(timeline: Timeline, itemId: string): string {
   return (found && cutoutPartner(timeline, found.item)?.id) ?? itemId
 }
 
-export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions {
+export function itemsSlice({ set, get, edit, editTimeline, currentTimeline }: StoreKit): Actions {
   return {
     // -- assets -------------------------------------------------------------
     addAssets(assets) {
@@ -730,6 +743,87 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
       })
     },
 
+    // -- bins --------------------------------------------------------------
+    // Each plans against the project as it is (so a refusal is an answer, not a silent no-op)
+    // and then runs the same function on the clone inside `edit()`.
+    createBin(name) {
+      const id = newId('bin')
+      const planned = createBin(clone(get().project), name, id)
+      if ('error' in planned) return planned
+      edit((project) => void createBin(project, name, id), { label: `New bin “${planned.bin.name}”` })
+      return planned
+    },
+
+    renameBin(binId, name) {
+      const planned = renameBin(clone(get().project), binId, name)
+      if ('error' in planned) return planned
+      edit((project) => void renameBin(project, binId, name), { label: `Rename bin “${planned.was}” to “${planned.bin.name}”` })
+      return planned
+    },
+
+    removeBin(binId) {
+      const planned = removeBin(clone(get().project), binId)
+      if ('error' in planned) return planned
+      edit((project) => void removeBin(project, binId), { label: `Remove bin “${planned.removed.name}”` })
+      return planned
+    },
+
+    moveAssetsToBin(assetIds, binId) {
+      const planned = moveAssetsToBin(clone(get().project), assetIds, binId)
+      if ('error' in planned) return planned
+      const count = planned.moved.length
+      edit((project) => void moveAssetsToBin(project, assetIds, binId), {
+        label: planned.bin
+          ? `Move ${count} asset${count === 1 ? '' : 's'} to “${planned.bin.name}”`
+          : `Take ${count} asset${count === 1 ? '' : 's'} out of ${count === 1 ? 'its bin' : 'their bins'}`
+      })
+      return planned
+    },
+
+    setShapeMasks(itemId, masks) {
+      editTimeline((timeline) => {
+        const found = findItem(timeline, pictureTarget(timeline, itemId))
+        if (!found || found.track.locked) return
+        // The subject mask, if the clip has one, stays first; the shapes after it are replaced.
+        const subject = found.item.masks?.filter((mask) => mask.kind === 'subject') ?? []
+        const checked = checkMasks([...subject, ...masks.filter((mask) => (mask as { kind: string }).kind !== 'subject')])
+        // A list the compositor could not draw is never stored: the clip would be a grey card.
+        if (!checked.ok) return
+        if (checked.masks.length === 0) delete found.item.masks
+        else found.item.masks = checked.masks
+      })
+    },
+
+    addAdjustmentLayer(spec) {
+      const state = get()
+      const active = activeTimeline(state.project)
+      if (!active) return { ok: false, error: 'No timeline is open.' }
+      // With clips selected and no span given, the layer covers them; otherwise it starts at the
+      // playhead and runs for a still's default length (Preferences › Editing).
+      const chosen = spec?.from === undefined && spec?.durationInFrames === undefined
+        ? state.selection.map((id) => findItem(active, id)?.item).filter((item): item is Item => item !== undefined)
+        : []
+      const start = chosen.length > 0 ? Math.min(...chosen.map((item) => item.from)) : (spec?.from ?? state.playhead)
+      const length = chosen.length > 0
+        ? Math.max(...chosen.map((item) => itemEnd(item))) - start
+        : (spec?.durationInFrames ?? stillDurationFrames(active.fps))
+      const holder: { value: AdjustmentLayerResult } = { value: { ok: false, error: 'No timeline is open.' } }
+      editTimeline((tl, project) => {
+        holder.value = planAdjustmentLayer(project, tl, { from: start, durationInFrames: length, ...(spec?.trackId ? { trackId: spec.trackId } : {}) }, {
+          makeId: newId,
+          now: Date.now,
+          makeVideoTrack: (timeline) => {
+            const track = makeTrack('video', 1)
+            track.name = nextTrackName(timeline, 'video')
+            return track
+          }
+        })
+      })
+      const result = holder.value
+      if (result.ok) set({ selection: [result.itemId] })
+      return result
+    },
+
     // -- tracks -------------------------------------------------------------
     addTrack(kind, index) {
       const id = newId('trk')
@@ -753,6 +847,51 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
         if (remaining <= 1) return
         timeline.tracks = timeline.tracks.filter((t) => t.id !== trackId)
       })
+    },
+
+    moveTrack(trackId, position) {
+      const timeline = currentTimeline()
+      if (!timeline) return { error: 'There is no timeline open.' }
+      const plan = planTrackMove(timeline, trackId, Math.round(position))
+      if ('error' in plan) return plan
+      const { from, to, kind } = plan.moved
+      const letter = kind === 'video' ? 'V' : 'A'
+      edit(
+        (project) => {
+          const target = activeTimeline(project)
+          if (!target) return
+          // Planned against the clone, not carried over from the plan above: the tracks in a
+          // plan are the store's own objects, and a mutator may only put its own in the project.
+          const again = planTrackMove(target, trackId, to)
+          if ('tracks' in again) target.tracks = again.tracks
+        },
+        { label: `Move track ${letter}${from} to ${letter}${to}` }
+      )
+      return plan.moved
+    },
+
+    joinItems(ids, options) {
+      const state = get()
+      const timeline = currentTimeline()
+      if (!timeline) return { error: 'There is no timeline open.' }
+      const named = ids ?? state.selection
+      const outcome: { value: JoinResult } = { value: { joined: [], refused: [] } }
+      edit(
+        (project) => {
+          const target = activeTimeline(project)
+          if (target) outcome.value = joinItems(target, project.assets, named, options)
+        },
+        { label: 'Join clips' }
+      )
+      const result = outcome.value
+      if (result.joined.length === 0) {
+        const first = result.refused[0]
+        return first ? { error: first.reason, ...(first.hint ? { hint: first.hint } : {}) } : { error: noCutReason(timeline, named) }
+      }
+      // What is left of the selection: the clips that remain, never an id that is gone.
+      const gone = new Set(result.joined.map((join) => join.removedId))
+      set({ selection: get().selection.filter((id) => !gone.has(id)) })
+      return result
     },
 
     patchTrack(trackId, patch) {

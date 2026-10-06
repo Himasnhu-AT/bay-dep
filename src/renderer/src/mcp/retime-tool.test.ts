@@ -227,6 +227,30 @@ test('dragging a reversed clip’s edges keeps the rest on its footage and stops
   assert.equal(clipOf(g.a).durationInFrames, 190)
 })
 
+test('an adjustment layer has no footage: reverse and speedRamp are refused on it with why, and its own fields still set', async () => {
+  load()
+  const added = await call('add_adjustment_layer', {})
+  assert.ok(added.ok, added.ok ? '' : added.error)
+  const layer = state().project.timelines[0]!.tracks.flatMap((t) => t.items).find((i) => state().project.assets.find((a) => a.id === i.assetId)?.kind === 'adjustment')
+  assert.ok(layer, 'the layer is on the timeline')
+  const before = JSON.stringify(state().project.timelines)
+  for (const [args, named] of [[{ reverse: true }, 'reverse'], [{ speedRamp: 'ramp-down' }, 'speedRamp'], [{ reverse: true, speedRamp: 'hold' }, 'reverse, speedRamp']] as const) {
+    const refused = await call('edit_item', { itemId: layer.id, ...args })
+    assert.equal(refused.ok, false, named)
+    assert.match(refused.ok ? '' : refused.error, new RegExp(`is an adjustment layer: .* no footage or sound of its own, so ${named} do(es)? nothing on it`), named)
+    assert.match(refused.ok ? '' : refused.error, /It takes from, durationInFrames, trackId, opacity/)
+    assert.equal(JSON.stringify(state().project.timelines), before, 'a refused call changes nothing')
+  }
+  // The twin: a field it does read is set.
+  const dimmed = await call('edit_item', { itemId: layer.id, opacity: 0.5 })
+  assert.ok(dimmed.ok, dimmed.ok ? '' : dimmed.error)
+  // And the store's own plan, which the inspector calls, leaves it unreversed too.
+  state().retimeClip(layer.id, { reverse: true, ramp: [{ frame: 0, value: 0.5 }] })
+  const after = state().project.timelines[0]!.tracks.flatMap((t) => t.items).find((i) => i.id === layer.id)!
+  assert.equal(after.reverse, undefined)
+  assert.equal(after.keyframes?.speed, undefined)
+})
+
 test('apply_script moves a reversed clip, and is sent to trim_item when it tries to retime one', async () => {
   const f = load()
   await call('edit_item', { itemId: f.a, reverse: true })

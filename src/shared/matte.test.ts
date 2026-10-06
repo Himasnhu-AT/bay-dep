@@ -6,7 +6,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Asset, Item } from './project'
-import { checkMasks, matteCovers, matteFrameIndex, matteKeyInput, matteRecordAt, matteSpanForItem, type SubjectMatte } from './matte'
+import { checkMasks, matteCovers, matteFrameIndex, matteKeyInput, matteRecordAt, matteSpanForItem, shapeMasksOf, type SubjectMatte } from './matte'
+import { MAX_SHAPE_MASKS } from './shape-mask'
 
 const at30 = (n: number): number[] => Array.from({ length: n }, (_, i) => Math.round((i * 1_000_000) / 30))
 
@@ -99,8 +100,47 @@ test('checkMasks: one subject mask, with named refusals and a legal call beside 
     if (!result.ok) assert.match(result.error, pattern)
   }
   refused({ kind: 'subject' }, /must be a list/)
-  refused([{ kind: 'rect' }], /kind must be "subject".*got "rect"/)
+  refused([{ kind: 'star' }], /masks\[0\]\.kind must be "rect", "ellipse", "path" or "subject"; got "star"/)
   refused([{ kind: 'subject', feather: 900 }], /feather must be a number of pixels from 0 to 200; got 900/)
-  refused([{ kind: 'subject' }, { kind: 'subject' }], /one mask in this version/)
+  refused([{ kind: 'subject' }, { kind: 'subject' }], /masks\[1\] is a subject mask.*must be first in the list and the only one/)
   refused([{ kind: 'subject', invert: 'yes' }], /invert must be true or false/)
+})
+
+test('checkMasks: shapes after a subject mask, in order, up to the limit', () => {
+  const oval = { kind: 'ellipse', x: 0.5, y: 0.5, width: 0.6, height: 0.8, feather: 40 }
+  const box = { kind: 'rect', x: 0.25, y: 0.5, width: 0.5, height: 1, combine: 'subtract' }
+  assert.deepEqual(checkMasks([oval, box]), { ok: true, masks: [oval, box] })
+  assert.deepEqual(checkMasks([{ kind: 'subject' }, oval]), { ok: true, masks: [{ kind: 'subject' }, oval] })
+  assert.deepEqual(checkMasks([]), { ok: true, masks: [] })
+  // A subject mask anywhere but first is refused, naming where it was and where it goes.
+  const late = checkMasks([oval, { kind: 'subject' }])
+  assert.ok(!late.ok && /masks\[1\] is a subject mask/.test(late.error) && /masks\[0\]/.test(late.error))
+  // A shape's own fault is named with its index in this list.
+  const bad = checkMasks([oval, { ...box, feather: -3 }])
+  assert.ok(!bad.ok && /masks\[1\]\.feather must be a number of timeline pixels from 0 to 1000/.test(bad.error))
+  // The limit, and the last list that fits.
+  const many = Array.from({ length: MAX_SHAPE_MASKS + 1 }, () => oval)
+  const over = checkMasks(many)
+  assert.ok(!over.ok && over.error.includes(`at most ${MAX_SHAPE_MASKS}`) && over.error.includes(`got ${MAX_SHAPE_MASKS + 1}`))
+  assert.ok(checkMasks(many.slice(0, MAX_SHAPE_MASKS)).ok)
+  assert.ok(checkMasks([{ kind: 'subject' }, ...many.slice(0, MAX_SHAPE_MASKS)]).ok, 'the subject mask does not count against the shapes')
+})
+
+test('shapeMasksOf: the shapes an item draws with, none as null, and a list it cannot read as a named fault', () => {
+  const item = (masks: unknown): Item => ({ masks } as unknown as Item)
+  const oval = { kind: 'ellipse', x: 0.5, y: 0.5, width: 0.6, height: 0.8 }
+  assert.equal(shapeMasksOf(item(undefined)), null)
+  assert.equal(shapeMasksOf(item([])), null)
+  assert.equal(shapeMasksOf(item([{ kind: 'subject' }])), null, 'a subject cut-out has no shapes — the fast path')
+  assert.deepEqual(shapeMasksOf(item([oval])), [oval])
+  assert.deepEqual(shapeMasksOf(item([{ kind: 'subject', feather: 3 }, oval])), [oval])
+  // A kind from a later build, or a number that is not one: never read as "no mask".
+  for (const broken of [[{ kind: 'star' }], [{ ...oval, width: null }], [oval, { kind: 'subject' }], ['ellipse']]) {
+    const answer = shapeMasksOf(item(broken))
+    assert.ok(answer !== null && 'error' in answer && answer.error.length > 0, JSON.stringify(broken))
+  }
+  // The same list object is answered from memory: one check however often it is drawn.
+  const list = [oval]
+  const held = item(list)
+  assert.equal(shapeMasksOf(held), shapeMasksOf(held))
 })

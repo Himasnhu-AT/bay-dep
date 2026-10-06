@@ -10,7 +10,8 @@ import {
   Video,
   type LucideIcon,
   Palette,
-  Sparkles
+  Sparkles,
+  SlidersHorizontal
 } from 'lucide-react'
 import { plainTime, sourceEdgeAt, US_PER_SECOND, type Asset, type AssetKind, type Item } from '@shared/project'
 import { retimeSound } from '@shared/retime-sound'
@@ -125,7 +126,8 @@ const KIND_ICON: Record<AssetKind, LucideIcon> = {
   html: Code2,
   brf: Sparkles,
   lut: Palette,
-  font: TypeIcon
+  font: TypeIcon,
+  adjustment: SlidersHorizontal
 }
 
 /**

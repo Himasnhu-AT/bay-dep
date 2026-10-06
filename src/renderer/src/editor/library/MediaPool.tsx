@@ -6,6 +6,7 @@ import {
   Captions,
   Code2,
   FilmIcon,
+  FolderPlus,
   FolderSearch,
   LayoutGrid,
   Link2,
@@ -19,6 +20,7 @@ import {
   type LucideIcon
 } from 'lucide-react'
 import type { Asset } from '@shared/project'
+import { binOf, groupByBin } from '@shared/bins'
 import {
   filterAssets,
   kindGroup,
@@ -69,6 +71,7 @@ import { CodeEditorModal, createMotionGraphic } from '../CodeEditorModal'
 import { SourceViewer } from '../SourceViewer'
 import { assetActions, type AssetAction, type AssetActionId } from './assetActions'
 import { AssetDetails } from './AssetDetails'
+import { BinSection, newBinName } from './BinSection'
 import { ImportUrlDialog } from './ImportUrlDialog'
 import { LibraryHeader } from './LibraryHeader'
 import { onLibraryRequest, requestLibrary, takeLibraryRequest, useMediaSelection } from './librarySignals'
@@ -165,6 +168,9 @@ export function MediaPool({ variant = 'panel', inlineSource, title = 'Media Pool
   const [busy, setBusy] = useState<ReadonlyMap<string, string>>(new Map())
   const [editingCode, setEditingCode] = useState<string | null>(null)
   const [ask, setAsk] = useState<Ask | null>(null)
+  // Bins (`@shared/bins`): the project's folders, and the one whose name is being typed.
+  const bins = useEditor((state) => state.project.bins)
+  const [renamingBin, setRenamingBin] = useState<string | null>(null)
 
   const files = useFileStatus(assets)
   const shown = useMemo(() => sortAssets(filterAssets(assets, { query, kind }), sort), [assets, query, kind, sort])
@@ -315,6 +321,42 @@ export function MediaPool({ variant = 'panel', inlineSource, title = 'Media Pool
     return entries
   }
 
+  const newBin = (): void => {
+    const made = useEditor.getState().createBin(newBinName(bins ?? []))
+    if ('error' in made) notify(made.error, 'error')
+    else setRenamingBin(made.bin.id)
+  }
+
+  /** Where an asset can be filed, as rows of its menu: the keyboard's way to what a drag does. */
+  const binMenuFor = (asset: Asset): MenuEntry[] => {
+    const move = (binId: string | null): void => {
+      const result = useEditor.getState().moveAssetsToBin([asset.id], binId)
+      if ('error' in result) notify(result.error, 'error')
+    }
+    const current = binOf({ bins }, asset)
+    return [
+      { kind: 'separator' },
+      { kind: 'label', label: 'Bin' },
+      ...(bins ?? []).map((bin) => ({ label: bin.name, checked: current?.id === bin.id, onSelect: () => move(bin.id) })),
+      ...(bins && bins.length > 0 ? [{ label: 'Not in a bin', checked: current === null, onSelect: () => move(null) }] : []),
+      {
+        label: 'New Bin with This…',
+        onSelect: () => {
+          const state = useEditor.getState()
+          // One undo step: the bin and the asset going into it.
+          let made: ReturnType<typeof state.createBin> | null = null
+          state.transact(() => {
+            made = state.createBin(newBinName(bins ?? []))
+            if (made && 'bin' in made) state.moveAssetsToBin([asset.id], made.bin.id)
+          })
+          const result = made as ReturnType<typeof state.createBin> | null
+          if (result && 'error' in result) notify(result.error, 'error')
+          else if (result) setRenamingBin(result.bin.id)
+        }
+      }
+    ]
+  }
+
   const menuAsset = menu ? assets.find((asset) => asset.id === menu.assetId) : undefined
   const counts = useMemo(() => {
     const byGroup = new Map<string, number>()
@@ -374,6 +416,7 @@ export function MediaPool({ variant = 'panel', inlineSource, title = 'Media Pool
       <ToolButton label="Import URL" icon={<Link2 className="size-3.5" />} onClick={() => setUrlOpen(true)} />
       <ToolButton label="Captions" icon={<Captions className="size-3.5" />} onClick={() => void importCaptionsDialog()} />
       <ToolButton label="Motion Graphic" icon={<Sparkles className="size-3.5" />} onClick={newMotionGraphic} />
+      <ToolButton label="New Bin" icon={<FolderPlus className="size-3.5" />} onClick={newBin} />
     </div>
   )
 
@@ -436,9 +479,55 @@ export function MediaPool({ variant = 'panel', inlineSource, title = 'Media Pool
     </div>
   )
 
+  const tiles = (list: readonly Asset[]): ReactNode => (
+    <div
+      className={
+        view === 'grid'
+          ? cn('grid gap-2', browser ? 'grid-cols-[repeat(auto-fill,minmax(168px,1fr))]' : 'grid-cols-[repeat(auto-fill,minmax(112px,1fr))]')
+          : 'flex flex-col gap-px'
+      }
+    >
+      {list.map((asset) => (
+        <AssetTile
+          key={asset.id}
+          asset={asset}
+          view={view}
+          selected={asset.id === selectedId}
+          missing={files.missing.has(asset.id)}
+          uses={uses.get(asset.id) ?? 0}
+          bytes={files.sizes.get(asset.id)}
+          busy={busy.get(asset.id)}
+          renaming={asset.id === renamingId}
+          onSelect={(open) => select(asset.id, open)}
+          onPlace={() => place(asset)}
+          onMenu={(at) => setMenu({ assetId: asset.id, at })}
+          onRename={(name) => rename(asset, name)}
+        />
+      ))}
+    </div>
+  )
+
+  const hasBins = (bins?.length ?? 0) > 0
   const bin = (
     <ScrollArea className="min-h-0 flex-1 p-2.5">
-      {shown.length === 0 ? (
+      {hasBins ? (
+        // With bins the pool is sections: each bin in the order it was made, then what is in none.
+        <div className="flex flex-col gap-2">
+          {groupByBin({ bins }, shown).map((group) => (
+            <BinSection
+              key={group.bin?.id ?? 'top'}
+              bin={group.bin}
+              count={group.assets.length}
+              renaming={group.bin !== null && group.bin.id === renamingBin}
+              onRename={() => setRenamingBin(group.bin?.id ?? null)}
+              onRenamed={() => setRenamingBin(null)}
+              emptyHint={filtered ? 'Nothing in this bin matches.' : 'Empty. Drag media here, or use an asset’s menu.'}
+            >
+              {tiles(group.assets)}
+            </BinSection>
+          ))}
+        </div>
+      ) : shown.length === 0 ? (
         <div className="py-6 text-center">
           <p className="text-[12px] text-ink-2">{query.trim() ? `No media matches “${query.trim()}”.` : 'No media of this kind.'}</p>
           <Button
@@ -454,31 +543,7 @@ export function MediaPool({ variant = 'panel', inlineSource, title = 'Media Pool
           </Button>
         </div>
       ) : (
-        <div
-          className={
-            view === 'grid'
-              ? cn('grid gap-2', browser ? 'grid-cols-[repeat(auto-fill,minmax(168px,1fr))]' : 'grid-cols-[repeat(auto-fill,minmax(112px,1fr))]')
-              : 'flex flex-col gap-px'
-          }
-        >
-          {shown.map((asset) => (
-            <AssetTile
-              key={asset.id}
-              asset={asset}
-              view={view}
-              selected={asset.id === selectedId}
-              missing={files.missing.has(asset.id)}
-              uses={uses.get(asset.id) ?? 0}
-              bytes={files.sizes.get(asset.id)}
-              busy={busy.get(asset.id)}
-              renaming={asset.id === renamingId}
-              onSelect={(open) => select(asset.id, open)}
-              onPlace={() => place(asset)}
-              onMenu={(at) => setMenu({ assetId: asset.id, at })}
-              onRename={(name) => rename(asset, name)}
-            />
-          ))}
-        </div>
+        tiles(shown)
       )}
       {(filtered || captionLines > 0) && (
         <p className="mt-3 text-[10px] leading-relaxed text-ink-2">
@@ -569,7 +634,7 @@ export function MediaPool({ variant = 'panel', inlineSource, title = 'Media Pool
       <ContextMenu
         at={menu && menuAsset ? menu.at : null}
         label={menuAsset ? `${menuAsset.name} actions` : 'Asset actions'}
-        items={menuAsset ? menuFor(menuAsset) : []}
+        items={menuAsset ? [...menuFor(menuAsset), ...binMenuFor(menuAsset)] : []}
         onClose={() => setMenu(null)}
       />
 

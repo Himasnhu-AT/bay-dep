@@ -9,6 +9,8 @@ import { activeTimeline, allItems, type Project } from '@shared/project'
 import type { EditorActions, EditorState } from '../types'
 import type { StoreKit } from '../kit'
 import { HISTORY_LIMIT } from '../kit'
+import { carryNote, noteStep } from '../history-notes'
+import { planJump } from '@shared/history'
 
 /**
  * The selection that survives stepping to `project`: every selected clip that still exists there.
@@ -38,6 +40,8 @@ type Actions = Pick<
   | 'redo'
   | 'markSaved'
   | 'markSavedAs'
+  | 'jumpToHistory'
+  | 'restoreRecovered'
   | 'transact'
   | 'beginGesture'
   | 'endGesture'
@@ -137,16 +141,52 @@ export function projectSlice({ set, get, history, edit, turnMarks, followReverts
     },
 
     markSavedAs(filePath, name) {
-      const moved = <T extends { filePath?: string | null; name: string }>(project: T): T => ({ ...project, filePath, name })
+      const moved = (project: Project): Project => {
+        const copy = { ...project, filePath, name }
+        carryNote(project, copy)
+        return copy
+      }
       set((state) => ({ project: moved(state.project), past: state.past.map(moved), future: state.future.map(moved) }))
       history.saved = get().project
       set({ dirty: false })
+    },
+
+    jumpToHistory(position) {
+      const state = get()
+      const plan = planJump(state.past.length, state.past.length + state.future.length, position)
+      if ('error' in plan) return plan
+      // One `undo` or `redo` at a time, so every step gets what a single ⌘Z gives it: the change
+      // cards following a revert back and forth, the selection carried, an open gesture closed.
+      for (let i = 0; i < plan.undo; i += 1) get().undo()
+      for (let i = 0; i < plan.redo; i += 1) get().redo()
+      return { position: get().past.length }
+    },
+
+    restoreRecovered(project) {
+      const state = get()
+      if (state.screen === 'editor' && project.id === state.project.id) {
+        // Over the project it belongs to: one undo step, like a revert, so ⌘Z is the way back to
+        // the file as it was saved. A fresh object — the identity undo and redo know it by.
+        const restored = { ...project, updatedAt: Date.now() }
+        noteStep(state.project, 'Restore unsaved work')
+        set((current) => {
+          const past = [...current.past, current.project]
+          if (past.length > HISTORY_LIMIT) past.shift()
+          return { project: restored, past, future: [], selection: [], dirty: true }
+        })
+        return
+      }
+      // A project that was never saved has no file to stand over: it opens as itself, and unsaved.
+      get().enterProject(project)
+      history.saved = null
+      set({ dirty: true })
     },
 
     beginGesture() {
       if (history.txDepth === 0) {
         history.txBefore = get().project
         history.txRecorded = false
+        history.txLabel = undefined
       }
       history.txDepth += 1
       history.gestureDepth += 1
@@ -161,8 +201,11 @@ export function projectSlice({ set, get, history, edit, turnMarks, followReverts
       history.txBefore = null
       const recorded = history.txRecorded
       history.txRecorded = false
+      const label = history.txLabel
+      history.txLabel = undefined
       set((state) => {
         if (!recorded || !before || before === state.project) return state
+        noteStep(before, label)
         const past = [...state.past, before]
         if (past.length > HISTORY_LIMIT) past.shift()
         return { past, future: [], dirty: true }
@@ -181,6 +224,7 @@ export function projectSlice({ set, get, history, edit, turnMarks, followReverts
       }
       history.txBefore = get().project
       history.txRecorded = false
+      history.txLabel = undefined
       history.txDepth += 1
       try {
         work()
@@ -190,11 +234,14 @@ export function projectSlice({ set, get, history, edit, turnMarks, followReverts
         history.txBefore = null
         const recorded = history.txRecorded
         history.txRecorded = false
+        const label = history.txLabel
+        history.txLabel = undefined
         set((state) => {
           // No history entry for a transaction that recorded nothing, and none if the
           // project came back to the object it started from — an undo step that restores
           // the state you are already in is a control that does nothing.
           if (!recorded || !before || before === state.project) return state
+          noteStep(before, label)
           const past = [...state.past, before]
           if (past.length > HISTORY_LIMIT) past.shift()
           return { past, future: [], dirty: true }

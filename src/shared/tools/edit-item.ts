@@ -9,7 +9,7 @@ export const tool: ToolSpec = {
   name: 'edit_item',
   description:
     'Change a placed item: when it starts, how long it runs, which track it sits on, where ' +
-    'it sits on the canvas, its opacity, volume, pan, fades, speed, look, colour grade or keyframe animation. Only the fields you pass ' +
+    'it sits on the canvas, its opacity, volume, pan, fades, speed, look, colour grade, shape masks or keyframe animation. Only the fields you pass ' +
     'change. Moving an item onto occupied time on the same track is refused rather than ' +
     'silently overlapping — move the other item first, or use a different track. ' +
     'Returns the item complete after the edit. **That returned state is authoritative: you ' +
@@ -241,6 +241,33 @@ export const tool: ToolSpec = {
           'timeline px, color hex (default warm #FF8C40) }. Screened in RGB.\n' +
           '- vignette: { amount 0..1 }.\n' +
           'Only for picture clips (video, image, gif, html, brf). inspect_item reports it back.'
+      },
+      // No `type`: null must pass (it removes the shapes), and the validator does not recurse —
+      // `checkMasks` names the mask, the field and its legal range.
+      masks: {
+        description:
+          'Shape masks: show only part of this clip\'s picture — a vignette window, a spotlight on one ' +
+          'person, a split screen, a shape cut out of a clip so the track below shows through. A list, ' +
+          'replaced whole; [] or null removes the shapes. Each mask is { kind, x, y, width, height, ' +
+          'rotation?, feather?, invert?, opacity?, combine? }:\n' +
+          '- kind: "rect" (plus radius 0..1: 0 square corners, 1 fully round ends), "ellipse", or "path" ' +
+          '(plus points: 3-64 of { x, y } inside the mask\'s own box, 0,0 its top-left and 1,1 its ' +
+          'bottom-right, joined in order and closed; a point may carry bezier handles inX/inY/outX/outY ' +
+          'as offsets from it).\n' +
+          '- x, y: the centre, as FRACTIONS OF THE CLIP\'S OWN FRAME (0.5, 0.5 is its middle) — not ' +
+          'canvas pixels. width, height: fractions of the clip\'s frame (1 is all of it). So the mask ' +
+          'moves, scales, crops and animates with the clip.\n' +
+          '- rotation: degrees clockwise about the mask\'s centre. feather: the width of the soft edge ' +
+          'in timeline pixels (0-1000), centred on the shape\'s edge — 0 is a hard edge.\n' +
+          '- invert: keep everything except the shape. opacity: 0..1.\n' +
+          '- combine: how it joins the masks before it in the list — "add" (default, a union), ' +
+          '"subtract" (cut it out of them), "intersect" (keep only the overlap). A first mask that ' +
+          'subtracts cuts a hole in the whole picture.\n' +
+          'Soft oval on the middle of a clip: [{ "kind": "ellipse", "x": 0.5, "y": 0.5, "width": 0.6, ' +
+          '"height": 0.8, "feather": 60 }]. Left half only: [{ "kind": "rect", "x": 0.25, "y": 0.5, ' +
+          '"width": 0.5, "height": 1 }]. For picture clips (video, image, gif, html, brf), not text. ' +
+          'A subject cut-out\'s { "kind": "subject" } mask is put_behind_subject\'s and is kept as it ' +
+          'is; do not list it. Check the result with preview_frame.'
       },
       blendMode: {
         type: 'string',

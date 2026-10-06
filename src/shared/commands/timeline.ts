@@ -18,6 +18,11 @@ export const timelineCommands = [
   SEPARATOR,
   { id: 'timeline.closeGap', label: 'Close Gap at Playhead', group: 'Timeline' },
   SEPARATOR,
+  // The selected clip's track, one row up or down the stack (`@shared/track-order`). Dragging a
+  // track's header does the same.
+  { id: 'timeline.moveTrackUp', label: 'Move Track Up', group: 'Timeline' },
+  { id: 'timeline.moveTrackDown', label: 'Move Track Down', group: 'Timeline' },
+  SEPARATOR,
   // The pointer tools, on Final Cut's and Resolve's letters. Escape also returns to Select.
   { id: 'tool.select', label: 'Select Tool', group: 'Timeline', shortcut: 'A' },
   { id: 'tool.trim', label: 'Trim Tool', group: 'Timeline', shortcut: 'T' },

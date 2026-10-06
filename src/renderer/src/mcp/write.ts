@@ -39,6 +39,8 @@ import { retimeReport } from './retime'
 import { asBlendMode, lookWarnings, mergeAdjustments } from './adjustments'
 import { audioFinishPatch, audioFinishReport } from './audioFinish'
 import { GRADEABLE_KINDS, gradeWarnings, mergeGrade } from './grade'
+import { mergeMasks } from './masks'
+import { ADJUSTMENT_UNREAD_ARGS, isAdjustmentAsset } from '@shared/adjustment-layer'
 import { coerce } from '@shared/composition'
 import { activeTimeline, isCropped, normaliseCrop } from '@shared/project'
 import { bay } from '@/lib/bay'
@@ -193,7 +195,7 @@ export function placeAsset(args: Record<string, unknown>): Record<string, unknow
 }
 
 /** edit_item arguments that set a picture field — on a subject cut-out, its clip's (`CUTOUT_PICTURE_FIELDS`). */
-const PICTURE_ARGS = ['left', 'top', 'width', 'height', 'opacity', 'rotation', 'scale', 'crop', 'keyframes', 'grade', 'adjustments', 'fadeInFrames', 'fadeOutFrames', 'animation'] as const
+const PICTURE_ARGS = ['left', 'top', 'width', 'height', 'opacity', 'rotation', 'scale', 'crop', 'keyframes', 'grade', 'adjustments', 'fadeInFrames', 'fadeOutFrames', 'masks', 'animation'] as const
 
 export function editItem(args: Record<string, unknown>): Record<string, unknown> {
   const { item, track } = resolveItem(String(args.itemId))
@@ -208,6 +210,19 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
         `${item.id} is the subject cut-out of clip ${clip.id} and draws with that clip's picture, so ${picture.join(', ')} ` +
           `must be set on the clip: edit_item({ itemId: "${clip.id}", … }). The cut-out follows it — zoom, crop, keyframes and grade included.`,
         'This is the subject cut-out of the clip under the title. Select that clip to change its framing, crop, keyframes or grade — the cut-out follows it.'
+      )
+    }
+  }
+
+  // An adjustment layer always covers the whole frame and has no source: a field it does not
+  // read would be stored, read back as set, and change nothing.
+  if (isAdjustmentAsset(findAsset(project(), item.assetId))) {
+    const unread = ADJUSTMENT_UNREAD_ARGS.filter((key) => args[key] !== undefined)
+    if (unread.length > 0) {
+      fail(
+        `${item.id} is an adjustment layer: it always covers the whole frame and has no footage or sound of its own, so ${unread.join(', ')} ` +
+          `${unread.length === 1 ? 'does' : 'do'} nothing on it. To limit where it acts, give it masks (fractions of the frame); to change how strongly, opacity. ` +
+          `It takes from, durationInFrames, trackId, opacity, fades, grade, adjustments, masks and opacity keyframes.`
       )
     }
   }
@@ -484,6 +499,11 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
     }
     patch.grade = mergeGrade(item.grade, args.grade, (id) => findAsset(project(), id))
   }
+  // Shape masks: checked in `masks.ts` (and `@shared/shape-mask`), which names the bad field and
+  // its legal range. The clip's subject mask, if it has one, is kept.
+  if (args.masks !== undefined) {
+    patch.masks = mergeMasks(item, findAsset(project(), item.assetId), args.masks)
+  }
   if (args.blendMode !== undefined) {
     const spec = findTool('edit_item')
     const allowed =
@@ -612,6 +632,7 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
     ...(after.item.adjustments ? { adjustments: after.item.adjustments } : {}),
     ...(after.item.blendMode ? { blendMode: after.item.blendMode } : {}),
     ...(after.item.grade ? { grade: after.item.grade } : {}),
+    ...(after.item.masks ? { masks: after.item.masks } : {}),
     ...(after.item.keyframes
       ? { keyframes: after.item.keyframes, animation: describeKeyframes(after.item) }
       : {}),
@@ -953,13 +974,29 @@ export function setPlayhead(args: Record<string, unknown>): Record<string, unkno
   }
 }
 
-export function undo(): Record<string, unknown> {
+export function undo(args: Record<string, unknown> = {}): Record<string, unknown> {
   const state = store()
+  const before = timelineDuration(timeline())
+  const itemsBefore = allItems(timeline()).length
+  if (args.position !== undefined) {
+    // To a point in the history (`read_history`), back or forward: as many undos or redos as
+    // that takes, each a real one. Refused, with the range there is, for a point that is not.
+    const was = state.past.length
+    const jumped = state.jumpToHistory(Number(args.position))
+    if ('error' in jumped) fail(`${jumped.error} Call read_history for the positions.`)
+    const after = timeline()
+    return {
+      position: jumped.position,
+      undid: Math.max(0, was - jumped.position),
+      redid: Math.max(0, jumped.position - was),
+      remainingUndoSteps: store().past.length,
+      timeline: { durationInFrames: timelineDuration(after), itemCount: allItems(after).length },
+      changed: { durationWas: before, itemCountWas: itemsBefore }
+    }
+  }
   if (state.past.length === 0) {
     fail('There is nothing to undo — no change has been made to this project yet.')
   }
-  const before = timelineDuration(timeline())
-  const itemsBefore = allItems(timeline()).length
   state.undo()
   const after = timeline()
   return {
@@ -982,5 +1019,5 @@ export const handlers: Handlers = {
   remove_range: (args) => removeRange(args),
   add_track: (args) => addTrack(args),
   set_playhead: (args) => setPlayhead(args),
-  undo: () => undo(),
+  undo: (args) => undo(args),
 }

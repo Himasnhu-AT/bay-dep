@@ -30,8 +30,11 @@ import type { Effect } from './effects/spec'
 /**
  * `lut` is a colour look-up table (`.cube`): it has no picture of its own and is never placed on a
  * timeline — a clip's `grade.lut` refers to it by id.
+ *
+ * `adjustment` is an adjustment layer (`./adjustment-layer`): no file and no picture of its own; a
+ * clip of it on a video track applies its grade, adjustments and masks to what is drawn under it.
  */
-export type AssetKind = 'video' | 'audio' | 'image' | 'gif' | 'text' | 'html' | 'brf' | 'lut' | 'font'
+export type AssetKind = 'video' | 'audio' | 'image' | 'gif' | 'text' | 'html' | 'brf' | 'lut' | 'font' | 'adjustment'
 export type TrackKind = 'video' | 'audio'
 
 /** Microseconds. Used for durations and offsets that belong to source media. */
@@ -142,6 +145,11 @@ export interface Asset {
    */
   subjectMattes?: SubjectMatte[]
   createdAt: number
+  /**
+   * The Media Pool bin this asset is listed in (`Project.bins`, `@shared/bins`). Absent is the
+   * top of the pool. Only where it is listed: nothing about a clip or the picture reads it.
+   */
+  binId?: string
   /** Set when probing failed; the asset still lists, but cannot be placed. */
   error?: string
 }
@@ -594,10 +602,12 @@ export interface Item {
    */
   disabled?: boolean
   /**
-   * Masks on this clip's picture (`@shared/matte`): today one `{ kind: 'subject' }`, which keeps only
-   * the person — the cut-out copy `put_behind_subject` puts over a title. Applied by the compositor
-   * inside `#drawSource`, after the grade, from the same media element as any other drawing of this
-   * clip at the same source time. Absent is the fast path. Optional and additive.
+   * Masks on this clip's picture (`@shared/matte`): a `{ kind: 'subject' }`, which keeps only the
+   * person — the cut-out copy `put_behind_subject` puts over a title — and/or shape masks
+   * (`@shared/shape-mask`: `rect`, `ellipse`, `path`), which keep the part of the clip's own frame
+   * they cover, combined in list order. Applied by the compositor inside `#drawSource`, after the
+   * grade, from the same media element as any other drawing of this clip at the same source time.
+   * Absent is the fast path. Optional and additive.
    */
   masks?: Mask[]
   /**
@@ -888,6 +898,17 @@ export interface Project {
    * the timeline lives in DaVinci Resolve and the agent drives it there.
    */
   host?: 'bay' | 'resolve'
+  /**
+   * Folders in the Media Pool, in the order they were made (`@shared/bins`). Absent is none, and
+   * a project with none has no key: additive, so an older build carries it through untouched.
+   */
+  bins?: Bin[]
+}
+
+/** A folder in the Media Pool. One level: a bin holds assets (`Asset.binId`), not other bins. */
+export interface Bin {
+  id: string
+  name: string
 }
 
 /**

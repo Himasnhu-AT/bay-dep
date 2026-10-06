@@ -38,6 +38,7 @@ import { TransitionDialog } from './TransitionDialog'
 import { hideCoveredRulerLabels, TimelineRuler } from './TimelineRuler'
 import { TimelineToolbar } from './TimelineToolbar'
 import { TrackHeader } from './TrackHeader'
+import { trackNumbers } from '@shared/track-order'
 import { ClipDialogs, clipMenuEntries, rippleDeleteEntries, type ClipMenuPage } from './ClipCommands'
 import { detachToEntries, rippleDeleteThisTrack, trimModeEntries } from './clipMenuExtras'
 import { canDetachAudio, canReattachAudio, isLinked, runAudioLink } from './timeline/audioLink'
@@ -46,6 +47,7 @@ import { TRIM_TOOL_MODES, useTimelineTool } from '@/lib/timelineTool'
 import { pointerHint } from '@/lib/pointerHint'
 import { planTrackShift, type TrackMove } from '@shared/track-move'
 import { applyRippleTrim, rippleHeadRoom } from './timeline/rippleTrim'
+import { addAdjustmentLayerHere } from './AdjustmentLayerButton'
 
 const CLIP_MENU_PAGE_NAME: Record<ClipMenuPage, string> = { main: '', trim: 'Trim', audio: 'Audio', ripple: 'Ripple Delete' }
 
@@ -246,12 +248,7 @@ export function Timeline(): ReactNode {
   // Listed top to bottom as the picture stacks: the front video layer first, audio below.
   const ordered = useMemo(() => displayOrder(tracks), [tracks])
   // Resolve's track numbers: V1 is the first video track in the stack (drawn lowest), A1 the first audio.
-  const badges = useMemo(() => {
-    const out = new Map<string, string>()
-    const count = { video: 0, audio: 0 }
-    for (const track of tracks) out.set(track.id, `${track.kind === 'video' ? 'V' : 'A'}${++count[track.kind]}`)
-    return out
-  }, [tracks])
+  const badges = useMemo(() => trackNumbers(tracks), [tracks])
   const heightOf = useCallback(
     (track: Track): number => trackHeightFor(track.kind, trackSizes[track.id]),
     [trackSizes]
@@ -905,6 +902,11 @@ export function Timeline(): ReactNode {
                   : 'Add text here',
             disabled: laneMenuTrack.kind !== 'video' || laneMenuTrack.locked,
             onSelect: () => addTextAt(laneMenu.frame, laneMenuTrack.id)
+          },
+          {
+            // Always above everything, whichever lane was clicked: a layer changes the tracks below it.
+            label: 'Add adjustment layer at this frame',
+            onSelect: () => addAdjustmentLayerHere(laneMenu.frame)
           },
           {
             label: 'Add marker here',

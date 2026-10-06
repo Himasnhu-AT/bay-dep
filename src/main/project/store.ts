@@ -32,13 +32,20 @@ import {
   EXTENSION,
   freshProject,
   LAST_PROJECT_KEY,
-  autosavePathFor,
+  checkRecovery,
+  clearSidecarsAfterSave,
   exists,
+  listUnsaved,
   readProjectFile,
+  readSidecar,
+  removeSidecar,
   resolveInitialProject,
-  writeAtomic,
-  writeProjectFile
+  setSidecarAside,
+  sidecarPathFor,
+  writeProjectFile,
+  writeSidecar
 } from './persistence'
+import type { AutosaveTarget, OpenedProject, RecoveryOffer } from '@shared/autosave'
 
 export interface StorageStatus {
   ready: boolean
@@ -494,6 +501,7 @@ export async function save(
   // work somewhere they would never think to look.
   if (!target) throw new Error('Save cancelled.')
   const written = await persist(project, target)
+  await clearSidecarsAfterSave({ id: project.id, filePath: project.filePath ?? null }, target, autosaveDir())
   return { filePath: written.filePath! }
 }
 
@@ -506,6 +514,7 @@ export async function saveAs(
   // The project takes the new file's name, as `create` and `rename` keep them; otherwise home
   // lists two identical cards for two files.
   const written = await persist({ ...project, name: nameFromPath(target, project.name) }, target)
+  await clearSidecarsAfterSave({ id: project.id, filePath: project.filePath ?? null }, target, autosaveDir())
   return { filePath: written.filePath!, name: written.name }
 }
 
@@ -535,6 +544,48 @@ export async function openPath(filePath: string): Promise<Project> {
  * `project.bay` — atomically or not — gives up that guarantee for nothing.
  */
 export async function autosave(project: Project): Promise<void> {
-  const target = autosavePathFor(project, autosaveDir())
-  await writeAtomic(target, JSON.stringify({ ...project, updatedAt: Date.now() }, null, 2))
+  await writeSidecar(project, autosaveDir())
+}
+
+/** What crossed the bridge, as the two fields that name a sidecar and nothing else. */
+const targetOf = (target: AutosaveTarget): AutosaveTarget => ({
+  id: String(target?.id ?? ''),
+  filePath: typeof target?.filePath === 'string' && target.filePath !== '' ? target.filePath : null
+})
+
+/** Whether the project just opened has unsaved work waiting in its sidecar (`@shared/autosave`). */
+export async function recovery(opened: OpenedProject): Promise<RecoveryOffer | null> {
+  return checkRecovery(
+    { ...targetOf(opened), name: String(opened?.name ?? ''), updatedAt: Number(opened?.updatedAt) || 0 },
+    autosaveDir()
+  )
+}
+
+/** Projects autosaved and never saved, for the projects screen. */
+export async function unsaved(): Promise<RecoveryOffer[]> {
+  return listUnsaved(autosaveDir())
+}
+
+/**
+ * The sidecar as a project, through the same migrations and the same asset gate as opening a
+ * file. The sidecar stays on disk: the restored work is still unsaved, and a second crash before
+ * the user saves must be able to offer it again. A save removes it.
+ */
+export async function recover(given: AutosaveTarget): Promise<Project> {
+  const target = targetOf(given)
+  return admitAssets(await readSidecar(sidecarPathFor(target, autosaveDir()), target.filePath))
+}
+
+export async function discardRecovery(given: AutosaveTarget): Promise<void> {
+  await removeSidecar(targetOf(given), autosaveDir())
+}
+
+/** Keep a sidecar that will not load, out of autosave's way. Resolves to where it went. */
+export async function setAsideRecovery(given: AutosaveTarget): Promise<string> {
+  return setSidecarAside(targetOf(given), autosaveDir())
+}
+
+/** Show a project's sidecar in Finder — for one that will not load, so it can be rescued by hand. */
+export function revealRecovery(given: AutosaveTarget): void {
+  shell.showItemInFolder(sidecarPathFor(targetOf(given), autosaveDir()))
 }

@@ -283,6 +283,26 @@ const TOOL_CASES: Record<string, ToolCase[]> = {
     { delta: 1, args: () => ({ frame: 30 }) },
     { delta: 1, args: (f) => ({ frame: 30, itemIds: [f.a, f.c, f.d] }) }
   ],
+  // Three cuts at once — V1, V2 and A1, each split at 30 by the setup — healed in one call.
+  join_items: [
+    {
+      delta: 1,
+      before: () => { state().clearSelection(); state().splitAt(30) },
+      args: (f) => ({ itemIds: [f.a] })
+    },
+    {
+      delta: 1,
+      before: () => { state().clearSelection(); state().splitAt(30) },
+      args: () => ({ itemIds: state().project.timelines[0]!.tracks.flatMap((t) => t.items).filter((i) => i.from < 60).map((i) => i.id) })
+    }
+  ],
+  // A bin made by naming it, and an asset filed in it: two store calls, one step.
+  organize_assets: [
+    { delta: 1, args: () => ({ assetIds: [ASSET.id], bin: 'Footage' }) },
+    { delta: 1, args: () => ({ bin: 'Music' }) }
+  ],
+  // A track that renames two others as it passes them: one step, names included.
+  move_track: [{ delta: 1, args: (f) => ({ trackId: f.v1, position: 3 }) }],
   delete_items: [
     { delta: 1, args: (f) => ({ itemIds: [f.a, f.c, f.d] }) },
     // Delete plus one `moveItem` per survivor after it: the shape of the original bug.
@@ -359,6 +379,8 @@ const TOOL_CASES: Record<string, ToolCase[]> = {
     { delta: 1, args: (f) => ({ trackId: f.v2, action: 'add', kind: 'compressor', params: { ratio: 4 } }) }
   ],
   add_track: [{ delta: 1, args: () => ({ kind: 'audio' }) }],
+  // A new asset, a new track above everything and the layer's clip on it: three changes, one step.
+  add_adjustment_layer: [{ delta: 1, args: () => ({ from: 0, durationInFrames: 90 }) }],
   add_transition: [
     { delta: 1, args: (f) => ({ fromItemId: f.a, toItemId: f.b, kind: 'cross-dissolve' }) }
   ],
@@ -701,6 +723,14 @@ const STORE_CASES: Record<string, StoreCase> = {
   patchLayout: { delta: 1, run: (f) => state().patchLayout(f.a, { left: 10, opacity: 0.5 }) },
   setCrop: { delta: 1, run: (f) => state().setCrop(f.a, 'left', 0.1) },
   setKeyframe: { delta: 1, run: (f) => state().setKeyframe(f.a, 'scale', 10, 1.1) },
+  setShapeMasks: { delta: 1, run: (f) => state().setShapeMasks(f.a, [{ kind: 'ellipse', x: 0.5, y: 0.5, width: 0.5, height: 0.5 }]) },
+  addAdjustmentLayer: {
+    delta: 1,
+    run: () => {
+      const result = state().addAdjustmentLayer({ from: 0, durationInFrames: 90 })
+      assert.ok(result.ok, JSON.stringify(result))
+    }
+  },
   setCompositionVariable: {
     delta: 1,
     run: () => {
@@ -715,6 +745,62 @@ const STORE_CASES: Record<string, StoreCase> = {
     }
   },
   addTrack: { delta: 1, run: () => { state().addTrack('video') } },
+  moveTrack: { delta: 1, run: (f) => { state().moveTrack(f.v1, 3) } },
+  createBin: { delta: 1, run: () => { state().createBin('Interviews') } },
+  renameBin: {
+    delta: 1,
+    run: () => {
+      const made = state().createBin('Interviews')
+      assert.ok('bin' in made)
+      const before = past()
+      state().renameBin(made.bin.id, 'Talking heads')
+      // Measured here rather than by the caller: making the bin is an edit too.
+      assert.equal(past() - before, 1)
+    }
+  },
+  moveAssetsToBin: {
+    delta: 1,
+    run: () => {
+      const made = state().createBin('Interviews')
+      assert.ok('bin' in made)
+      const before = past()
+      state().moveAssetsToBin([ASSET.id], made.bin.id)
+      assert.equal(past() - before, 1)
+    }
+  },
+  removeBin: {
+    delta: 1,
+    run: () => {
+      const made = state().createBin('Interviews')
+      assert.ok('bin' in made)
+      state().moveAssetsToBin([ASSET.id], made.bin.id)
+      // A second bin that stays: removing the only one puts the project back as it began.
+      state().createBin('Music')
+      const before = past()
+      state().removeBin(made.bin.id)
+      assert.equal(past() - before, 1)
+    }
+  },
+  joinItems: {
+    delta: 1,
+    run: (f) => {
+      state().clearSelection()
+      state().splitAt(30)
+      // A second cut that stays: splitting and joining at 30 alone puts the project back exactly
+      // as it was, and the caller's "this changed something" would read that as nothing done.
+      state().splitAt(90)
+      const before = past()
+      // Measured here rather than by the caller: the splits that make the cuts are edits too.
+      const result = state().joinItems([f.a, f.c, f.d].flatMap((id) => {
+        const track = state().project.timelines[0]!.tracks.find((t) => t.items.some((i) => i.id === id))!
+        return [id, track.items.find((i) => i.from === 30)!.id]
+      }))
+      assert.ok('joined' in result && result.joined.length === 3, JSON.stringify(result))
+      assert.equal(past() - before, 1)
+    }
+  },
+  // Over the project it belongs to, restoring recovered work is one step ⌘Z takes back.
+  restoreRecovered: { delta: 1, run: () => state().restoreRecovered({ ...state().project, name: 'Recovered' }) },
   patchTrack: { delta: 1, run: (f) => state().patchTrack(f.v2, { muted: true, name: 'Under' }) },
   setAudioEffects: { delta: 1, run: (f) => state().setAudioEffects({ itemId: f.a }, [{ id: 'afx_x', kind: 'highpass', params: { frequency: 80, q: 0.7 } }]) },
   addTransition: {
@@ -957,6 +1043,7 @@ const STORE_EXEMPT: Record<string, string> = {
   placeSubtitles: 'needs a source clip and a composition asset; add-subtitles.test.ts covers it as one step',
   placeDub: 'needs generated line assets and a source clip; dub.test.ts covers it as one step',
   undo: 'moves an entry from past to future',
+  jumpToHistory: 'a run of undos or redos: moves entries between past and future; history.test.ts and structure.test.ts cover it',
   redo: 'moves an entry from future to past',
   transact: 'is the grouping mechanism itself; editor.test.ts covers it',
   beginGesture: 'opens a pointer-gesture group (transact across events); editor.test.ts covers it',
@@ -1005,6 +1092,10 @@ for (const [action, spec] of Object.entries(STORE_CASES)) {
       'reattachAudio',
       'unlinkItems',
       'closeGapAt',
+      'joinItems',
+      'renameBin',
+      'moveAssetsToBin',
+      'removeBin',
       'patchEffect',
       'moveEffect',
       'removeEffect',

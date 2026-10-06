@@ -57,7 +57,7 @@ export const MAX_EFFECTS = 16
  * The asset kinds an effect can draw on: what the compositor paints as a picture source, which is
  * what a grade reaches too. Text draws its own glyphs and audio has no picture.
  */
-export const EFFECT_ITEM_KINDS = ['video', 'image', 'gif', 'html', 'brf'] as const
+export const EFFECT_ITEM_KINDS = ['video', 'image', 'gif', 'html', 'brf', 'adjustment'] as const
 
 export function takesEffects(kind: string | undefined): boolean {
   return (EFFECT_ITEM_KINDS as readonly string[]).includes(kind ?? '')
