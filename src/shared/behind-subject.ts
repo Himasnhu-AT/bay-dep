@@ -205,7 +205,7 @@ export function planBehindSubject(timeline: Timeline, spec: BehindSubjectSpec, o
  * edit_item, the inspector, keyframe edits, paste attributes, templates, `apply_script` and the next
  * one — to remember a partner; reading them from the clip needs none to.
  */
-export const CUTOUT_PICTURE_FIELDS = ['layout', 'crop', 'keyframes', 'grade', 'adjustments', 'fadeInFrames', 'fadeOutFrames'] as const
+export const CUTOUT_PICTURE_FIELDS = ['layout', 'crop', 'keyframes', 'grade', 'adjustments', 'fadeInFrames', 'fadeOutFrames', 'animation'] as const
 
 /**
  * The clip a subject cut-out draws its picture from: the item sharing its link that plays the same
@@ -230,7 +230,7 @@ export function cutoutPartner(timeline: Timeline, item: Item): Item | null {
 export function cutoutAsDrawn(item: Item, partner: Item | null): Item {
   if (!partner) return item
   const out: Item = { ...item, layout: partner.layout, fadeInFrames: partner.fadeInFrames, fadeOutFrames: partner.fadeOutFrames }
-  for (const field of ['crop', 'keyframes', 'grade', 'adjustments'] as const) {
+  for (const field of ['crop', 'keyframes', 'grade', 'adjustments', 'animation'] as const) {
     if (partner[field] === undefined) delete out[field]
     else (out as unknown as Record<string, unknown>)[field] = partner[field]
   }

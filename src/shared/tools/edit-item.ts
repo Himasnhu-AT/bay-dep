@@ -1,5 +1,7 @@
 import type { ToolSpec } from './spec'
 import { frames, itemId } from './fields'
+import { animationCatalogText } from '../animation'
+import { TEXT_LOOKS } from '../text-style'
 
 export const order = 160
 
@@ -63,7 +65,10 @@ export const tool: ToolSpec = {
       keyframes: {
         description:
           'Animate properties over the clip: { property: [{ frame, value, ease? }, ...] }. ' +
-          'Properties: opacity, left, top, width, height, rotation, scale, volume. A property with ' +
+          'Properties: opacity, left, top, width, height, rotation, scale, volume; the crop edges ' +
+          'cropLeft, cropTop, cropRight, cropBottom (fractions 0..1, picture sources only); the ' +
+          'adjustments brightness, contrast, saturate, hueRotate, blur, grayscale, sepia, invert; and on ' +
+          'a title fontSize and letterSpacing (pixels). A property with ' +
           'keys takes its value from them at every frame (its static field no longer draws); before ' +
           'the first key the first value holds, after the last the last. Fades, transitions and ' +
           'ducking still multiply on top.\n' +
@@ -276,8 +281,74 @@ export const tool: ToolSpec = {
           },
           background: {
             description: 'A plate behind the words: { color, padding, radius }. null to remove.'
+          },
+          // The paint stack. Each is replaced whole when named and removed by null; none is
+          // needed for a plain title, which keeps using color/stroke/shadow/background alone.
+          look: {
+            type: 'string',
+            description:
+              'A named look, applied before the other fields in this call (so { look: "neon", color: ' +
+              '"#FF66CC" } is neon recoloured). It replaces the paint and weight and keeps the font, ' +
+              'size, alignment and line height; its outline and shadow sizes scale with fontSize. ' +
+              'Not stored — read the fields it set from the result. ' +
+              TEXT_LOOKS.map((look) => `"${look.id}": ${look.description}`).join(' ') +
+              ' To restyle many titles at once use apply_text_look.'
+          },
+          fills: {
+            description:
+              'The fill, as a stack painted bottom to top; when present it replaces color. Each is ' +
+              '{ kind: "solid", color } or a gradient across the block of text: { kind: "linear", ' +
+              'angle (degrees; 0 left-to-right, 90 top-to-bottom), stops: [{ at 0..1, color }, …] } or ' +
+              '{ kind: "radial", stops, centerX?, centerY?, radius? }. Any fill may add opacity (0..1) ' +
+              'and offsetX/offsetY (pixels): a dark solid offset under the face is a lifted, extruded ' +
+              'letter. [] is a hollow title (outline only). null goes back to color.'
+          },
+          strokes: {
+            description:
+              'More outlines outside stroke, each wrapping the one before: [{ color, width, join? ' +
+              '("round" default, "miter", "bevel") }]. stroke + one of these is a double outline. null removes them.'
+          },
+          shadows: {
+            description:
+              'More drop shadows behind the title, after shadow: [{ color, blur, offsetX, offsetY }]. ' +
+              'A hard one (blur 0) plus a soft one reads as depth. null removes them.'
+          },
+          glow: {
+            description:
+              'A halo around the letters: { color, blur (pixels), strength? (1-4 layers; 3 is a neon tube) }. null removes it.'
+          },
+          plate: {
+            description:
+              'How the background plate is shaped: { perLine? (a bar behind each line, as wide as its ' +
+              'words, instead of one block), paddingX?, paddingY? (replace background.padding on that ' +
+              'axis) }. Needs background. null goes back to one evenly padded block.'
           }
         }
+      },
+      // No `type`: null must pass (it removes every preset), and `mergeAnimation` checks each
+      // field and names the legal values.
+      animation: {
+        description:
+          'Animation presets: how the clip arrives, leaves and idles — { in?, out?, loop? }. Use ' +
+          'this for an entrance or exit; use keyframes for a move you need to shape yourself. Each ' +
+          'is { kind, seconds? or frames?, from?, by?, amount? }; with no length the kind\'s own is ' +
+          'used. ' + animationCatalogText() + '\n' +
+          '- from: the side a slide or wipe comes in from — on an out, the side it leaves toward.\n' +
+          '- by (titles only): "line", "word" or "letter" runs the preset on each in turn, in ' +
+          'reading order, overlapping. { in: { kind: "rise", by: "word" } } is the words rising out ' +
+          'of their line one after another.\n' +
+          '- The in is glued to the clip\'s first frames and the out to its last, so trimming or ' +
+          'moving the clip keeps them there; split_at leaves the in on the left half and the out on ' +
+          'the right. If in + out are longer than the clip they share it in proportion (the result ' +
+          'says so).\n' +
+          '- Presets ride on top of keyframes and static values rather than replacing them: ' +
+          'opacity and scale multiply, position, rotation and blur add.\n' +
+          '- They animate the picture only; sound keeps fadeInFrames/fadeOutFrames. Where a ' +
+          'transition crosses that end of the clip the preset at that end is set aside (the result warns).\n' +
+          'Each end you name is replaced whole; { in: null } removes one; animation: null removes ' +
+          'all. The result reports them under presets, with the timeline frames each occupies.\n' +
+          'A title that types on and fades out: { in: { kind: "typewriter", seconds: 1 }, out: { kind: "fade", seconds: 0.3 } }. ' +
+          'A photo sliding in from the right: { in: { kind: "slide", from: "right" } }.'
       }
     },
     required: ['itemId']

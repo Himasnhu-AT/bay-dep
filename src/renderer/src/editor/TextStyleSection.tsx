@@ -30,6 +30,8 @@ import { useEditor } from '@/store/editor'
 import { LIVE } from './liveGesture'
 import { importedFamilies } from '@shared/fonts'
 import { typedFont } from './typedFont'
+import { TextLooksSection } from './TextLooksSection'
+import { FillSection, GlowSection, PlateShape, SecondOutline, SecondShadow } from './TextLayersSections'
 
 /**
  * Families **measured** as present on this machine, not assumed.
@@ -131,6 +133,18 @@ export function TextStyleSection({ items, asset }: TextStyleSectionProps): React
     })
   }
 
+  /** Removes stack fields from every selected title, as one undo step, leaving no empty key behind. */
+  const unset = (...keys: ('fills' | 'strokes' | 'shadows' | 'glow' | 'plate')[]): void => {
+    transact(() => {
+      for (const item of items) {
+        const next = { ...resolvedTextStyle(item) }
+        for (const key of keys) delete next[key]
+        patchItem(item.id, { text: next })
+      }
+    })
+  }
+  const layers = { style, set, unset }
+
   const toggle = <K extends 'stroke' | 'shadow' | 'background'>(
     key: K,
     on: TextStyle[K]
@@ -138,6 +152,7 @@ export function TextStyleSection({ items, asset }: TextStyleSectionProps): React
 
   return (
     <>
+      <TextLooksSection items={items} />
       <Section
         id="inspector.type"
         title={items.length > 1 ? `Type · ${items.length} selected` : 'Type'}
@@ -269,6 +284,8 @@ export function TextStyleSection({ items, asset }: TextStyleSectionProps): React
         )}
       </Section>
 
+      <FillSection {...layers} />
+
       <Section
         id="inspector.outline"
         title="Outline"
@@ -305,6 +322,7 @@ export function TextStyleSection({ items, asset }: TextStyleSectionProps): React
         ) : (
           <p className="text-[11px] text-ink-2">Off. An outline keeps type legible over busy footage.</p>
         )}
+        <SecondOutline {...layers} />
       </Section>
 
       <Section
@@ -363,7 +381,10 @@ export function TextStyleSection({ items, asset }: TextStyleSectionProps): React
         ) : (
           <p className="text-[11px] text-ink-2">Off.</p>
         )}
+        <SecondShadow {...layers} />
       </Section>
+
+      <GlowSection {...layers} />
 
       <Section
         id="inspector.plate"
@@ -413,6 +434,7 @@ export function TextStyleSection({ items, asset }: TextStyleSectionProps): React
                 suffix="px"
               />
             </div>
+            <PlateShape {...layers} />
           </>
         ) : (
           <p className="text-[11px] text-ink-2">

@@ -8,6 +8,8 @@ import {
   type LaidOutText
 } from '@/engine'
 import { defaultTextStyle, type Asset, type Item } from '@shared/project'
+import { anchorFor } from '@/engine/text'
+import { paintOverflow, planText } from '@/engine/textPaint'
 
 export interface TextFitReport {
   laid: LaidOutText
@@ -94,6 +96,24 @@ export function useTextFit(
       )
     } else if (laid.scale < 1) {
       warnings.push(`Shrunk to ${Math.round(laid.scale * 100)}% (${laid.fontSize}px) to fit the box.`)
+    }
+    // The letters fit; the paint around them may not. Layout does not shrink type for its
+    // outline, shadow, glow or plate, so on a title that fills its box they cross it — and where
+    // the box meets the frame edge they are cut off. The compositor's own plan, so the same answer.
+    if (!laid.clipped) {
+      ctx.font = fontString(laid.fontSize)
+      ctx.letterSpacing = `${style.letterSpacing}px`
+      const anchor = anchorFor(box, laid, style.align, style.verticalAlign)
+      const over = paintOverflow(planText(laid, anchor, style, (line) => ctx.measureText(line).width).painted, box)
+      if (over) {
+        const sides = (['left', 'top', 'right', 'bottom'] as const)
+          .filter((side) => over[side] > 0.5)
+          .map((side) => `${Math.round(over[side])}px ${side}`)
+        warnings.push(
+          `The outline, shadow, glow or plate reaches outside the box (${sides.join(', ')}). ` +
+            `It still draws — but where the box touches the frame edge it is cut off. Give the box more room, or thin the effect.`
+        )
+      }
     }
 
     setReport({ laid, fontAvailable: available, warnings })
