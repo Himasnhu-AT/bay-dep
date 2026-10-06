@@ -46,7 +46,11 @@ const EXPORT_TOLERANCE_DB = 0.5
 
 const dir = mkdtempSync(join(tmpdir(), `bay-audio-effects-${process.pid}-`))
 const tone = join(dir, 'tone.wav')
-execFileSync(FFMPEG, ['-v', 'error', '-y', '-f', 'lavfi', '-i', `aevalsrc=${TONE_PEAK}*sin(2*PI*${TONE_HZ}*t):s=${RATE}:d=12`, '-ac', '2', tone])
+// Two channels written as two expressions. The first run made one and asked for `-ac 2`, and
+// ffmpeg's mono-to-stereo upmix is −3.01 dB a side: the "0.6" tone was 0.424, both dry controls
+// read −3 dB, and the compressor and limiter were judged against a level the file did not have.
+const SINE = `${TONE_PEAK}*sin(2*PI*${TONE_HZ}*t)`
+execFileSync(FFMPEG, ['-v', 'error', '-y', '-f', 'lavfi', '-i', `aevalsrc=${SINE}|${SINE}:s=${RATE}:d=12`, tone])
 
 const moviesDir = join(homedir(), 'Movies', 'bay')
 mkdirSync(moviesDir, { recursive: true })
