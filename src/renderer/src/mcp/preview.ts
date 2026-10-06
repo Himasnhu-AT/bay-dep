@@ -50,7 +50,7 @@ export async function previewFrame(args: Record<string, unknown>): Promise<Recor
   // picture. `fontAvailable: false` is the worst of the three: a substituted family has no
   // visual cue at all, so an agent judging the frame has nothing to notice.
   const troubled = (still.textFits ?? []).filter(
-    (fit) => fit.clipped || fit.scale < 1 || !fit.fontAvailable
+    (fit) => fit.clipped || fit.scale < 1 || !fit.fontAvailable || fit.paintOverflow !== undefined
   )
   const textWarnings = troubled.map((fit) => {
     if (fit.clipped) {
@@ -59,7 +59,13 @@ export async function previewFrame(args: Record<string, unknown>): Promise<Recor
     if (!fit.fontAvailable) {
       return `${fit.itemId}: the requested font is not installed, so the platform substituted another. The picture looks deliberate and is not the typeface asked for.`
     }
-    return `${fit.itemId}: shrunk to ${Math.round(fit.scale * 100)}% (${fit.fontSize}px) to fit its box across ${fit.lines} line${fit.lines === 1 ? '' : 's'}.`
+    if (fit.scale < 1) {
+      return `${fit.itemId}: shrunk to ${Math.round(fit.scale * 100)}% (${fit.fontSize}px) to fit its box across ${fit.lines} line${fit.lines === 1 ? '' : 's'}.`
+    }
+    // The letters fit; the paint around them does not. Last, because it is the visible one.
+    const over = fit.paintOverflow!
+    const sides = (['left', 'top', 'right', 'bottom'] as const).filter((side) => over[side] > 0.5).map((side) => `${Math.round(over[side])}px ${side}`)
+    return `${fit.itemId}: its outline, shadow, glow or plate reaches outside its box (${sides.join(', ')}). Where the box meets the frame edge that paint is cut off — move the box in, make it bigger, or thin the effect.`
   })
   return {
     frame,

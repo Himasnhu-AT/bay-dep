@@ -56,6 +56,7 @@ import { AudioSection } from './AudioSection'
 import { ClipAudioEffects } from './audio/ClipAudioEffects'
 import { ClipSection, Readout } from './ClipSection'
 import { KeyframesSection } from './KeyframesSection'
+import { AnimationSection } from './AnimationSection'
 import { EffectStackSection, effectsTouched } from './EffectStackSection'
 import { chooseTab, inspectorTabs, tabForSection, type SelectionShape } from './inspector/tabs'
 import { TimelineTab } from './inspector/TimelineTab'
@@ -785,6 +786,10 @@ export function Inspector(): ReactNode {
           because it is drawn before the adjustments below it. */}
       {sourceItems.length > 0 && <EffectStackSection items={sourceItems} />}
       {visualItems.length > 0 && <AdjustmentsSection items={visualItems} timeline={timeline} blend={false} />}
+      {/* In / Out / Loop presets: anything with a picture; a title can also run them word by word. */}
+      {visualItems.length > 0 && (
+        <AnimationSection items={visualItems} titles={visualItems.filter((item) => textItems.includes(item)).length} timeline={timeline} />
+      )}
       <KeyframesSection items={selected} />
       {visualItems.length === 0 && !hasKeyframes && (
         <p className="px-3 py-6 text-center text-[11px] text-ink-2">

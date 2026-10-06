@@ -57,6 +57,7 @@ import {
 import { frameOrPlayhead, itemsCrossing } from './read'
 import { mergeTextStyle } from './textStyle'
 import { describeKeyframes, mergeKeyframes } from '@shared/keyframes'
+import { describeAnimation, mergeAnimation, transitionEnds } from '@shared/animation'
 import { KEYFRAME_PROPERTIES } from '@shared/project'
 
 export async function importMedia(args: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -192,7 +193,7 @@ export function placeAsset(args: Record<string, unknown>): Record<string, unknow
 }
 
 /** edit_item arguments that set a picture field — on a subject cut-out, its clip's (`CUTOUT_PICTURE_FIELDS`). */
-const PICTURE_ARGS = ['left', 'top', 'width', 'height', 'opacity', 'rotation', 'scale', 'crop', 'keyframes', 'grade', 'adjustments', 'fadeInFrames', 'fadeOutFrames'] as const
+const PICTURE_ARGS = ['left', 'top', 'width', 'height', 'opacity', 'rotation', 'scale', 'crop', 'keyframes', 'grade', 'adjustments', 'fadeInFrames', 'fadeOutFrames', 'animation'] as const
 
 export function editItem(args: Record<string, unknown>): Record<string, unknown> {
   const { item, track } = resolveItem(String(args.itemId))
@@ -517,10 +518,29 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
       from,
       durationInFrames,
       hasPicture: track.kind === 'video',
-      hasAudio: Boolean(asset?.hasAudio) || asset?.kind === 'html'
+      hasAudio: Boolean(asset?.hasAudio) || asset?.kind === 'html',
+      isText: asset?.kind === 'text',
+      hasSource: track.kind === 'video' && asset?.kind !== 'text',
+      item
     })
     if (!merged.ok) fail(merged.error, merged.userMessage)
     patch.keyframes = merged.keyframes
+  }
+
+  // Animation presets: checked against the clip as it will be after this call, like the keys.
+  const presetNotes: string[] = []
+  if (args.animation !== undefined) {
+    const asset = findAsset(project(), item.assetId)
+    const merged = mergeAnimation(item.animation, args.animation, {
+      itemId: item.id,
+      durationInFrames,
+      fps: timeline().fps,
+      hasPicture: track.kind === 'video',
+      isText: asset?.kind === 'text'
+    })
+    if (!merged.ok) fail(merged.error)
+    patch.animation = merged.animation
+    presetNotes.push(...merged.notes)
   }
 
   const fadeIn = patch.fadeInFrames ?? item.fadeInFrames
@@ -565,6 +585,8 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
     ...(speedReport?.warning ? [speedReport.warning] : []),
     ...(sourceTailWarning ? [sourceTailWarning] : []),
     ...shadowedByKeys(args, after.item),
+    ...presetNotes,
+    ...presetsSetAside(after.item),
     ...gradeWarnings(after.item.grade, findAsset(project(), after.item.assetId)),
     ...sound.warnings,
     ...look.warnings
@@ -593,6 +615,7 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
     ...(after.item.keyframes
       ? { keyframes: after.item.keyframes, animation: describeKeyframes(after.item) }
       : {}),
+    ...(after.item.animation ? { presets: { ...after.item.animation, plays: describeAnimation(after.item) } } : {}),
     ...(look.filter !== null ? { filter: look.filter } : {}),
     ...(sound.report ?? {}),
     ...linkReport(after.item.id),
@@ -631,11 +654,52 @@ function describeSpeedPlan(plan: SpeedPlan): { report: Record<string, unknown>; 
 }
 
 /**
+ * A preset on an end a transition crosses: stored, and not played while the transition is there.
+ * Said, for the same reason a static field under keys is — it reads back as accepted.
+ */
+function presetsSetAside(item: Item): string[] {
+  const animation = item.animation
+  if (!animation || (!animation.in && !animation.out)) return []
+  const ends = transitionEnds(timeline(), item.id)
+  const out: string[] = []
+  if (ends.head && animation.in) {
+    out.push(
+      `animation.in ("${animation.in.kind}") is stored but does not play: a transition crosses this clip's first frame, ` +
+        `and the transition decides how it arrives. remove_transition to let the preset play.`
+    )
+  }
+  if (ends.tail && animation.out) {
+    out.push(
+      `animation.out ("${animation.out.kind}") is stored but does not play: a transition crosses this clip's last frame, ` +
+        `and the transition decides how it leaves. remove_transition to let the preset play.`
+    )
+  }
+  return out
+}
+
+/** Where a keyable property's static value arrives in `edit_item`'s arguments. */
+function staticArg(args: Record<string, unknown>, property: string): unknown {
+  const nested = (group: string, key: string): unknown => {
+    const holder = args[group]
+    return typeof holder === 'object' && holder !== null ? (holder as Record<string, unknown>)[key] : undefined
+  }
+  if (property.startsWith('crop') && property.length > 4) return nested('crop', property.charAt(4).toLowerCase() + property.slice(5))
+  if (property === 'fontSize' || property === 'letterSpacing') return nested('text', property)
+  if (args[property] !== undefined) return args[property]
+  return nested('adjustments', property)
+}
+
+/**
  * A static field set in this call on a property whose keys decide it at every frame: stored, and
  * drawn nowhere. Said, because it reads back as accepted and changes nothing on screen.
  */
-function shadowedByKeys(args: Record<string, unknown>, item: Item): string[] {
+function shadowedByKeys(rawArgs: Record<string, unknown>, item: Item): string[] {
   const out: string[] = []
+  const args: Record<string, unknown> = {}
+  for (const property of KEYFRAME_PROPERTIES) {
+    const given = staticArg(rawArgs, property)
+    if (given !== undefined) args[property] = given
+  }
   for (const property of KEYFRAME_PROPERTIES) {
     if (args[property] === undefined) continue
     const keys = item.keyframes?.[property]

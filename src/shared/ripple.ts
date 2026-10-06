@@ -22,6 +22,7 @@
 import type { Frames, Item, Timeline, Transition } from './project'
 import { itemEnd, sourceEdgeAt } from './project'
 import { shiftKeyframes, sliceKeyframes } from './keyframes'
+import { splitAnimation } from './animation'
 
 export interface RippleDeleteResult {
   /** How much timeline was removed. Zero means nothing overlapped and nothing moved. */
@@ -136,6 +137,14 @@ export function rippleDelete(
         }
         if (!tail.keyframes) delete tail.keyframes
         if (item.keyframes) item.keyframes = sliceKeyframes(item.keyframes, 0, headFrames)
+        // The In stays with the head and the Out with the tail (`splitAnimation`).
+        if (item.animation) {
+          const [headAnimation, tailAnimation] = splitAnimation(item.animation)
+          if (headAnimation) item.animation = headAnimation
+          else delete item.animation
+          if (tailAnimation) tail.animation = tailAnimation
+          else delete tail.animation
+        }
         item.durationInFrames = headFrames
         item.fadeOutFrames = Math.min(item.fadeOutFrames, headFrames)
         tail.fadeOutFrames = Math.min(tail.fadeOutFrames, tailFrames)

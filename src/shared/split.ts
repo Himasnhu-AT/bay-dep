@@ -5,6 +5,7 @@
 
 import { itemEnd, sourceEdgeAt, type Frames, type Item, type Transition } from './project'
 import { sliceKeyframes } from './keyframes'
+import { splitAnimation } from './animation'
 
 /**
  * Cuts `item` at timeline frame `at`, shortening it to the left half (mutated) and returning the
@@ -34,6 +35,14 @@ export function splitItemAt(item: Item, at: Frames, fps: number, id: string, tra
   }
   if (!right.keyframes) delete right.keyframes
   if (item.keyframes) item.keyframes = sliceKeyframes(item.keyframes, 0, leftDuration)
+  // The left half still arrives and the right half still leaves; neither does both.
+  if (item.animation) {
+    const [leftAnimation, rightAnimation] = splitAnimation(item.animation)
+    if (leftAnimation) item.animation = leftAnimation
+    else delete item.animation
+    if (rightAnimation) right.animation = rightAnimation
+    else delete right.animation
+  }
   item.durationInFrames = leftDuration
   item.fadeOutFrames = Math.min(item.fadeOutFrames, leftDuration)
   right.fadeOutFrames = Math.min(right.fadeOutFrames, rightDuration)

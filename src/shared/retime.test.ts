@@ -14,11 +14,14 @@ import assert from 'node:assert/strict'
 import { itemAudioGainAt } from './audio-gain'
 import { timelineFrameAt, beatFramesForItem, type BeatGrid } from './beats'
 import { insertTime } from './insert-edit'
-import { mergeKeyframes, volumeMayBeAudible } from './keyframes'
+import { animationStateAt, animationWindows, isAtRest } from './animation'
+import { KEYFRAME_REGISTRY, WRITABLE_KEYFRAME_PROPERTIES, keyframeInfo } from './keyframe-registry'
+import { animatedItemAt, DRAWN_KEYFRAME_PROPERTIES, mergeKeyframes, volumeMayBeAudible } from './keyframes'
 import { detachAudio, linkedPartners, soundAlignedWithPicture } from './links'
 import {
   findItem,
   itemEnd,
+  KEYFRAME_PROPERTIES,
   plainTime,
   sameSourceTiming,
   sourceSpanOf,
@@ -343,6 +346,117 @@ test('slip moves the footage under a reversed clip by its room earlier and later
   const tooFar = planTrim(fresh.project, fresh.timeline, { itemId: 'a', mode: 'slip', deltaFrames: 151 })
   assert.equal(tooFar.ok, false)
   assert.match(tooFar.ok ? '' : tooFar.error, /150/)
+})
+
+// ---------------------------------------------------------------------------
+// With the other keyable properties and the animation presets
+// ---------------------------------------------------------------------------
+
+test('speed is a row of the registry that no general control writes: not in the picker’s list, refused by name', () => {
+  assert.ok(KEYFRAME_REGISTRY.speed.planned, 'the row says where speed is written instead')
+  assert.match(KEYFRAME_REGISTRY.speed.planned!, /speedRamp/)
+  assert.equal(WRITABLE_KEYFRAME_PROPERTIES.includes('speed'), false)
+  assert.deepEqual(DRAWN_KEYFRAME_PROPERTIES, WRITABLE_KEYFRAME_PROPERTIES, 'one list, two names')
+  // The control: every other row is offered, the new ones included.
+  for (const property of ['opacity', 'scale', 'volume', 'cropLeft', 'brightness', 'fontSize'] as const) {
+    assert.ok(WRITABLE_KEYFRAME_PROPERTIES.includes(property), property)
+    assert.equal(KEYFRAME_REGISTRY[property].planned, undefined, property)
+  }
+  assert.equal(WRITABLE_KEYFRAME_PROPERTIES.length, KEYFRAME_PROPERTIES.length - 1)
+  // And a refusal that lists what is animatable does not offer it.
+  const unknown = keyframeInfo(clip('x', 'A', 'v1', 0, 10), 'wobble')
+  assert.ok('error' in unknown && !/\bspeed\b/.test(unknown.error) && /cropLeft/.test(unknown.error))
+})
+
+for (const [name, over] of [
+  ['reversed', { reverse: true, sourceStartUs: 5_000_000 }],
+  ['ramped', { keyframes: { speed: DIP } }],
+  ['reversed and ramped', { reverse: true, sourceStartUs: 6_000_000, keyframes: { speed: DIP } }]
+] as const) {
+  test(`crop, adjustment and transform keys on a ${name} clip stay on their frames through a split, a cut-out middle and a lost head`, () => {
+    const drawn = { cropLeft: [{ frame: 0, value: 0 }, { frame: 90, value: 0.4 }], brightness: [{ frame: 10, value: 1 }, { frame: 80, value: 2, ease: 'inOut' as const }], scale: [{ frame: 0, value: 1 }, { frame: 90, value: 1.5 }] }
+    const make = (): Timeline => {
+      const { timeline } = fixture(structuredClone(over) as Partial<Item>)
+      const item = findItem(timeline, 'a')!.item
+      item.keyframes = { ...(item.keyframes ?? {}), ...structuredClone(drawn) }
+      return timeline
+    }
+    /** What every frame of V1 draws with: crop edge, brightness and scale, sampled as the compositor does. */
+    const looks = (timeline: Timeline): Map<number, string> => {
+      const out = new Map<number, string>()
+      for (const item of timeline.tracks[0]!.items) {
+        if (item.assetId !== 'A') continue
+        for (let frame = item.from; frame < itemEnd(item); frame += 1) {
+          const at = animatedItemAt(item, frame)
+          out.set(frame, [at.crop?.left ?? 0, at.adjustments?.brightness ?? 1, at.layout.scale ?? 1].map((v) => v.toFixed(6)).join('/'))
+        }
+      }
+      return out
+    }
+    const before = looks(make())
+    assert.notEqual(before.get(100), before.get(189), 'the specimen animates: its first and last frames differ')
+
+    const split = make()
+    split.tracks[0]!.items.push(splitItemAt(findItem(split, 'a')!.item, 140, FPS, 'r')!)
+    assert.deepEqual(looks(split), before, 'split at 140')
+
+    const cut = make()
+    rippleDelete(cut, 130, 150, () => 'tail')
+    const afterCut = looks(cut)
+    for (const [frame, look] of before) {
+      if (frame >= 130 && frame < 150) continue
+      assert.equal(afterCut.get(frame < 130 ? frame : frame - 20), look, `frame ${frame} after removing 130–150`)
+    }
+
+    const headless = make()
+    rippleDelete(headless, 90, 125, () => 'x')
+    const afterHead = looks(headless)
+    for (const [frame, look] of before) if (frame >= 125) assert.equal(afterHead.get(frame - 35), look, `frame ${frame} after losing its head`)
+    // And the footage under those keys is still the footage it was (the ramp or direction moved with them).
+    assertSamePicture(plays(make(), 'v1'), plays(headless, 'v1'), (frame) => (frame < 125 ? null : frame - 35), 'lost head')
+  })
+}
+
+test('an In and an Out preset stay glued to a ramped clip’s first and last frames when the ramp lengthens it', () => {
+  const { project, timeline } = fixture()
+  const item = findItem(timeline, 'a')!.item
+  item.animation = { in: { kind: 'fade', frames: 12 }, out: { kind: 'fade', frames: 18 } }
+  const animation = structuredClone(item.animation)
+  assert.equal(item.durationInFrames, 90)
+
+  const plan = planRetime(project, timeline, 'a', { ramp: DIP })!
+  applySpeedPlan(timeline, plan)
+  const ramped = findItem(timeline, 'a')!.item
+  const length = ramped.durationInFrames
+  assert.ok(length > 90 + 18, `the ramp must lengthen the clip past its old Out window for this to test anything: ${length}`)
+
+  // The presets themselves are untouched — a retime is not an edit of the animation…
+  assert.deepEqual(ramped.animation, animation)
+  assert.deepEqual(animationWindows(ramped.animation, length), { inFrames: 12, outFrames: 18, shortened: false })
+  // …and their windows are the clip's first 12 and last 18 frames, as the sampler draws them.
+  const opacity = (local: number): number => animatedItemAt(ramped, ramped.from + local).layout.opacity
+  assert.ok(opacity(0) < 0.2, `the In starts on the first frame (opacity ${opacity(0)})`)
+  assert.ok(opacity(11) < 1, 'and is still running on its last')
+  assert.equal(opacity(12), 1, 'and is over on the frame after')
+  assert.equal(opacity(length - 19), 1, 'the Out has not begun the frame before its window')
+  assert.ok(opacity(length - 18) <= 1 && opacity(length - 9) < 1, 'it runs over the last 18 frames')
+  assert.ok(opacity(length - 1) < 0.2, `and ends on the clip's new last frame (opacity ${opacity(length - 1)})`)
+  // Where the Out used to be — the old last frames, now mid-clip — the clip is at rest.
+  for (let local = 72; local < 90; local += 1) assert.equal(opacity(local), 1, `old Out frame ${local} is at rest`)
+  assert.ok(isAtRest(animationStateAt(ramped.animation, 80, length)))
+  assert.equal(isAtRest(animationStateAt(ramped.animation, length - 1, length)), false)
+
+  // Reversing it as well moves neither: In is still the head, Out the tail.
+  applySpeedPlan(timeline, planRetime(project, timeline, 'a', { reverse: true })!)
+  const reversed = findItem(timeline, 'a')!.item
+  assert.deepEqual(reversed.animation, animation)
+  assert.ok(animatedItemAt(reversed, reversed.from).layout.opacity < 0.2)
+  assert.ok(animatedItemAt(reversed, itemEnd(reversed) - 1).layout.opacity < 0.2)
+
+  // And a split of the ramped, reversed clip gives the In to the left half and the Out to the right.
+  const right = splitItemAt(reversed, reversed.from + 50, FPS, 'r')!
+  assert.deepEqual([reversed.animation, right.animation], [{ in: animation.in }, { out: animation.out }])
+  assert.ok(speedKeysOf(right) && right.reverse, 'the right half is still ramped and reversed')
 })
 
 // ---------------------------------------------------------------------------

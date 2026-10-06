@@ -22,6 +22,8 @@ import type { BeatGrid } from './beats'
 import type { Grade, LutData } from './grade'
 import type { Mask, SubjectMatte } from './matte'
 import type { DeliverySettings } from './loudness'
+import type { TextFill, TextGlow, TextPlateOptions, TextShadowLayer, TextStrokeLayer } from './text-style'
+import type { ItemAnimation } from './animation'
 import type { AudioEffect } from './audio-effects'
 import type { Effect } from './effects/spec'
 
@@ -293,8 +295,26 @@ export const KEYFRAME_PROPERTIES = [
   'rotation',
   'scale',
   'volume',
+  // Added after the first eight, and appended so nothing above moves: the four crop edges, the
+  // eight adjustments and a title's size and tracking. Their limits, names and how each reads
+  // and writes an item are one table, `@shared/keyframe-registry`.
+  'cropLeft',
+  'cropTop',
+  'cropRight',
+  'cropBottom',
+  'brightness',
+  'contrast',
+  'saturate',
+  'hueRotate',
+  'blur',
+  'grayscale',
+  'sepia',
+  'invert',
+  'fontSize',
+  'letterSpacing',
   // A clip's speed over its length — a ramp (`@shared/speed-curve`). Unlike the others it changes
-  // which source is read, not how it is drawn: `sourceEdgeAt` integrates it.
+  // which source is read, not how it is drawn: `sourceEdgeAt` integrates it, and its registry row
+  // is marked `planned`, so no general keyframe control or tool writes it as a bare key.
   'speed'
 ] as const
 
@@ -354,6 +374,22 @@ export interface TextStyle {
   stroke: { color: string; width: number } | null
   shadow: { color: string; blur: number; offsetX: number; offsetY: number } | null
   background: { color: string; padding: number; radius: number } | null
+  /**
+   * The richer paint stack (`@shared/text-style`), every field optional and absent on a title that
+   * uses only the single colour, outline, shadow and plate above — which therefore saves exactly
+   * as it always did. Each one **adds to** its single counterpart rather than replacing it, except
+   * `fills`, which when present is the whole fill and `color` then draws nowhere.
+   */
+  /** Fills painted bottom to top over the outlines: solid or a linear/radial gradient. */
+  fills?: TextFill[]
+  /** Further outlines outside `stroke`, each wrapping the one before it. */
+  strokes?: TextStrokeLayer[]
+  /** Further drop shadows, drawn behind everything, after `shadow`. */
+  shadows?: TextShadowLayer[]
+  /** A soft halo of one colour around the letters. */
+  glow?: TextGlow
+  /** How the plate (`background`) is shaped: one block or a bar per line, and uneven padding. */
+  plate?: TextPlateOptions
 }
 
 /**
@@ -585,6 +621,12 @@ export interface Item {
    * before this. Its sound is reversed in the export; `@shared/retime-sound` says what the preview does.
    */
   reverse?: boolean
+  /**
+   * In / Out / Loop animation presets (`@shared/animation`): declarative, glued to the clip's head
+   * and tail so a trim keeps them there, and evaluated by the one keyframe sampler
+   * (`animatedItemAt`) over whatever the keys or static fields give. Absent is the fast path.
+   */
+  animation?: ItemAnimation
 }
 
 /**

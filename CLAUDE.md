@@ -1154,6 +1154,39 @@ projects — indexing an array yields `T | undefined` and you must handle it.
   say which. The preview *steps* a reversed clip or a held frame (`transportFor`: paused, a seek per
   frame) — export and `preview_frame` wait for each seek and are frame-exact; what frame rate the
   stepped preview reaches was **not measured** (`test/app/speed.mjs`, unrun).
+- **A title has one painter, and its paint is a stack over the single fields** (`@shared/text-style`,
+  `engine/textPaint.ts`, `apply_text_look`). `TextStyle.color/stroke/shadow/background` stay the
+  stored form of a title that uses only those — it saves byte for byte as it did (`text-style-format.test.ts`
+  holds a literal) — and `fills`, `strokes`, `shadows`, `glow` and `plate` are optional and *add* to
+  them; only `fills` replaces (`[]` is a hollow title). `textPaintOf` resolves what is drawn,
+  `planText` is the arithmetic (plates, runs, how far the paint reaches) and `paintText` the only
+  thing that touches the canvas, called from `#drawText` alone. Order is plates, shadows, outlines
+  widest first, fills bottom up. Three things the old inline painter did are deliberately different:
+  a shadow with no outline is now cast (it was set and then cleared before the fill), the shadow is
+  cast by the filled letter rather than the outline's ring, and shadows are scaled by the device
+  scale and the clip's zoom — canvas shadows ignore the transform, so a half-size preview drew them
+  twice as long as the export. The fit report says how far paint leaves the box (`paintOverflow`),
+  after the font and clipping faults. Looks are data (`TEXT_LOOKS`): paint and weight only, never a
+  typeface, with lengths scaled from 96 px type. **Not measured:** any of it in a running app —
+  `test/app/text-layers.mjs` is written and unrun.
+- **Animation presets are declared, glued to the ends, and evaluated by the keyframe sampler**
+  (`item.animation`, `@shared/animation`, `edit_item.animation`). `{ in?, out?, loop? }` is stored
+  as chosen, never baked into keys, so a trim leaves the In on the first frames and the Out on the
+  last; a split gives the left half the In and the right the Out (`splitAnimation`, in `split.ts`,
+  `ripple.ts` and `insert-edit.ts`). `animatedItemAt` is `applyAnimation(keyedItemAt(…))`: a preset
+  rides on the keyed or static value — opacity and scale multiply, position, rotation and blur add —
+  and replaces nothing. In + Out longer than the clip share it in proportion (`animationWindows`).
+  A transition across an end sets that end's preset aside at draw time (`animationForDraw`), because
+  the transition draws the clip before its first frame and an In still at "not here" would hide half
+  the dissolve. A Wipe or a Rise is a clip set in `#paintItem` over the clip's *keyed* box. On a
+  title `by: line|word|letter` hands the units to the painter (`textUnitsAt`), which draws each run
+  under its own transform and, between an In and an Out, draws whole lines exactly as before. The
+  curves are `src/shared/motion/core`'s. `edit_item`'s result reports presets under `presets`,
+  because `animation` there already meant the keyframe description.
+- **What can be keyed is a table** (`@shared/keyframe-registry`): the first eight, the crop edges,
+  the eight adjustments, and a title's `fontSize`/`letterSpacing`. The edit rules walk every key a
+  clip *has*, not the table, so a key this build cannot draw survives a trim. Effect and mask
+  parameters join through `DYNAMIC_KEYFRAME_PATHS` (a prefix, `describe`, `apply`) — empty today.
 - **The `.bay` format changes additively within a version, and any other change is a bump.** A new
   *optional* field needs nothing: older builds of the same version load the file, carry the key
   through (the loader whitelists nothing) and write it back. Renaming, removing or retyping a field

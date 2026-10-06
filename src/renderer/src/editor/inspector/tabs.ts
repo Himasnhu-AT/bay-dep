@@ -97,9 +97,13 @@ export function tabForSection(id: string, shape: SelectionShape): InspectorTab |
     case 'inspector.outline':
     case 'inspector.shadow':
     case 'inspector.plate':
+    case 'inspector.looks':
+    case 'inspector.fill':
+    case 'inspector.glow':
     case 'inspector.composition':
       return 'title'
     case 'inspector.adjustments':
+    case 'inspector.animation':
     case 'inspector.keyframes':
     case 'inspector.effects':
       return 'effects'
