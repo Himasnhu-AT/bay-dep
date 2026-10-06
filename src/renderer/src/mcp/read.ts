@@ -33,6 +33,7 @@ import { fail, project, resolveItem, store, timeline, usToFramesAtTimeline, type
 import { audioFinishReport } from './audioFinish'
 import { resolveGrade } from '@shared/grade'
 import { describeKeyframes } from '@shared/keyframes'
+import { describeAnimation } from '@shared/animation'
 import { linkedPartners } from '@shared/links'
 import { describeFont, importedFonts } from '@shared/fonts'
 
@@ -214,6 +215,8 @@ export function inspectItem(args: Record<string, unknown>): Record<string, unkno
     ...(item.keyframes
       ? { keyframes: item.keyframes, animation: describeKeyframes(item) }
       : {}),
+    // Animation presets as stored, and the timeline frames each end occupies on this clip.
+    ...(item.animation ? { presets: { ...item.animation, plays: describeAnimation(item) } } : {}),
     // What this clip moves, trims, splits and deletes with (see detach_audio).
     ...(partners.length > 0 ? { link: { linkedItemIds: partners.map((p) => p.id) } } : {}),
     audio: item.audioDetached

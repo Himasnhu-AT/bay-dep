@@ -11,6 +11,7 @@ import { tool as addTrack } from './add-track'
 import { tool as addTransition } from './add-transition'
 import { tool as applyDub } from './apply-dub'
 import { tool as applyScript } from './apply-script'
+import { tool as applyTextLook } from './apply-text-look'
 import { tool as browseAssets } from './browse-assets'
 import { tool as checkFilm } from './check-film'
 import { tool as deleteItems } from './delete-items'
@@ -106,6 +107,7 @@ export const TOOLS: ToolSpec[] = [
   placeAsset,
   editAsset,
   editItem,
+  applyTextLook,
   detachAudio,
   putBehindSubject,
   trimItem,

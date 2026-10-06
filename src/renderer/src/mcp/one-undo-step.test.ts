@@ -291,6 +291,17 @@ const TOOL_CASES: Record<string, ToolCase[]> = {
   // Two pauses removed, each a ripple across every track: one step.
   remove_silences: [{ delta: 1, args: (f) => ({ itemId: f.d }) }],
   set_item_enabled: [{ delta: 1, args: (f) => ({ itemIds: [f.a, f.c, f.d], enabled: false }) }],
+  // Three titles restyled, one `patchItem` each: one step.
+  apply_text_look: [
+    {
+      delta: 1,
+      before: () => {
+        state().addAssets([{ ...ASSET, id: 'ast_title', kind: 'text', name: 'Title', path: null, text: 'Title', hasAudio: false, hasVideo: false, durationUs: 0 }])
+        for (const at of [300, 400, 500]) assert.ok(state().placeAsset('ast_title', at))
+      },
+      args: () => ({ look: 'neon', all: true })
+    }
+  ],
   // Detaching both angles' sound, then razoring and disabling both: one step.
   switch_speakers: [
     { delta: 1, args: (f) => ({ angles: [{ videoItemId: f.a }, { videoItemId: f.c }], thresholdDb: -40, minShotSec: 0.2 }) }

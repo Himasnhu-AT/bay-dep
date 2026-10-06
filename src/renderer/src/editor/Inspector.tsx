@@ -53,6 +53,7 @@ import { CLIP_SPEED_RANGE, retimedLength, speedNote, type SpeedPlan } from '@sha
 import { AudioSection } from './AudioSection'
 import { ClipSection, Readout } from './ClipSection'
 import { KeyframesSection } from './KeyframesSection'
+import { AnimationSection } from './AnimationSection'
 import { chooseTab, inspectorTabs, tabForSection, type SelectionShape } from './inspector/tabs'
 import { TimelineTab } from './inspector/TimelineTab'
 import { TransitionTab, transitionCount } from './inspector/TransitionTab'
@@ -774,6 +775,10 @@ export function Inspector(): ReactNode {
       {/* Adjustments apply to anything with a picture, text included (its glyphs are drawn
           through the same look). Audio-only items have nothing to filter. Blend is in Video. */}
       {visualItems.length > 0 && <AdjustmentsSection items={visualItems} timeline={timeline} blend={false} />}
+      {/* In / Out / Loop presets: anything with a picture; a title can also run them word by word. */}
+      {visualItems.length > 0 && (
+        <AnimationSection items={visualItems} titles={visualItems.filter((item) => textItems.includes(item)).length} timeline={timeline} />
+      )}
       <KeyframesSection items={selected} />
       {visualItems.length === 0 && !hasKeyframes && (
         <p className="px-3 py-6 text-center text-[11px] text-ink-2">

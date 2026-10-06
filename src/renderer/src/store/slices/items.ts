@@ -583,6 +583,8 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
         }
         const before = { ...found.item }
         Object.assign(found.item, patch)
+        // Removed presets leave no key behind, so "has an animation" stays a plain `in` check.
+        if (found.item.animation === undefined) delete found.item.animation
         if (found.item.durationInFrames < 1) found.item.durationInFrames = 1
         if (found.item.from < 0) found.item.from = 0
         if (options?.linked === false) return

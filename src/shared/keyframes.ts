@@ -40,6 +40,8 @@ import {
   type Layout
 } from './project'
 import { easeProgress, parseEase } from './ease'
+import { applyAnimation } from './animation'
+import { dynamicPathFor, isStaticProperty, keyframeInfo, KEYFRAME_REGISTRY, withSampledStatics } from './keyframe-registry'
 
 // ---------------------------------------------------------------------------
 // Eases — in `./ease`, shared with transitions; re-exported so existing imports keep working.
@@ -105,9 +107,34 @@ export function animatedLayoutAt(item: Item, frame: Frames): Layout {
  * preview, `preview_frame`, export, a transition's two sides — animates identically.
  */
 export function animatedItemAt(item: Item, frame: Frames): Item {
-  if (!item.keyframes) return item
+  // Keys first, then the presets over what the keys give (`@shared/animation`): a preset is
+  // relative to the property's value at this frame, keyed or static, and replaces neither.
+  return item.animation ? applyAnimation(keyedItemAt(item, frame), frame) : keyedItemAt(item, frame)
+}
+
+/**
+ * `item` with every keyed property sampled at `frame` and no preset applied: the layout, then the
+ * crop, adjustments and text keys (`withSampledStatics`), then any registered path family
+ * (`DYNAMIC_KEYFRAME_PATHS`). The same object when it has no keys.
+ */
+export function keyedItemAt(item: Item, frame: Frames): Item {
+  const keyframes = item.keyframes
+  if (!keyframes) return item
   const layout = animatedLayoutAt(item, frame)
-  return layout === item.layout ? item : { ...item, layout }
+  let out = layout === item.layout ? item : { ...item, layout }
+  const local = frame - item.from
+  out = withSampledStatics(out, (property) => {
+    const value = keyframeValueAt(keyframes[property], local)
+    return value === undefined || !Number.isFinite(value) ? undefined : value
+  })
+  for (const name of Object.keys(keyframes)) {
+    if (isStaticProperty(name)) continue
+    const family = dynamicPathFor(name)
+    if (!family) continue
+    const value = keyframeValueAt((keyframes as Record<string, Keyframe[]>)[name], local)
+    if (value !== undefined && Number.isFinite(value)) out = family.apply(out, name, value)
+  }
+  return out
 }
 
 /** `item`'s volume at timeline `frame`: its keys when it has any, else `item.volume`. */
@@ -135,16 +162,25 @@ export function volumeMayBeAudible(item: Item): boolean {
 export function shiftKeyframes(keyframes: ItemKeyframes | undefined, by: Frames): ItemKeyframes | undefined {
   if (!keyframes || by === 0) return keyframes ? cloneKeyframes(keyframes) : undefined
   const out: ItemKeyframes = {}
-  for (const property of KEYFRAME_PROPERTIES) {
+  for (const property of propertiesOf(keyframes)) {
     const list = keyframes[property]
     if (list && list.length > 0) out[property] = list.map((key) => ({ ...key, frame: key.frame + by }))
   }
   return out
 }
 
+/**
+ * Every property `keyframes` holds keys for — the table's, and any path a registered family or a
+ * newer build stored. The edit rules walk these rather than the table, so a key this build cannot
+ * draw is still moved, split and kept with its clip instead of being dropped by the first trim.
+ */
+function propertiesOf(keyframes: ItemKeyframes): KeyframeProperty[] {
+  return Object.keys(keyframes).filter((name) => Array.isArray((keyframes as Record<string, unknown>)[name])) as KeyframeProperty[]
+}
+
 export function cloneKeyframes(keyframes: ItemKeyframes): ItemKeyframes {
   const out: ItemKeyframes = {}
-  for (const property of KEYFRAME_PROPERTIES) {
+  for (const property of propertiesOf(keyframes)) {
     const list = keyframes[property]
     if (list && list.length > 0) out[property] = list.map((key) => ({ ...key }))
   }
@@ -165,7 +201,7 @@ export function sliceKeyframes(
 ): ItemKeyframes | undefined {
   if (!keyframes) return undefined
   const out: ItemKeyframes = {}
-  for (const property of KEYFRAME_PROPERTIES) {
+  for (const property of propertiesOf(keyframes)) {
     const list = keyframes[property]
     if (!list || list.length === 0) continue
     let firstInside = list.findIndex((key) => key.frame >= start)
@@ -242,17 +278,8 @@ export function repairKeyframes(keyframes: unknown): ItemKeyframes | undefined {
 // Writing keys: validation with refusals an agent can act on
 // ---------------------------------------------------------------------------
 
-/** The legal value range per property, and the unit said in a refusal. */
-export const KEYFRAME_LIMITS: Record<KeyframeProperty, { min: number; max: number; unit: string }> = {
-  opacity: { min: 0, max: 1, unit: '0 transparent to 1 opaque' },
-  left: { min: -Infinity, max: Infinity, unit: 'canvas pixels' },
-  top: { min: -Infinity, max: Infinity, unit: 'canvas pixels' },
-  width: { min: 1, max: Infinity, unit: 'canvas pixels, at least 1' },
-  height: { min: 1, max: Infinity, unit: 'canvas pixels, at least 1' },
-  rotation: { min: -Infinity, max: Infinity, unit: 'degrees clockwise' },
-  scale: { min: 0, max: 100, unit: 'a zoom about the centre, 1 unchanged' },
-  volume: { min: 0, max: 2, unit: 'linear gain, 1 unchanged, 0 silent (or pass db instead of value)' }
-}
+/** The legal value range per property, and the unit said in a refusal — the registry's rows. */
+export const KEYFRAME_LIMITS: Record<KeyframeProperty, { min: number; max: number; unit: string }> = KEYFRAME_REGISTRY
 
 export const PICTURE_PROPERTIES: readonly KeyframeProperty[] = LAYOUT_PROPERTIES
 
@@ -263,23 +290,23 @@ export interface KeyframeTarget {
   /** Whether the item draws a picture / makes sound — keys on a property it lacks do nothing. */
   hasPicture: boolean
   hasAudio: boolean
+  /**
+   * Whether it is a title, and whether it has a source picture a crop can cut. Absent means
+   * "not checked", which is how every caller before the text and crop properties called this.
+   */
+  isText?: boolean
+  hasSource?: boolean
+  /** The item itself, for a path family (`DYNAMIC_KEYFRAME_PATHS`) to describe its own range. */
+  item?: Item
 }
 
 export type KeyframeMerge =
   | { ok: true; keyframes: ItemKeyframes | undefined; changed: KeyframeProperty[] }
   | { ok: false; error: string; userMessage?: string }
 
-/** How the inspector names each animatable property, for refusals a person reads. */
-const PROPERTY_WORDS: Record<KeyframeProperty, string> = {
-  opacity: 'Opacity',
-  left: 'X position',
-  top: 'Y position',
-  width: 'Width',
-  height: 'Height',
-  rotation: 'Rotation',
-  scale: 'Scale',
-  volume: 'Volume'
-}
+/** How the inspector names a property, for refusals a person reads. */
+const propertyWords = (property: string): string =>
+  property === 'left' ? 'X position' : property === 'top' ? 'Y position' : isStaticProperty(property) ? KEYFRAME_REGISTRY[property].label : property
 
 /**
  * Applies `given` — `{ property: Keyframe[] | null }`, or `null` for "remove every key" — over
@@ -293,7 +320,7 @@ export function mergeKeyframes(
   target: KeyframeTarget
 ): KeyframeMerge {
   if (given === null) {
-    return { ok: true, keyframes: undefined, changed: KEYFRAME_PROPERTIES.filter((p) => current?.[p]) }
+    return { ok: true, keyframes: undefined, changed: current ? propertiesOf(current) : [] }
   }
   if (typeof given !== 'object' || Array.isArray(given)) {
     return {
@@ -311,13 +338,18 @@ export function mergeKeyframes(
     `${last} is its end, timeline frame ${target.from + last})`
 
   for (const [name, rawList] of Object.entries(given as Record<string, unknown>)) {
-    if (!(KEYFRAME_PROPERTIES as readonly string[]).includes(name)) {
+    const family = isStaticProperty(name) ? undefined : dynamicPathFor(name)
+    if (!isStaticProperty(name) && !family) {
       return {
         ok: false,
         error:
           `keyframes has no property "${name}". Animatable properties: ${KEYFRAME_PROPERTIES.join(', ')}` +
-          (name === 'x' || name === 'y' ? ' — position is left/top.' : '') +
-          (name === 'zoom' ? ' — a zoom is scale.' : '.')
+          (name === 'x' || name === 'y' ? ' — position is left/top' : '') +
+          (name === 'zoom' ? ' — a zoom is scale' : '') +
+          (name === 'crop' ? ' — a crop is keyed per edge: cropLeft, cropTop, cropRight, cropBottom' : '') +
+          (name === 'saturation' ? ' — saturation is saturate' : '') +
+          (name === 'size' || name === 'tracking' ? ' — a title\'s size is fontSize and its tracking letterSpacing' : '') +
+          '.'
       }
     }
     const property = name as KeyframeProperty
@@ -340,6 +372,23 @@ export function mergeKeyframes(
           `Animate a picture property (${PICTURE_PROPERTIES.join(', ')}) instead, or key the volume of an audio clip.`
       }
     }
+    const needs = isStaticProperty(name) ? KEYFRAME_REGISTRY[name].needs : 'picture'
+    if (needs === 'text' && target.isText === false) {
+      return {
+        ok: false,
+        error:
+          `keyframes.${property} on ${target.itemId} would change nothing: it is not a title, so it has no type to size or space. ` +
+          `To grow a picture over time key scale instead.`
+      }
+    }
+    if (needs === 'source' && target.hasSource === false) {
+      return {
+        ok: false,
+        error:
+          `keyframes.${property} on ${target.itemId} would change nothing: a crop cuts a source picture (video, image, composition), ` +
+          `and this clip has none. To reveal a title over time use animation: { in: { kind: "wipe" } }.`
+      }
+    }
     if (property !== 'volume' && !target.hasPicture) {
       return {
         ok: false,
@@ -348,7 +397,12 @@ export function mergeKeyframes(
           `with no picture to move. Only volume can be keyed on it.`
       }
     }
-    const limits = KEYFRAME_LIMITS[property]
+    let limits: { min: number; max: number; unit: string }
+    if (family) {
+      const described = target.item ? keyframeInfo(target.item, name) : { error: `keyframes.${name} cannot be checked without its clip.` }
+      if ('error' in described) return { ok: false, error: described.error }
+      limits = described
+    } else limits = KEYFRAME_LIMITS[property]
     const keys: Keyframe[] = []
     for (let index = 0; index < rawList.length; index += 1) {
       const where = `keyframes.${property}[${index}]`
@@ -422,7 +476,7 @@ export function mergeKeyframes(
         return {
           ok: false,
           userMessage:
-            `${PROPERTY_WORDS[property]} already has a key on that frame. One frame holds one value: ` +
+            `${propertyWords(property)} already has a key on that frame. One frame holds one value: ` +
             `remove one of them, or put them a frame apart for a jump.`,
           error:
             `keyframes.${property} has two keys on frame ${frame} (timeline frame ${target.from + frame}). ` +
@@ -448,7 +502,7 @@ export function describeKeyframes(item: Item): Record<string, unknown> | undefin
   const keyframes = item.keyframes
   if (!keyframes) return undefined
   const out: Record<string, unknown> = {}
-  for (const property of KEYFRAME_PROPERTIES) {
+  for (const property of propertiesOf(keyframes)) {
     const list = keyframes[property]
     if (!list || list.length === 0) continue
     const first = list[0]!

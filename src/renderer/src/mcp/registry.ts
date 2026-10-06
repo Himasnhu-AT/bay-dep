@@ -31,6 +31,7 @@ import { handlers as speechHandlers } from './speech'
 import { handlers as stylesHandlers } from './styles'
 import { handlers as subtitlesHandlers } from './subtitles'
 import { handlers as templatesHandlers } from './templates'
+import { handlers as textLooksHandlers } from './textLooks'
 import { handlers as transcribeHandlers } from './transcribe'
 import { handlers as transitionsHandlers } from './transitions'
 import { handlers as trimHandlers } from './trim'
@@ -68,6 +69,7 @@ export const HANDLER_GROUPS: Record<string, Handlers> = {
   'styles': stylesHandlers,
   'subtitles': subtitlesHandlers,
   'templates': templatesHandlers,
+  'textLooks': textLooksHandlers,
   'transcribe': transcribeHandlers,
   'transitions': transitionsHandlers,
   'trim': trimHandlers,
@@ -106,6 +108,7 @@ export const HANDLERS: Handlers = {
   ...stylesHandlers,
   ...subtitlesHandlers,
   ...templatesHandlers,
+  ...textLooksHandlers,
   ...transcribeHandlers,
   ...transitionsHandlers,
   ...trimHandlers,

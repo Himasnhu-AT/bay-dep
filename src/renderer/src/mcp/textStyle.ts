@@ -15,6 +15,7 @@
  */
 
 import { defaultTextStyle, type TextStyle } from '@shared/project'
+import { applyTextLook, findTextLook, mergeTextLayers, TEXT_LAYER_FIELDS, TEXT_LOOKS, TextStyleError } from '@shared/text-style'
 import { fail } from './helpers'
 
 const ALIGN = ['left', 'center', 'right'] as const
@@ -82,7 +83,9 @@ export function mergeTextStyle(current: TextStyle | undefined, patch: unknown): 
 
   const known = [
     'fontFamily', 'fontSize', 'fontWeight', 'italic', 'color', 'align', 'verticalAlign',
-    'lineHeight', 'letterSpacing', 'stroke', 'shadow', 'background'
+    'lineHeight', 'letterSpacing', 'stroke', 'shadow', 'background',
+    // The paint stack and the named looks (`@shared/text-style`).
+    ...TEXT_LAYER_FIELDS, 'look'
   ]
   for (const key of Object.keys(raw)) {
     if (!known.includes(key)) {
@@ -90,7 +93,22 @@ export function mergeTextStyle(current: TextStyle | undefined, patch: unknown): 
     }
   }
 
-  const next: TextStyle = { ...base }
+  let next: TextStyle = { ...base }
+
+  // A look first, so every other field in the same call is a change *to* the look: `{ look:
+  // "neon", color: "#FF00AA" }` is neon in pink, not pink overwritten by neon.
+  if (raw.look !== undefined) {
+    const look = typeof raw.look === 'string' ? findTextLook(raw.look) : undefined
+    if (!look) {
+      fail(
+        `"text.look" is ${JSON.stringify(raw.look)}; the looks are ${TEXT_LOOKS.map((l) => `"${l.id}"`).join(', ')}. ` +
+          `A look sets paint and weight and keeps the title's own font, size and alignment.`
+      )
+    }
+    // Sized for the size this call ends with, so `{ look, fontSize }` together scale the look once.
+    const sized = raw.fontSize !== undefined ? { ...next, fontSize: number(raw.fontSize, '"text.fontSize"', 1, 2000) } : next
+    next = applyTextLook(sized, look)
+  }
 
   if (raw.fontFamily !== undefined) {
     if (typeof raw.fontFamily !== 'string' || raw.fontFamily.trim() === '') {
@@ -142,6 +160,15 @@ export function mergeTextStyle(current: TextStyle | undefined, patch: unknown): 
       padding: number(b.padding ?? 0, '"text.background.padding"', 0, 1000),
       radius: number(b.radius ?? 0, '"text.background.radius"', 0, 1000)
     }))
+  }
+
+  // The stack: each field replaced whole, or null to remove it. Checked in shared, where the
+  // painter that reads it lives; its refusals are sentences, passed through as they are.
+  try {
+    next = mergeTextLayers(next, raw)
+  } catch (error) {
+    if (error instanceof TextStyleError) fail(error.message)
+    throw error
   }
 
   return next

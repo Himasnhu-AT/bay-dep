@@ -45,7 +45,8 @@ export const tool: ToolSpec = {
         type: 'object',
         description:
           'Overrides for the caption look, the same fields as edit_item "text" (fontSize, ' +
-          'color, background, …), merged over the caption default.'
+          'color, background, … and look, such as { look: "caption-bold" }), merged over the ' +
+          'caption default. To restyle captions already placed, use apply_text_look with the track.'
       }
     }
   }
