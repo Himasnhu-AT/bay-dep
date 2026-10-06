@@ -133,4 +133,11 @@ await runProbe(async () => {
   // To prove this file can fail: in `src/shared/autosave.ts` delete the `probeDriving` line of
   // `autosaveSkip`, rebuild, restart, run this on a COPY of a project — check 1 must go red and a
   // `<file>.autosave` must appear beside the copy.
+  //
+  // Done without a rebuild on the first run, by taking the snapshot away from the page while this
+  // probe waited (`window.__stash = window.__bayProbeSnapshot; delete window.__bayProbeSnapshot`
+  // from a second connection, put back before the wait ended): check 1 went red and the sidecar
+  // appeared. That first run also ended CANNOT MEASURE with 17 checks green — the body returned
+  // nothing, which `runProbe` rightly refuses to read as a verdict.
+  return true
 })
