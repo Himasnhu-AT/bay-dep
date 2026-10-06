@@ -45,6 +45,13 @@ export interface TextPlan {
   paint: TextPaint
   /** The block of letters: every line's box, before any paint is added. */
   block: TextBox
+  /**
+   * Where the letters' ink is: `block` from the first line's cap line to the last baseline. A
+   * gradient runs across this, not `block` — a line's box starts a whole line height above its
+   * baseline, so across the block a title's capitals began over a third of the way into the
+   * gradient (measured in the app: a red-to-blue fill was more blue than red at the top).
+   */
+  ink: TextBox
   plates: PlateRect[]
   runs: PaintRun[]
   /** How far outline, shadows and offset fills reach past the letters. */
@@ -54,6 +61,9 @@ export interface TextPlan {
   fontSize: number
   lineHeight: number
 }
+
+/** The height of a capital as a share of the type size — where a gradient's first stop sits. */
+export const CAP_HEIGHT = 0.72
 
 /** The share of the type size a line's mask allows below the baseline, for descenders. */
 export const DESCENDER = 0.3
@@ -105,6 +115,8 @@ export function planText(
     width: laid.maxLineWidth,
     height: laid.blockHeight
   }
+  const inkTop = anchor.firstBaseline - laid.fontSize * CAP_HEIGHT
+  const ink: TextBox = { left: block.left, top: inkTop, width: block.width, height: baselineOf(Math.max(0, lineCount - 1)) - inkTop }
 
   const plates: PlateRect[] = []
   if (paint.plate) {
@@ -178,7 +190,7 @@ export function planText(
   }
   for (const plate of plates) painted = union(painted, plate)
 
-  return { paint, block, plates, runs, extents, painted, fontSize: laid.fontSize, lineHeight: laid.lineHeight }
+  return { paint, block, ink, plates, runs, extents, painted, fontSize: laid.fontSize, lineHeight: laid.lineHeight }
 }
 
 function union(a: TextBox, b: TextBox): TextBox {
@@ -236,15 +248,18 @@ export function unitTransform(
   run: Pick<PaintRun, 'left' | 'width' | 'baseline'>,
   state: UnitState,
   fontSize: number,
-  lineHeight: number
+  lineHeight: number,
+  /** How far the paint reaches above and below the letters together (outline, shadow, offset fills). */
+  paintReach = 0
 ): { cx: number; cy: number; dx: number; dy: number; scale: number; rotation: number; blur: number } {
   return {
     cx: run.left + run.width / 2,
     cy: run.baseline - fontSize * 0.35,
     dx: state.dx * fontSize,
-    // A masked unit travels its whole line (and the descender allowance), so at progress 0 it is
-    // entirely below the mask; anything else moves in type sizes.
-    dy: state.masked ? state.dy * (lineHeight + fontSize * DESCENDER) : state.dy * fontSize,
+    // A masked unit travels its whole line (and the descender allowance) plus the paint's reach,
+    // so at progress 0 it is entirely below the mask — the mask is that much taller, and without
+    // the reach a thick outline's top edge started inside it. Anything else moves in type sizes.
+    dy: state.masked ? state.dy * (lineHeight + fontSize * DESCENDER + paintReach) : state.dy * fontSize,
     scale: state.scale,
     rotation: state.rotation,
     blur: state.blur * fontSize
@@ -285,7 +300,7 @@ export function paintText(ctx: Target, plan: TextPlan, shadowScale: number, unit
       }
       const state = units.state(run.position)
       if (state.opacity <= 0) continue
-      const t = unitTransform(run, state, fontSize, lineHeight)
+      const t = unitTransform(run, state, fontSize, lineHeight, plan.extents.top + plan.extents.bottom)
       ctx.save()
       if (state.masked) {
         const reach = Math.max(plan.extents.left, plan.extents.right) + fontSize
@@ -330,7 +345,7 @@ export function paintText(ctx: Target, plan: TextPlan, shadowScale: number, unit
       ctx.globalAlpha *= Math.max(0, Math.min(1, opacity))
       ctx.translate(dx, dy)
     }
-    ctx.fillStyle = fillPaint(ctx, fill, plan.block)
+    ctx.fillStyle = fillPaint(ctx, fill, plan.ink)
     text(run, 'fill')
     if (!plain) ctx.restore()
   }

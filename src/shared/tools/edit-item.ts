@@ -361,7 +361,7 @@ export const tool: ToolSpec = {
           fills: {
             description:
               'The fill, as a stack painted bottom to top; when present it replaces color. Each is ' +
-              '{ kind: "solid", color } or a gradient across the block of text: { kind: "linear", ' +
+              '{ kind: "solid", color } or a gradient across the letters (first stop at the top of the capitals, last at the last baseline): { kind: "linear", ' +
               'angle (degrees; 0 left-to-right, 90 top-to-bottom), stops: [{ at 0..1, color }, …] } or ' +
               '{ kind: "radial", stops, centerX?, centerY?, radius? }. Any fill may add opacity (0..1) ' +
               'and offsetX/offsetY (pixels): a dark solid offset under the face is a lifted, extruded ' +

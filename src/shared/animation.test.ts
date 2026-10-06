@@ -355,6 +355,20 @@ test('a rise by word is masked while the word is moving and not once it has land
   assert.equal(landed.state({ line: 0, lines: 1, word: 0, words: 4, letter: 0, letters: 16 }).masked, false)
 })
 
+test('a word waiting its turn to rise is not drawn at all, whatever a Loop by letter adds; the word rising is', () => {
+  const it = item({ animation: { in: { kind: 'rise', frames: 20, by: 'word' }, loop: { kind: 'float', frames: 30, by: 'letter' } } })
+  const units = textUnitsAt(it, FROM + 2)!
+  // The specimen must hold a waiting word and a moving one, or neither half below says anything.
+  const moving = units.state({ line: 0, lines: 1, word: 0, words: 4, letter: 1, letters: 16 })
+  const waiting = units.state({ line: 0, lines: 1, word: 3, words: 4, letter: 15, letters: 16 })
+  assert.ok(moving.dy < 1 && moving.dy > 0, `the first word must be on its way up at this frame (dy ${moving.dy})`)
+  assert.equal(moving.opacity, 1)
+  assert.equal(waiting.opacity, 0, 'a word that has not started is not on the page, not parked under the mask')
+  // Leaving: the first word goes first, and once it is fully down it is gone too.
+  const leaving = textUnitsAt(item({ animation: { out: { kind: 'rise', frames: 20, by: 'word' }, loop: { kind: 'float', frames: 30, by: 'letter' } } }), FROM + LENGTH - 1)!
+  assert.equal(leaving.state({ line: 0, lines: 1, word: 0, words: 4, letter: 0, letters: 16 }).opacity, 0)
+})
+
 // -- writing: each refusal beside the nearest call that is accepted -------------------------------
 
 const TITLE: AnimationTarget = { itemId: 'itm_title', durationInFrames: 150, fps: 30, hasPicture: true, isText: true }

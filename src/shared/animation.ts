@@ -491,7 +491,12 @@ export function textUnitsAt(item: Item, frame: Frames): TextUnits | null {
       const typed = Math.floor(count * clamp(t) + 1e-9)
       return { ...REST, opacity: index < typed ? 1 : 0, masked: false }
     }
-    const state = endState(spec, unitProgress(t, index, count), true, arriving)
+    const progress = unitProgress(t, index, count)
+    const state = endState(spec, progress, true, arriving)
+    // A unit whose rise has not begun is not there yet. Left to the mask alone it is drawn one
+    // travel below its line, and a Loop running by letter lifts some of it back over the mask's
+    // edge: seen in the app as slivers of the waiting words under each line.
+    if (spec.kind === 'rise' && progress <= 0) return { ...state, opacity: 0, masked: true }
     return { ...state, masked: spec.kind === 'rise' && state !== REST }
   }
 

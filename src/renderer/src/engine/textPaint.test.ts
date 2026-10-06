@@ -16,9 +16,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { defaultTextStyle, type Item, type TextStyle } from '@shared/project'
-import { textUnitsAt } from '@shared/animation'
+import { textUnitsAt, type TextUnits } from '@shared/animation'
 import { anchorFor, layoutText, type LaidOutText, type TextBox } from './text'
-import { DESCENDER, gradientGeometry, paintOverflow, paintText, planText, unitTransform, type TextPlan } from './textPaint'
+import { CAP_HEIGHT, DESCENDER, gradientGeometry, paintOverflow, paintText, planText, unitTransform, type TextPlan } from './textPaint'
 
 const SIZE = 40
 /** Every glyph half the font size wide. */
@@ -274,8 +274,14 @@ test('fills are painted bottom to top, an offset one moved by its offset and a f
   const gradient = fills[1]!.fillStyle as { kind: string; args: number[]; stops: unknown[] }
   assert.equal(gradient.kind, 'linear')
   assert.deepEqual(gradient.stops, [[0, '#FFD36E'], [1, '#7A5CFF']])
-  // Down the block: from its top edge to its bottom edge.
-  assert.ok(Math.abs(gradient.args[1]! - plan.block.top) < 1e-9 && Math.abs(gradient.args[3]! - (plan.block.top + plan.block.height)) < 1e-9)
+  // Down the letters: the first stop on the first line's cap line, the last on the last baseline.
+  // Not the block's top edge, a whole line height above the baseline — across that, capitals
+  // start over a third of the way into the gradient (seen in the app by test/app/text-layers.mjs).
+  const baselines = plan.runs.map((run) => run.baseline)
+  const capLine = Math.min(...baselines) - SIZE * CAP_HEIGHT
+  assert.ok(capLine > plan.block.top + 1, 'the specimen must tell the cap line from the top of the line box')
+  assert.ok(Math.abs(gradient.args[1]! - capLine) < 1e-9 && Math.abs(gradient.args[3]! - Math.max(...baselines)) < 1e-9,
+    `gradient y ${gradient.args[1]} → ${gradient.args[3]}, letters ${capLine} → ${Math.max(...baselines)}`)
   assert.deepEqual([fills[1]!.tx, fills[1]!.ty, fills[1]!.globalAlpha], [0, 0, 0.5])
 })
 
@@ -369,4 +375,26 @@ test('a unit\'s transform is about its own centre, in type sizes — or a whole 
   assert.deepEqual(unitTransform(run, { ...base, masked: false }, 40, 60), { cx: 130, cy: 300 - 14, dx: 20, dy: 10, scale: 1.2, rotation: 3, blur: 4 })
   // Masked, a `dy` of 1 is the whole line and its descender allowance: entirely below the mask.
   assert.equal(unitTransform(run, { ...base, dy: 1, masked: true }, 40, 60).dy, 60 + 40 * DESCENDER)
+  // …and as much further as the paint reaches, because the mask is that much taller.
+  assert.equal(unitTransform(run, { ...base, dy: 1, masked: true }, 40, 60, 30).dy, 60 + 40 * DESCENDER + 30)
+  assert.equal(unitTransform(run, { ...base, masked: false }, 40, 60, 30).dy, 10, 'paint reach changes nothing for a unit that is not masked')
+})
+
+test('a unit about to rise starts wholly below its line\'s mask, thick outline and shadow included', () => {
+  const { laid, anchor, style } = setup('first\nsecond', {
+    align: 'left', stroke: { color: '#111111', width: 14 }, strokes: [{ color: '#FFFFFF', width: 12 }], shadow: { color: '#000000', blur: 20, offsetX: 0, offsetY: 12 }
+  })
+  // A unit at the very start of its rise, drawn: `dy` 1 under the mask.
+  const units: TextUnits = { by: 'line', state: () => ({ opacity: 1, dx: 0, dy: 1, scale: 1, rotation: 0, blur: 0, reveal: null, masked: true }) }
+  const plan = planText(laid, anchor, style, measure, 'line')
+  const spare = laid.lineHeight - SIZE * CAP_HEIGHT
+  assert.ok(plan.extents.top + plan.extents.bottom > spare + 5, 'the specimen\'s paint must reach further than a line\'s spare height, or the shorter travel hid it too')
+  const { ctx, calls } = recorder()
+  paintText(ctx, plan, 1, units)
+  const rect = calls.find((call) => call.op === 'rect')!
+  const maskBottom = (rect.args[1] as number) + (rect.args[3] as number)
+  const first = glyphs(calls)[0]!
+  // The top of the first line's paint: its cap line, less what the paint adds above, moved by the unit's translation.
+  const paintTop = (first.args[2] as number) - SIZE * CAP_HEIGHT - plan.extents.top + first.ty
+  assert.ok(paintTop >= maskBottom - 1e-9, `paint starts at ${paintTop}, the mask ends at ${maskBottom}`)
 })
