@@ -63,7 +63,9 @@ test('every animatable property has a row, a label of its own and a range', () =
 
 test('a key on any picture property arrives in the field the compositor draws from, half way between its keys', () => {
   for (const property of KEYFRAME_PROPERTIES) {
-    if (property === 'volume') continue
+    // Not pictures: volume is sound, and speed (a `planned` row) decides which source is read —
+    // `sourceEdgeAt` integrates it, and `speed-curve.test.ts` holds that.
+    if (property === 'volume' || KEYFRAME_REGISTRY[property].planned) continue
     const info = KEYFRAME_REGISTRY[property]
     // Two legal values inside the range, different from the static one, so a sampler that
     // returned the stored field would be caught.
