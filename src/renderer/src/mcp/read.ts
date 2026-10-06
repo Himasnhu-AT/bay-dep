@@ -20,6 +20,7 @@
  * fields that matter.
  */
 
+import { describeChain } from './audioEffects'
 import {
   allItems,
   findAsset,
@@ -110,6 +111,8 @@ export function readProject(): Record<string, unknown> {
       muted: track.muted,
       hidden: track.hidden,
       ...(track.solo ? { solo: true } : {}),
+      // The track's effect chain, when it has one (audio_effects with trackId changes it).
+      ...(track.audioEffects?.length ? { audioEffects: describeChain(track.audioEffects) } : {}),
       items: track.items.map(describeItem)
     })),
     // Always present, empty or not: an agent that has to test for the key before reading it
@@ -242,6 +245,8 @@ export function inspectItem(args: Record<string, unknown>): Record<string, unkno
       // J/L offsets as they resolve now and the duck, with any clamp said in words — the same
       // report edit_item returns, so a read and a write cannot describe one clip differently.
       ...(soundFinish.report ?? {}),
+      // The clip's own effect chain, in order, with the ids audio_effects edits by.
+      ...(item.audioEffects?.length ? { effects: describeChain(item.audioEffects) } : {}),
       ...(soundFinish.warnings.length > 0 ? { notes: soundFinish.warnings } : {})
         },
     asset: asset

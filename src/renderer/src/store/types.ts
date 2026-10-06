@@ -38,6 +38,7 @@ import type { WhisperDownload } from '@shared/whisper'
 import type { ClipboardPayload, PasteAttribute } from '@shared/clipboard'
 import type { FreezeResult } from '@shared/freeze-frame'
 import type { LoudnessTarget } from '@shared/loudness'
+import type { AudioEffect } from '@shared/audio-effects'
 import type { Effect, EffectParamValue } from '@shared/effects/spec'
 import type { AgentCheckpoint, AgentRevert } from './agent-turns'
 
@@ -504,6 +505,12 @@ export interface EditorActions {
   addTrack(kind: TrackKind, index?: number): string
   removeTrack(trackId: string): void
   patchTrack(trackId: string, patch: Partial<Pick<Track, 'locked' | 'muted' | 'hidden' | 'name' | 'solo' | 'volume' | 'pan'>>): void
+  /**
+   * Replaces a clip's or a track's audio effect chain (`@shared/audio-effects`) — one undo step.
+   * The list is what `applyEffectOp` returned, so it is already checked; an empty one removes the
+   * field. A clip on a locked track is left alone.
+   */
+  setAudioEffects(target: { itemId: string } | { trackId: string }, effects: readonly AudioEffect[]): void
 
   // transitions ---------------------------------------------------------------
   /**

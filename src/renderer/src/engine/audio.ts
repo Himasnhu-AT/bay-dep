@@ -3,7 +3,12 @@
  *
  * The graph, per item, is:
  *
- *   element -> MediaElementAudioSourceNode -> item gain -> pan -> track gain -> analyser -> master
+ *   element -> MediaElementAudioSourceNode -> [clip bands] -> item gain -> pan -> track gain -> [track bands] -> analyser -> master
+ *
+ * The bands are a chain's equaliser stages (`@shared/audio-effects`), each a `BiquadFilterNode`
+ * set from the table export's ffmpeg filters are written from; absent when there are none. A
+ * chain's dynamics and noise removal are not nodes: the clip plays its processed file instead
+ * (`withEffects`), which is the file export reads.
  *
  * The item gain node is held at two channels (a mono source is up-mixed L = R there, as the
  * speakers would), and the pan is a gain per channel — splitter, two gains, merger — set from
@@ -51,6 +56,9 @@ import {
   soundSecondsAt,
   type ScheduledSound
 } from '@shared/composition-audio'
+import { itemEffectPlan, NO_EFFECTS, trackBusBands, webAudioBiquad, type BiquadSpec } from '@shared/audio-effects'
+import type { AudioBakeLookup } from '@shared/audio-bake'
+import { audioBakes } from './audioBakes'
 import { inspectedSounds, type SoundLookup } from './compositionSounds'
 import { MediaPool, type MediaEntry } from './mediaPool'
 import { elementSlots, itemsToDraw } from './compositor'
@@ -115,6 +123,51 @@ export interface AudioRouting {
   metered: boolean
   /** True when the track's sound reaches the master. This is what `muted` governs. */
   audible: boolean
+  /**
+   * The clip's live equaliser bands, in order, between its source and its gain — an insert before
+   * the fader, where export puts the same bands (`buildAudioGraph`). Absent when there are none.
+   */
+  effects?: readonly BiquadSpec[]
+}
+
+/**
+ * The routing with the item's effect chain applied (`itemEffectPlan`).
+ *
+ * Live bands are attached for the engine to set. A baked part swaps the *file*: when its
+ * processed file is ready the item plays that, from an `<audio>` element of its own, positioned
+ * like a detached sound — the processed file has the source's own timing — and the element the
+ * unprocessed sound would have come from is claimed silently when it is a picture being drawn.
+ * While the bake is pending or failed the item plays unprocessed; the inspector says which.
+ */
+function withEffects(routed: AudioRouting, frame: number, fps: number, bakes: AudioBakeLookup | undefined): AudioRouting {
+  const plan = itemEffectPlan(routed.track, routed.item)
+  if (plan === NO_EFFECTS) return routed
+  const out: AudioRouting = plan.clip.length > 0 ? { ...routed, effects: plan.clip } : routed
+  if (plan.bake.length === 0 || !bakes || !routed.asset.path) return out
+  const baked = bakes(routed.asset.path, plan.bake)
+  if (baked.state !== 'ready') return out
+  const standIn: Asset = {
+    ...routed.asset,
+    // Per item and per bake: two clips of one file sounding at once need an element each, and a
+    // changed chain is a different file, which an element bound to the old one must not play.
+    id: `${routed.asset.id}~fx~${routed.item.id}~${baked.key}`,
+    kind: 'audio',
+    path: baked.path,
+    hasVideo: false,
+    width: null,
+    height: null,
+    posterPath: null,
+    waveformPath: null
+  }
+  return {
+    ...out,
+    asset: standIn,
+    slot: 0,
+    detached: routed.detached ?? {
+      mediaSeconds: sourceSecondsAt(routed.item, standIn, frame, fps),
+      claim: routed.asset.hasVideo ? { asset: routed.asset, slot: routed.slot } : null
+    }
+  }
 }
 
 /**
@@ -129,7 +182,13 @@ export interface AudioRouting {
  * So this deliberately does *not* consult `hidden`, and deliberately does not go through
  * `itemsAtFrame`, which filters by both flags for the compositor's benefit.
  */
-export function audioRoutingAt(project: Project, timeline: Timeline, frame: number): AudioRouting[] {
+export function audioRoutingAt(
+  project: Project,
+  timeline: Timeline,
+  frame: number,
+  /** Answers which processed files exist. Without it a baked chain plays unprocessed. */
+  bakes?: AudioBakeLookup
+): AudioRouting[] {
   const out: AudioRouting[] = []
   // The same list and the same slot assignment the compositor draws from, so a source node is
   // always bound to the element its picture comes from.
@@ -275,6 +334,8 @@ export function audioRoutingAt(project: Project, timeline: Timeline, frame: numb
     out.push({ item, track, asset, slot, transitionGain, gain, pan: routedPanGains(timeline, item), metered: true, audible: trackAudible(timeline.tracks, track) })
   }
 
+  // Effects last, over every route above alike, so no branch can forget them.
+  for (let index = 0; index < out.length; index += 1) out[index] = withEffects(out[index]!, frame, fps, bakes)
   return out
 }
 
@@ -444,6 +505,8 @@ export interface AudioUpdate {
 
 interface TrackNodes {
   gain: GainNode
+  /** The track's bus bands, between its gain and its analyser — so the meter shows them. */
+  bands: BiquadFilterNode[]
   analyser: AnalyserNode
   /** False while the track is muted; the analyser stays fed either way. */
   audible: boolean
@@ -459,6 +522,8 @@ interface MeterNodes {
 
 interface SourceNodes {
   source: MediaElementAudioSourceNode
+  /** The clip's live bands, between the source and its gain. Empty for most clips. */
+  bands: BiquadFilterNode[]
   gain: GainNode
   /** The pan: one gain per channel between a splitter and a merger. */
   left: GainNode
@@ -487,6 +552,8 @@ export function levelOf(samples: ArrayLike<number>): TrackLevel {
   return { peak, rms: Math.sqrt(sum / Math.max(1, samples.length)) }
 }
 
+const NO_BANDS: readonly BiquadSpec[] = []
+
 /** Source nodes are per element, not per asset. Mirrors the pool's own slot keying. */
 function sourceKey(assetId: string, slot: number): string {
   return slot === 0 ? assetId : `${assetId}#${slot}`
@@ -498,15 +565,17 @@ export class AudioEngine {
   readonly #sources = new Map<string, SourceNodes>()
   readonly #releaseEvictListener: () => void
   readonly #sounds: SoundLookup
+  readonly #bakes: AudioBakeLookup
   #context: AudioContext | null = null
   #master: GainNode | null = null
   #masterVolume = 1
   /** The stereo tap the master meter reads: after the master gain, so it shows what you hear. */
   #meter: MeterNodes | null = null
 
-  constructor(pool: MediaPool, sounds: SoundLookup = inspectedSounds()) {
+  constructor(pool: MediaPool, sounds: SoundLookup = inspectedSounds(), bakes: AudioBakeLookup = audioBakes.lookup) {
     this.#pool = pool
     this.#sounds = sounds
+    this.#bakes = bakes
     // An evicted element takes its source node with it: a MediaElementAudioSourceNode is
     // bound to one element for life and cannot be re-pointed.
     this.#releaseEvictListener = pool.onEvict((entry) => this.#forget(entry))
@@ -600,6 +669,7 @@ export class AudioEngine {
       liveTracks.add(track.id)
       const nodes = this.#trackNodes(context, track)
       this.#setAudible(nodes, trackAudible(timeline.tracks, track))
+      nodes.bands = this.#setBands(context, nodes.gain, nodes.analyser, nodes.bands, trackBusBands(track))
     }
 
     {
@@ -612,7 +682,7 @@ export class AudioEngine {
         }
       }
 
-      for (const routed of audioRoutingAt(project, timeline, frame)) {
+      for (const routed of audioRoutingAt(project, timeline, frame, this.#bakes)) {
         const { item, track, asset } = routed
         const nodes = this.#tracks.get(track.id)
         if (!nodes) continue
@@ -650,6 +720,7 @@ export class AudioEngine {
         const silentHere = retimeSound(item).preview === 'silent'
         source.gain.gain.value = silentHere ? 0 : clamp(finite(routed.gain, 0), 0, 2)
         this.#setPan(source, routed.pan)
+        source.bands = this.#setBands(context, source.source, source.gain, source.bands, routed.effects ?? NO_BANDS)
 
         if (silentHere) {
           if (element instanceof HTMLAudioElement && !element.paused) element.pause()
@@ -676,6 +747,7 @@ export class AudioEngine {
         this.#route(source, nodes, routed.track.id)
         source.gain.gain.value = clamp(finite(routed.gain, 0), 0, 8)
         this.#setPan(source, routed.pan)
+        source.bands = this.#setBands(context, source.source, source.gain, source.bands, NO_BANDS)
         this.#position(element, routed.entry.speed, routed.mediaSeconds, fps, playing)
       }
     }
@@ -747,6 +819,7 @@ export class AudioEngine {
     gain.connect(analyser)
     const nodes: TrackNodes = {
       gain,
+      bands: [],
       analyser,
       audible: false,
       samples: new Uint8Array(new ArrayBuffer(analyser.fftSize))
@@ -791,7 +864,7 @@ export class AudioEngine {
       splitter.connect(right, 1)
       left.connect(merger, 0, 0)
       right.connect(merger, 0, 1)
-      const nodes: SourceNodes = { source, gain, left, right, output: merger, trackId: null }
+      const nodes: SourceNodes = { source, bands: [], gain, left, right, output: merger, trackId: null }
       this.#sources.set(key, nodes)
       return nodes
     } catch {
@@ -867,6 +940,45 @@ export class AudioEngine {
     } catch {
       // Before metadata, a seek throws; the next frame retries.
     }
+  }
+
+  /**
+   * Puts `specs` between `from` and `to` as a series of `BiquadFilterNode`s and returns them.
+   *
+   * The nodes are rebuilt only when the *number* of bands changes; otherwise each is re-set in
+   * place, so dragging a frequency moves a live filter. No bands is `from` wired straight to `to`
+   * — nothing in the path, which is every clip and track that has no equaliser. `from` must have
+   * no other output: it is disconnected whole when the chain is rebuilt.
+   */
+  #setBands(
+    context: AudioContext,
+    from: AudioNode,
+    to: AudioNode,
+    current: BiquadFilterNode[],
+    specs: readonly BiquadSpec[]
+  ): BiquadFilterNode[] {
+    let nodes = current
+    if (specs.length !== current.length) {
+      from.disconnect()
+      for (const node of current) node.disconnect()
+      nodes = specs.map(() => context.createBiquadFilter())
+      let previous: AudioNode = from
+      for (const node of nodes) {
+        previous.connect(node)
+        previous = node
+      }
+      previous.connect(to)
+    }
+    for (const [index, spec] of specs.entries()) {
+      const node = nodes[index]!
+      // `webAudioBiquad`, not the canonical numbers: a low/high-pass node reads Q in decibels.
+      const set = webAudioBiquad(spec)
+      if (node.type !== set.type) node.type = set.type
+      if (node.frequency.value !== set.frequency) node.frequency.value = set.frequency
+      if (node.Q.value !== set.Q) node.Q.value = set.Q
+      if (node.gain.value !== set.gain) node.gain.value = set.gain
+    }
+    return nodes
   }
 
   /** The pan law's two channel gains, from the routing (`panGains`). */

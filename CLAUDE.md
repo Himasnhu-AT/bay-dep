@@ -1094,6 +1094,32 @@ projects — indexing an array yields `T | undefined` and you must handle it.
   never `loudnorm` (silently goes dynamic) and never judged on PCM (AAC adds ~0.5–0.8 dB of true
   peak; `master.test.ts` proves its specimen ships over the ceiling without the loop). Off by
   default. The mastered track is muxed with `-c:a copy`, and the delivered file is re-measured.
+- **Audio effects are two kinds, because preview and export are two renderers** (`item.audioEffects`,
+  `track.audioEffects`, `@shared/audio-effects`, `main/audio-fx/`, `audio_effects`). **Equaliser
+  bands are live**: one canonical (type, frequency, linear Q, gain) per band, from which the
+  `BiquadFilterNode` settings (`webAudioBiquad`), the ffmpeg filter (`ffmpegBiquad`) and the analytic
+  response are all read. They do not take the same numbers — a Web Audio high/low-pass reads Q in
+  **decibels**, so the linear 0.707 handed to a node is 3.7 dB wrong at the corner. Measured through
+  the real ffmpeg: every band type within 0.003 dB of the biquad at ten tones, and the spec's node
+  arithmetic within 1e-4 of the exported samples. A preview context runs at the device's rate and
+  export at 48 kHz; the two designs differ by at most 0.84 dB below 16 kHz (a 12 kHz low-pass).
+  **Dynamics and noise removal are baked**: `DynamicsCompressorNode` and `acompressor` are different
+  detectors, and a detector has history a just-scrubbed preview lacks, so the chain up to its last
+  compressor/gate/de-esser/limiter/denoise stage is rendered once by ffmpeg into a content-addressed
+  24-bit WAV (`<cache>/audiofx-<scheme>`, whole source stream, 4 GB cap of its own, bakes used this
+  session never swept) that **both** paths play — the same samples by construction. Preview plays it
+  from a stand-in `<audio>` element positioned like a detached sound, with the picture element claimed
+  silently; while a bake is pending the preview plays the clip unprocessed and the inspector says so;
+  export renders what it needs first and **throws** rather than write a dry clip. Order: clip effects
+  → `itemAudioGainAt` (volume, fades, transition, duck, track fader) → pan → track bus → track bands →
+  mix → mastering. **A track's baked stages are applied to each of its clips** (a bus cannot be
+  baked), before that clip's fader; only the track's bands after its last baked stage run on the bus.
+  Three things ffmpeg does that the bake has to undo, each measured and pinned: `afftdn` delays its
+  output 1200 samples and does not say so; its `nf` must be the recording's own noise level or it
+  removes nothing (main measures the quiet tenth of 50 ms windows first; `tn=1` did nothing); and a
+  late-starting audio stream comes out early unless the resample pins `first_pts=0`. `detection=peak`
+  vs `rms` is a 0.2 dB choice no test distinguishes — recorded at the code as a choice. **Not
+  measured:** any of it in a running app (`test/app/audio-effects.mjs` is written and unrun).
 - **Keyframes have one sampler and item-relative frames** (`item.keyframes`, `@shared/keyframes`,
   `edit_item.keyframes`). The compositor paints `animatedItemAt` (in `#paintItem`, so every kind
   and a transition's two sides animate alike) and `itemAudioGainAt` reads `animatedVolumeAt`, so

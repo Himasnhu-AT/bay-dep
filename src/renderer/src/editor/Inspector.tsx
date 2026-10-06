@@ -53,6 +53,7 @@ import { CLIP_SPEED_RANGE, footageLength, speedNote, type SpeedPlan } from '@sha
 import { hasSpeedCurve } from '@shared/speed-curve'
 import { RetimeControls } from './RetimeControls'
 import { AudioSection } from './AudioSection'
+import { ClipAudioEffects } from './audio/ClipAudioEffects'
 import { ClipSection, Readout } from './ClipSection'
 import { KeyframesSection } from './KeyframesSection'
 import { EffectStackSection, effectsTouched } from './EffectStackSection'
@@ -767,6 +768,7 @@ export function Inspector(): ReactNode {
           </p>
         </Section>
       ) : null}
+      <ClipAudioEffects items={soundItems} project={project} timeline={timeline} />
       {/* Sound on its own has no Video tab, so its speed and fades live here. */}
       {visualItems.length === 0 && retime}
     </>

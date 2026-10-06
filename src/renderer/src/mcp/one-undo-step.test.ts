@@ -342,6 +342,11 @@ const TOOL_CASES: Record<string, ToolCase[]> = {
     { delta: 1, before: (f) => { state().detachAudio([f.a, f.c]) }, args: (f) => ({ itemIds: [f.a, f.c], action: 'unlink' }) },
     { delta: 1, before: (f) => { state().detachAudio([f.a, f.c]) }, args: (f) => ({ itemIds: [f.a, f.c], action: 'reattach' }) }
   ],
+  audio_effects: [
+    // A preset is six effects written at once; on a track as on a clip, one step.
+    { delta: 1, args: (f) => ({ itemId: f.a, action: 'preset', preset: 'podcast-voice' }) },
+    { delta: 1, args: (f) => ({ trackId: f.v2, action: 'add', kind: 'compressor', params: { ratio: 4 } }) }
+  ],
   add_track: [{ delta: 1, args: () => ({ kind: 'audio' }) }],
   add_transition: [
     { delta: 1, args: (f) => ({ fromItemId: f.a, toItemId: f.b, kind: 'cross-dissolve' }) }
@@ -700,6 +705,7 @@ const STORE_CASES: Record<string, StoreCase> = {
   },
   addTrack: { delta: 1, run: () => { state().addTrack('video') } },
   patchTrack: { delta: 1, run: (f) => state().patchTrack(f.v2, { muted: true, name: 'Under' }) },
+  setAudioEffects: { delta: 1, run: (f) => state().setAudioEffects({ itemId: f.a }, [{ id: 'afx_x', kind: 'highpass', params: { frequency: 80, q: 0.7 } }]) },
   addTransition: {
     delta: 1,
     run: (f) => {
