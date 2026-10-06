@@ -29,7 +29,9 @@ import {
   playableTimeline,
   TRANSPARENT_BACKGROUND
 } from '@shared/project'
-import { animatedItemAt } from '@shared/keyframes'
+import { animatedItemAt, keyedItemAt } from '@shared/keyframes'
+import { animationForDraw, animationRevealAt, textUnitsAt } from '@shared/animation'
+import { paintOverflow, paintText, planText } from './textPaint'
 import { matteRecordAt, MAX_MASK_FEATHER, shapeMasksOf, subjectMaskOf } from '@shared/matte'
 import { cutoutAsDrawn, cutoutPartner } from '@shared/behind-subject'
 import { subjectMattes, type MatteImage } from './subjectMatte'
@@ -695,7 +697,7 @@ export class Compositor {
     now: number,
     slot: number,
     stats: DrawStats,
-    opts: { alphaMul?: number }
+    opts: { alphaMul?: number; revealed?: boolean }
   ): void {
     // Keyframes resolve here, once, into the layout every draw below reads — so a transition's
     // two sides, text, .brf, compositions and placeholders all animate through one sampler, and
@@ -704,6 +706,35 @@ export class Compositor {
     // punch-in or crop of the clip moves the cut-out with it (`cutoutAsDrawn`). Before keys resolve,
     // so the clip's keyframes animate the cut-out through the same sampler.
     if (this.#timeline && item.masks) item = cutoutAsDrawn(item, cutoutPartner(this.#timeline, item))
+    // Animation presets ride the same sampler. A transition across an end sets that end's preset
+    // aside first (`animationForDraw`), and a preset that reveals through a mask — a Wipe, a Rise —
+    // clips to the clip's own keyed box, turned and zoomed as the clip is, before anything is drawn.
+    if (item.animation) {
+      item = animationForDraw(this.#timeline, item)
+      const reveal = opts.revealed ? null : animationRevealAt(item, frame)
+      const keyed = reveal ? keyedItemAt(item, frame) : null
+      const mask = keyed ? layoutBox(keyed) : null
+      if (reveal && keyed && mask) {
+        ctx.save()
+        const device = ctx.getTransform()
+        applyRotation(ctx, keyed, mask)
+        ctx.beginPath()
+        ctx.rect(
+          mask.left + reveal.left * mask.width,
+          mask.top + reveal.top * mask.height,
+          Math.max(0, mask.width * (1 - reveal.left - reveal.right)),
+          Math.max(0, mask.height * (1 - reveal.top - reveal.bottom))
+        )
+        ctx.clip()
+        ctx.setTransform(device)
+        try {
+          this.#paintItem(ctx, project, item, frame, fps, mode, now, slot, stats, { ...opts, revealed: true })
+        } finally {
+          ctx.restore()
+        }
+        return
+      }
+    }
     item = animatedItemAt(item, frame)
     const asset = findAsset(project, item.assetId)
     if (!asset || asset.error) {
@@ -956,9 +987,9 @@ export class Compositor {
    * tested against an injected measure. What is here is the part that genuinely needs a
    * canvas: assembling the font string, asking for widths, and painting in the right order.
    *
-   * **Order is load-bearing**: background plate, then shadow+stroke, then fill. Painting the
-   * plate after the glyphs hides them; painting the shadow with the fill leaves the stroke
-   * casting its own shadow over the letterform it is meant to outline.
+   * What is painted, and in which order, is `paintText` in `textPaint.ts` — the one painter, so
+   * a title's fills, outlines, shadows, plate and per-word animation are the same picture in the
+   * preview, `preview_frame` and the export.
    */
   #drawText(ctx: RenderTarget, item: Item, asset: Asset, frame: number, alphaMul = 1): TextFit | null {
     const box = layoutBox(item)
@@ -1001,67 +1032,31 @@ export class Compositor {
         fontAvailable
       }
 
+      // The plan — plates, runs of glyphs, how far the paint reaches — is arithmetic in
+      // `textPaint.ts`; it needs the font the lines were laid out in to measure against.
+      ctx.font = fontString(laid.fontSize, style.fontFamily)
+      const anchor = anchorFor(box as TextBox, laid, style.align, style.verticalAlign)
+      const units = textUnitsAt(item, frame)
+      const plan = planText(laid, anchor, style, (candidate) => ctx.measureText(candidate).width, units?.by ?? null)
+      const overflow = paintOverflow(plan.painted, box as TextBox)
+      // Not when the letters themselves are cut off: that is the bigger fault and is already said.
+      if (overflow && !laid.clipped) fit.paintOverflow = overflow
+
       // Report even when nothing is painted. A fully faded title that does not fit is still a
       // layout problem the next frame will show, and reporting only visible text would make
       // the warning blink.
       if (alpha <= 0) return fit
 
+      // Read before the rotation is applied: canvas shadows are in device pixels and ignore the
+      // transform, so the painter scales them by the device scale and the clip's own zoom.
+      const device = ctx.getTransform()
+      const shadowScale = (Math.hypot(device.a, device.b) || 1) * zoomOf(item)
+
       ctx.globalAlpha = alpha
       applyLook(ctx, item)
       applyRotation(ctx, item, box)
-      ctx.font = fontString(laid.fontSize, style.fontFamily)
-
-      const anchor = anchorFor(box as TextBox, laid, style.align, style.verticalAlign)
-      ctx.textAlign = anchor.textAlign
       ctx.textBaseline = 'alphabetic'
-
-      if (style.background) {
-        const pad = Math.max(0, finite(style.background.padding, 0))
-        const plateWidth = laid.maxLineWidth + pad * 2
-        const left =
-          anchor.textAlign === 'left'
-            ? anchor.x - pad
-            : anchor.textAlign === 'right'
-              ? anchor.x - plateWidth + pad
-              : anchor.x - plateWidth / 2
-        const top = anchor.firstBaseline - laid.lineHeight - pad
-        const height = laid.blockHeight + pad * 2
-        ctx.fillStyle = style.background.color
-        const radius = Math.max(0, Math.min(finite(style.background.radius, 0), Math.min(plateWidth, height) / 2))
-        ctx.beginPath()
-        // `roundRect` is in Chromium; the fallback keeps this drawable if it ever is not.
-        if (typeof (ctx as CanvasRenderingContext2D).roundRect === 'function') {
-          ;(ctx as CanvasRenderingContext2D).roundRect(left, top, plateWidth, height, radius)
-        } else {
-          ctx.rect(left, top, plateWidth, height)
-        }
-        ctx.fill()
-      }
-
-      for (let i = 0; i < laid.lines.length; i += 1) {
-        const line = laid.lines[i] ?? ''
-        const y = anchor.firstBaseline + i * laid.lineHeight
-
-        if (style.shadow) {
-          ctx.shadowColor = style.shadow.color
-          ctx.shadowBlur = Math.max(0, finite(style.shadow.blur, 0))
-          ctx.shadowOffsetX = finite(style.shadow.offsetX, 0)
-          ctx.shadowOffsetY = finite(style.shadow.offsetY, 0)
-        }
-        if (style.stroke && style.stroke.width > 0) {
-          ctx.lineWidth = style.stroke.width
-          ctx.strokeStyle = style.stroke.color
-          ctx.lineJoin = 'round'
-          ctx.strokeText(line, anchor.x, y)
-        }
-        // The fill must not cast a second shadow over the stroke it sits inside.
-        ctx.shadowColor = 'transparent'
-        ctx.shadowBlur = 0
-        ctx.shadowOffsetX = 0
-        ctx.shadowOffsetY = 0
-        ctx.fillStyle = style.color
-        ctx.fillText(line, anchor.x, y)
-      }
+      paintText(ctx, plan, shadowScale, units)
 
       return fit
     } finally {
