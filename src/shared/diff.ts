@@ -121,6 +121,14 @@ export function describeChanges(before: Project, after: Project): ChangeLine[] {
       if (!same(o.blendMode, item.blendMode)) out.push({ kind: 'changed', text: `Blend mode of ${name}: ${o.blendMode ?? 'normal'} → ${item.blendMode ?? 'normal'}` })
       if (!same(o.text, item.text)) out.push({ kind: 'changed', text: `Restyled the text of ${name}` })
       if (!same(o.variables, item.variables)) out.push({ kind: 'changed', text: `Changed the content of ${name}` })
+      if (!same(o.effects, item.effects)) {
+        // The stack as it now is, in draw order: order is part of what changed.
+        const kinds = (item.effects ?? []).map((effect) => (effect.enabled === false ? `${effect.kind} (off)` : effect.kind))
+        out.push({
+          kind: 'changed',
+          text: kinds.length > 0 ? `Effects on ${name}: ${kinds.join(', ')}` : `Removed the effects from ${name}`
+        })
+      }
       // A head trim shifts keys to keep them on their footage; that is the trim, already said above.
       if (!same(o.keyframes, item.keyframes) && o.from === item.from) {
         const keyed = Object.keys(item.keyframes ?? {})

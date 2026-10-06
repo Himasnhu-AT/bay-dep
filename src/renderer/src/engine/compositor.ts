@@ -45,6 +45,7 @@ import type { BrfDocument } from '@shared/brf'
 import { resolveVariables } from '@shared/composition'
 import { adjustmentFilter, blendOperation, isPlainLook, NO_FILTER } from './looks'
 import { gradeSource, resolvedGradeOf } from './grade'
+import { drawEffects, resolvedEffectsOf } from './effects'
 import { grainSeed } from '@shared/grade'
 import {
   anchorFor,
@@ -142,6 +143,8 @@ export interface DrawStats {
    * Clips whose grade could not be applied, and why — drawn ungraded rather than not at all.
    * Absent when there is nothing to say. A grade that silently fails looks like a grade that was
    * never set, which is the one outcome an agent reading `preview_frame` cannot tell from success.
+   * A clip's effect stack reports here too (`effects.ts`): the same slot, the same kind of fault —
+   * a pass that did not run — and the same readers (`preview_frame`, the exporter).
    */
   gradeIssues?: string[]
 }
@@ -456,19 +459,43 @@ export class Compositor {
       // What a mask is applied to: the graded picture when there is one, else the element's crop rect.
       let picture: { source: unknown; sx: number; sy: number; sw: number; sh: number } = { source: element, ...src }
       const grade = resolvedGradeOf(item.grade)
-      if (grade && src.sw > 0 && src.sh > 0) {
-        const lutAsset = grade.lut && this.#project ? findAsset(this.#project, grade.lut.assetId) : undefined
-        const graded = gradeSource(grade, {
-          source: element,
-          ...src,
-          width: deviceWidth,
-          height: deviceHeight,
-          boxWidth: Math.abs(dest.dw),
-          boxHeight: Math.abs(dest.dh),
-          frame,
-          seed: grainSeed(item.id),
-          lut: lutAsset?.kind === 'lut' ? lutAsset.lut : undefined
-        })
+      const lutAsset = grade?.lut && this.#project ? findAsset(this.#project, grade.lut.assetId) : undefined
+      const pass = {
+        source: element,
+        ...src,
+        width: deviceWidth,
+        height: deviceHeight,
+        boxWidth: Math.abs(dest.dw),
+        boxHeight: Math.abs(dest.dh),
+        frame,
+        seed: grainSeed(item.id),
+        lut: lutAsset?.kind === 'lut' ? lutAsset.lut : undefined
+      }
+      // The effect stack (`effects.ts`): after the grade, which it runs itself as its first step,
+      // and before the mask. A stack with nothing to draw resolves to null and costs nothing. One
+      // that cannot run — or names an effect this build lacks — is reported beside failed grades,
+      // so `preview_frame` and an export both say the picture is not the one the timeline describes.
+      const effects = resolvedEffectsOf(item.effects)
+      let effected = false
+      if (effects) {
+        for (const issue of effects.issues) noteGradeIssue(stats, `clip ${item.id}: ${issue}`)
+        if (effects.active.length > 0 && src.sw > 0 && src.sh > 0) {
+          const drawn = drawEffects(effects.active, { ...pass, grade })
+          if (drawn.ok) {
+            for (const warning of drawn.warnings) noteGradeIssue(stats, `clip ${item.id}: ${warning}`)
+            if (!mask) {
+              ctx.drawImage(drawn.canvas, 0, 0, drawn.width, drawn.height, dest.dx, dest.dy, dest.dw, dest.dh)
+              return
+            }
+            picture = { source: drawn.canvas, sx: 0, sy: 0, sw: drawn.width, sh: drawn.height }
+            effected = true
+          } else {
+            noteGradeIssue(stats, `clip ${item.id} was drawn without its effects: ${drawn.error}`)
+          }
+        }
+      }
+      if (!effected && grade && src.sw > 0 && src.sh > 0) {
+        const graded = gradeSource(grade, pass)
         if (graded.ok) {
           if (graded.warning) noteGradeIssue(stats, `clip ${item.id}: ${graded.warning}`)
           if (!mask) {

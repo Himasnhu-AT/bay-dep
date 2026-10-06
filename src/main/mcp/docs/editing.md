@@ -297,6 +297,36 @@ LUT → halation → vignette → grain. Fields merge; `null` removes the grade 
   grade is stored, warned about, and costs nothing. `inspect_item` reports `grade` and `gradeActive`;
   `preview_frame` reports `gradeWarnings` if a grade could not run (a missing LUT asset, no WebGL2).
 
+## Video effects
+
+`edit_effects { itemId, operations }` puts an ordered stack of shader effects on a picture clip
+(video, image, gif, html, brf): chroma-key, directional-blur, zoom-blur, sharpen, glow,
+chromatic-aberration, pixelate, glitch, duotone, tint, flip, mirror. The tool's own description
+lists every parameter with its range.
+
+    edit_effects { itemId: "itm_…", operations: [
+      { op: "add", kind: "chroma-key", params: { color: "#18A84A", similarity: 0.25 } },
+      { op: "add", kind: "glow", params: { amount: 0.8, radius: 24 } } ] }
+
+- **Order is the picture.** A clip draws grade → effects, first to last → mask → adjustments and
+  blend. Key first, then stylise: chroma-key then glow glows the subject; the other way round keys a
+  frame that already has glow in it.
+- **Ids, not positions.** The result lists the stack with an `id` per effect; `update`, `move` and
+  `remove` take that id. `update` merges `params`; `enabled: false` bypasses without removing.
+- **One batch, one undo step, all or nothing.** A value out of range is refused with the range and
+  nothing in the batch lands.
+- **What is not an effect:** an even soft blur is `edit_item adjustments.blur`; vignette, grain and
+  halation are `edit_item grade`; brightness, contrast, saturation, sepia, greyscale are
+  `adjustments` or `grade`. One field per look.
+- **Chroma key:** put the keyed clip on a track above its background, set `color` to the screen's
+  real colour (read it off a `preview_frame`), raise `similarity` until the screen is gone, then
+  `smoothness` for the edge and `spill` for the green cast on the subject.
+- **Glitch** is a function of the timeline frame and `seed`: the same frame always tears the same way.
+- Lengths in px are timeline pixels. An effect at an amount of 0, or switched off, runs no pass and
+  the result says so (`draws: false`). `inspect_item` reports `effects`; `preview_frame` reports
+  under `gradeWarnings` if an effect could not run, and an export that wrote such a frame comes
+  back `complete: false` naming the clip.
+
 ## HTML compositions
 
 bay renders HyperFrames compositions as clips. Write an HTML file whose root carries
@@ -330,8 +360,8 @@ as they do on video.
 loudness. `wait: false` returns the job id at once instead; `track_export { jobId }` then waits
 for the same result. Check that result before
 telling the user it is done. `complete: false` means some frames of the file are wrong: written
-before a graphic on them (a `.brf`, a composition) had rendered, or with a clip whose grade could
-not be applied. The `warning` names the frames and what is wrong on them, and
+before a graphic on them (a `.brf`, a composition) had rendered, or with a clip whose grade or
+effects could not be applied. The `warning` names the frames and what is wrong on them, and
 `incompleteFrames.items` / `incompleteFrames.gradeIssues` list each with its frame ranges. That
 file is not correct: follow the warning (export again, or fix the grade first) rather than
 reporting it.

@@ -21,6 +21,7 @@ import type { BeatGrid } from './beats'
 import type { Grade, LutData } from './grade'
 import type { Mask, SubjectMatte } from './matte'
 import type { DeliverySettings } from './loudness'
+import type { Effect } from './effects/spec'
 
 /**
  * `lut` is a colour look-up table (`.cube`): it has no picture of its own and is never placed on a
@@ -558,6 +559,13 @@ export interface Item {
    * clip at the same source time. Absent is the fast path. Optional and additive.
    */
   masks?: Mask[]
+  /**
+   * Video effects (`@shared/effects`): an ordered stack of shader passes — blurs, glow, glitch,
+   * chroma key and the rest of the catalog — drawn by the compositor inside `#drawSource`, after
+   * the grade and before the masks, first entry first. Absent, empty, all switched off or all at
+   * their identity runs no pass. Optional and additive.
+   */
+  effects?: Effect[]
 }
 
 /**
