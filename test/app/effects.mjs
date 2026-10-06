@@ -52,12 +52,14 @@ await mkdir(MEDIA, { recursive: true })
 
 const W = 1080
 const H = 1920
-// The subject: a red square in the middle of a chroma-green frame.
-const inSquare = 'between(X,340,740)*between(Y,760,1160)'
+// The subject: a red block in the middle of a chroma-green frame. Its rows are whole grid cells
+// (rows 2 and 3 of 6): the first run's 400 px square covered only 200 of cell row 2's 320 px, so
+// "the subject's colour" was read from a cell that was three eighths background.
+const inSquare = 'between(X,340,740)*between(Y,640,1279)'
 const specimens = [
   // Bars: structure in both axes and a bright band, so blurs, flips and glow all have something to move.
   ['bars.mp4', ['-f', 'lavfi', '-i', `smptehdbars=s=${W}x${H}:r=30:d=5`, ...H264, '-pix_fmt', 'yuv420p']],
-  ['screen.png', ['-f', 'lavfi', '-i',
+  ['screen-v2.png', ['-f', 'lavfi', '-i',
     `color=c=black:s=${W}x${H},format=rgb24,geq=r='if(${inSquare},220,0)':g='if(${inSquare},30,177)':b='if(${inSquare},30,64)'`,
     '-frames:v', '1']],
   ['blue.png', ['-f', 'lavfi', '-i', `color=c=0x1020E0:s=${W}x${H}`, '-frames:v', '1']]
@@ -121,6 +123,12 @@ const HELPERS = `
     }
     return Array.from(sums, (v, i) => v / counts[Math.floor(i / 3)])
   }
+  // Mean horizontal step between neighbouring pixels (green): what a sharpen raises and a cell mean cannot see.
+  __fx.edge = (data, w, h) => {
+    let sum = 0
+    for (let y = 0; y < h; y++) for (let x = 1; x < w; x++) sum += Math.abs(data[(y * w + x) * 4 + 1] - data[(y * w + x - 1) * 4 + 1])
+    return sum / (h * (w - 1))
+  }
   __fx.clip = (id, asset, from, frames, extra) => ({ id, assetId: asset.id, trackId: 'fx_v1', from, durationInFrames: frames,
     sourceStartUs: 0, layout: { left: 0, top: 0, width: ${W}, height: ${H}, opacity: 1, rotation: 0 },
     volume: 1, fadeInFrames: 0, fadeOutFrames: 0, speed: 1, ...(extra || {}) })
@@ -139,7 +147,8 @@ const HELPERS = `
     const img = new Image(); img.src = r.dataUrl; await img.decode()
     const c = new OffscreenCanvas(img.width, img.height)
     const x = c.getContext('2d', { willReadFrequently: true }); x.drawImage(img, 0, 0)
-    return { grid: __fx.grid(x.getImageData(0, 0, img.width, img.height).data, img.width, img.height),
+    const data = x.getImageData(0, 0, img.width, img.height).data
+    return { grid: __fx.grid(data, img.width, img.height), edge: __fx.edge(data, img.width, img.height),
       pending: r.pending, issues: r.gradeIssues ?? null }
   }
   // The viewer's path: a Compositor drawing the timeline, scaled, in scrub mode.
@@ -191,7 +200,7 @@ const MOVED = 12
 await runProbe(async () => {
   await evaluate(HELPERS)
   const imported = await evaluate(`(async () => {
-    const im = await window.bay.media.importPaths(${JSON.stringify([join(MEDIA, 'bars.mp4'), join(MEDIA, 'screen.png'), join(MEDIA, 'blue.png')])})
+    const im = await window.bay.media.importPaths(${JSON.stringify([join(MEDIA, 'bars.mp4'), join(MEDIA, 'screen-v2.png'), join(MEDIA, 'blue.png')])})
     return im.map((e) => e.asset)
   })()`, 60_000)
   const [bars, screen, blue] = imported
@@ -225,7 +234,14 @@ await runProbe(async () => {
     stills[spec.kind] = still.grid
     const moved = gridDiff(still.grid, plainStill.grid)
     check(still.pending === 0 && !still.issues, `${spec.kind}: draws with nothing reported`, JSON.stringify(still.issues))
-    check(moved.worst > MOVED, `${spec.kind}: positive control — it changes the picture`, `worst change ${moved.worst.toFixed(1)} ${moved.cell}`)
+    // A sharpen keeps every cell's mean (measured: 5.3 at amount 2.5) and steepens edges instead, so
+    // its control is the mean step between neighbouring pixels, against the untouched clip's.
+    if (spec.kind === 'sharpen') {
+      check(still.edge > plainStill.edge * 1.25, 'sharpen: positive control — edges are steeper than the untouched clip\'s',
+        `mean step ${plainStill.edge.toFixed(2)} → ${still.edge.toFixed(2)}`)
+    } else {
+      check(moved.worst > MOVED, `${spec.kind}: positive control — it changes the picture`, `worst change ${moved.worst.toFixed(1)} ${moved.cell}`)
+    }
     const agree = gridDiff(still.grid, preview.grid)
     check(agree.worst <= TOL_STILL, `${spec.kind}: preview and preview_frame agree (±${TOL_STILL})`, `worst ${agree.worst.toFixed(1)} ${agree.cell}`)
     if (OFF[spec.kind]) {

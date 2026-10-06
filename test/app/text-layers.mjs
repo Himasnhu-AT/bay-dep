@@ -197,8 +197,10 @@ await runProbe(async () => {
 
   const wipe = { animation: { in: { kind: 'wipe', frames: 20 } } }
   const wipe10 = await draw('HELLO', style({}), 10, wipe)
-  check(wipe10.minX === rest.minX && wipe10.maxX < rest.maxX - 50 && wipe10.minY === rest.minY, 'a wipe from the left shows the left of the title first, and moves nothing',
-    `right edge ${wipe10.maxX} of ${rest.maxX}`)
+  // The top is compared within a round letter's overshoot: half way through, "HEL" is showing and
+  // the O is not, and an O stands a few pixels above a flat capital (measured: 340 against 336).
+  check(wipe10.minX === rest.minX && wipe10.maxX < rest.maxX - 50 && Math.abs(wipe10.minY - rest.minY) <= 6, 'a wipe from the left shows the left of the title first, and moves nothing',
+    `right edge ${wipe10.maxX} of ${rest.maxX}, top ${wipe10.minY} vs ${rest.minY}`)
 
   const type = { animation: { in: { kind: 'typewriter', frames: 20 } } }
   const typed = []

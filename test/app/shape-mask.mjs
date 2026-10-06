@@ -128,11 +128,14 @@ await runProbe(async () => {
 
   // -- the colours as this machine decodes them (a derived reference, not a literal) -----------------
   const plain = await samples([[{ asset: red }]], [[640, 360]])
-  const empty = await samples([[{ asset: red, masks: [{ kind: 'rect', x: 5, y: 5, width: 0.1, height: 0.1 }] }]], [[640, 360]])
+  // A small legal mask in a corner, sampled at the centre. The first run put the mask at x 5, y 5
+  // to keep "nothing": that is outside a mask's legal range, so the clip was — correctly — a named
+  // placeholder card, and every "outside" below was measured against the card's grey.
+  const empty = await samples([[{ asset: red, masks: [{ kind: 'rect', x: 0.1, y: 0.1, width: 0.1, height: 0.1 }] }]], [[640, 360]])
   const CLIP = plain.rgb[0]
   const GREEN = empty.rgb[0]
   check(plain.pending === 0 && plain.w === W && CLIP[0] > 150 && CLIP[1] < 90, 'baseline: the unmasked clip is red, complete, at full size', `${CLIP} at ${plain.w}x${plain.h}`)
-  check(GREEN[1] > 150 && GREEN[0] < 60, 'a mask that keeps nothing shows the background, not the clip', `${GREEN}`)
+  check(empty.placeholders === 0 && GREEN[1] > 150 && GREEN[0] < 60, 'outside a small mask is the background, not the clip and not a placeholder', `${GREEN}, placeholders ${empty.placeholders}`)
   const kept = (rgb) => keptOf(rgb, CLIP, GREEN)
 
   // -- 1. inside and outside, per shape ---------------------------------------------------------
