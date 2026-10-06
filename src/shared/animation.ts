@@ -767,14 +767,18 @@ export function mergeAnimation(current: ItemAnimation | undefined, given: unknow
  * What the presets do in the agent's terms: the timeline frames each end actually occupies.
  * Reported by `edit_item` and `inspect_item`.
  */
-export function describeAnimation(item: Item): Record<string, unknown> | undefined {
+export function describeAnimation(item: Item, ends: { head: boolean; tail: boolean } = { head: false, tail: false }): Record<string, unknown> | undefined {
   const animation = item.animation
   if (!animation) return undefined
   const windows = animationWindows(animation, item.durationInFrames)
   const end = item.from + item.durationInFrames
   const out: Record<string, unknown> = {}
-  if (animation.in) out.in = { kind: animation.in.kind, timelineFrames: [item.from, item.from + windows.inFrames] }
-  if (animation.out) out.out = { kind: animation.out.kind, timelineFrames: [end - windows.outFrames, end] }
+  // An end a transition crosses plays no preset (`animationForDraw`), and frames it does not play
+  // on are not reported as if it did: inspect_item once listed an out fade over 75–90 that the
+  // picture, with a dissolve on that cut, showed at full opacity throughout.
+  const setAside = (end: 'first' | 'last'): Record<string, unknown> => ({ plays: false, why: `a transition crosses this clip's ${end} frame and decides that end; remove_transition to let the preset play` })
+  if (animation.in) out.in = { kind: animation.in.kind, ...(ends.head ? setAside('first') : { timelineFrames: [item.from, item.from + windows.inFrames] }) }
+  if (animation.out) out.out = { kind: animation.out.kind, ...(ends.tail ? setAside('last') : { timelineFrames: [end - windows.outFrames, end] }) }
   if (animation.loop) out.loop = { kind: animation.loop.kind, everyFrames: animation.loop.frames }
   if (windows.shortened) out.note = 'shortened to fit the clip; the stored lengths are longer'
   return out

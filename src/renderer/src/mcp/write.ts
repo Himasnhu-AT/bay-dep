@@ -636,7 +636,7 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
     ...(after.item.keyframes
       ? { keyframes: after.item.keyframes, animation: describeKeyframes(after.item) }
       : {}),
-    ...(after.item.animation ? { presets: { ...after.item.animation, plays: describeAnimation(after.item) } } : {}),
+    ...(after.item.animation ? { presets: { ...after.item.animation, plays: describeAnimation(after.item, transitionEnds(timeline(), after.item.id)) } } : {}),
     ...(look.filter !== null ? { filter: look.filter } : {}),
     ...(sound.report ?? {}),
     ...linkReport(after.item.id),

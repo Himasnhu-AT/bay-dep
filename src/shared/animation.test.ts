@@ -466,6 +466,17 @@ test('the description is in timeline frames, the ones each end actually occupies
   assert.equal(describeAnimation(item()), undefined)
 })
 
+test('an end a transition crosses is described as not playing, and the other end keeps its frames', () => {
+  const it = item({ durationInFrames: 60, animation: { in: { kind: 'rise', frames: 20 }, out: { kind: 'fade', frames: 15 } } })
+  const described = describeAnimation(it, { head: false, tail: true })!
+  assert.deepEqual(described.in, { kind: 'rise', timelineFrames: [100, 120] })
+  const out = described.out as { kind: string; plays: boolean; why: string; timelineFrames?: unknown }
+  assert.equal(out.plays, false)
+  assert.equal(out.timelineFrames, undefined, 'no frames are claimed for a preset that does not play')
+  assert.match(out.why, /transition crosses this clip's last frame.*remove_transition/)
+  assert.match((describeAnimation(it, { head: true, tail: false })!.in as { why: string }).why, /first frame/)
+})
+
 test('the catalog an agent reads names every kind there is', () => {
   const text = animationCatalogText()
   for (const kind of [...ANIMATION_KINDS, ...LOOP_KINDS]) assert.ok(text.includes(`"${kind}"`), `${kind} is in the catalog`)

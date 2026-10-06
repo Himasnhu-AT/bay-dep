@@ -35,7 +35,7 @@ import { audioFinishReport } from './audioFinish'
 import { resolveGrade } from '@shared/grade'
 import { describeEffects } from './effects'
 import { describeKeyframes } from '@shared/keyframes'
-import { describeAnimation } from '@shared/animation'
+import { describeAnimation, transitionEnds } from '@shared/animation'
 import { linkedPartners } from '@shared/links'
 import { binOf, binsOf } from '@shared/bins'
 import type { Bin } from '@shared/project'
@@ -244,7 +244,7 @@ export function inspectItem(args: Record<string, unknown>): Record<string, unkno
       ? { keyframes: item.keyframes, animation: describeKeyframes(item) }
       : {}),
     // Animation presets as stored, and the timeline frames each end occupies on this clip.
-    ...(item.animation ? { presets: { ...item.animation, plays: describeAnimation(item) } } : {}),
+    ...(item.animation ? { presets: { ...item.animation, plays: describeAnimation(item, transitionEnds(tl, item.id)) } } : {}),
     // What this clip moves, trims, splits and deletes with (see detach_audio).
     ...(partners.length > 0 ? { link: { linkedItemIds: partners.map((p) => p.id) } } : {}),
     audio: item.audioDetached
