@@ -51,6 +51,7 @@ import { animatedLayoutAt, animatedVolumeAt, PICTURE_PROPERTIES } from '@shared/
 import { canSound, commonValue, hasSourceTime, isVisualItem, timingRefusal } from '@shared/inspector'
 import { CLIP_SPEED_RANGE, retimedLength, speedNote, type SpeedPlan } from '@shared/speed'
 import { AudioSection } from './AudioSection'
+import { ClipAudioEffects } from './audio/ClipAudioEffects'
 import { ClipSection, Readout } from './ClipSection'
 import { KeyframesSection } from './KeyframesSection'
 import { chooseTab, inspectorTabs, tabForSection, type SelectionShape } from './inspector/tabs'
@@ -761,6 +762,7 @@ export function Inspector(): ReactNode {
           </p>
         </Section>
       ) : null}
+      <ClipAudioEffects items={soundItems} project={project} timeline={timeline} />
       {/* Sound on its own has no Video tab, so its speed and fades live here. */}
       {visualItems.length === 0 && retime}
     </>
