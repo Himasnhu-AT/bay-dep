@@ -8,6 +8,7 @@
 
 import { sourceTimeAt, US_PER_SECOND, type Item, type Asset } from '@shared/project'
 import { CLIP_SPEED_RANGE } from '@shared/speed'
+import { speedAtFrame } from '@shared/speed-curve'
 
 /**
  * How far a media element may run from where the timeline says it should be before we
@@ -103,4 +104,28 @@ export function sourceSecondsAt(item: Item, asset: Asset, frame: number, fps: nu
  */
 export function playbackRateFor(speed: number): number {
   return clamp(finite(speed, 1), 0.0625, CLIP_SPEED_RANGE.max)
+}
+
+/** The slowest rate a media element plays at; below it (a hold is 0) the picture is stepped. */
+export const SLOWEST_PLAYABLE_RATE = 0.0625
+
+/**
+ * How live playback moves a clip's element at timeline `frame`.
+ *
+ * `play` is the ordinary case: the element runs at `rate` and is only corrected when it drifts.
+ * Under a speed ramp the rate is the curve's at this frame, set again every frame — which is the
+ * same sum `sourceTimeAt` integrates, so the drift correction has only rounding to absorb.
+ *
+ * `step` is for what an element cannot play: **backwards**, and slower than it will go (a held
+ * frame is speed 0). The element stays paused and is seeked to each frame's source time, exactly
+ * as a scrub does. It is the honest baseline, not a fast one: every step back is a decode from
+ * the keyframe before it, so on long-GOP footage the picture updates as often as seeks land and
+ * the last complete picture is held in between (`pictureHold`). Export and `preview_frame` wait
+ * for every seek, so they are frame-exact whatever this achieves.
+ */
+export function transportFor(item: Item, frame: number): { mode: 'play'; rate: number } | { mode: 'step' } {
+  if (item.reverse) return { mode: 'step' }
+  const rate = speedAtFrame(item, frame - item.from)
+  if (!(rate >= SLOWEST_PLAYABLE_RATE)) return { mode: 'step' }
+  return { mode: 'play', rate: playbackRateFor(rate) }
 }

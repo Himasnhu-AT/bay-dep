@@ -44,9 +44,13 @@ import {
   effectiveSpeed,
   findAsset,
   findItem,
+  footageBeyond,
   framesToUs,
   itemEnd,
+  plainTime,
   resolveTransition,
+  sourceEdgeAt,
+  sourceSpanOf,
   US_PER_SECOND,
   type Asset,
   type Frames,
@@ -57,6 +61,7 @@ import {
   type Track
 } from './project'
 import { shiftKeyframes } from './keyframes'
+import { hasSpeedCurve } from './speed-curve'
 
 export type TrimMode = 'slip' | 'slide' | 'roll'
 
@@ -153,6 +158,12 @@ export function sourceRoom(
   if (!asset || asset.durationUs <= 0) {
     return { before: Number.POSITIVE_INFINITY, after: Number.POSITIVE_INFINITY }
   }
+  if (!plainTime(item)) {
+    // Reversed or ramped: room at the head and the tail through the one mapping. A reversed
+    // clip's head runs into the *end* of its file.
+    const room = footageBeyond(asset, item, fps)
+    return { before: Math.floor(room.before + FRAME_EPSILON), after: Math.floor(room.after + FRAME_EPSILON) }
+  }
   const speed = effectiveSpeed(item.speed)
   const usPerFrame = (US_PER_SECOND / fps) * speed
   const consumedUs = framesToUs(item.durationInFrames, fps) * speed
@@ -188,10 +199,44 @@ function movedSourceStart(
   fps: number,
   durationInFrames: Frames
 ): Micros {
+  if (!plainTime(item)) {
+    // The head moved by `frames`: where the one mapping says the clip reads at that boundary.
+    const next = sourceEdgeAt(item, frames, fps)
+    if (!asset || asset.durationUs <= 0) return Math.max(0, next)
+    return Math.max(0, Math.min(next, asset.durationUs))
+  }
   const next = item.sourceStartUs + sourceAdvanceUs(frames, fps, item.speed)
   if (!asset || asset.durationUs <= 0) return Math.max(0, next)
   const latest = asset.durationUs - sourceAdvanceUs(durationInFrames, fps, item.speed)
   return Math.max(0, Math.min(next, latest))
+}
+
+/**
+ * Slip, for a reversed or ramped clip: the footage moves under the clip, which keeps its place,
+ * its direction and its curve. Room is the footage either side of what it reads — *earlier* and
+ * *later* in the file, whichever way it plays — in frames of slip: source frames at the clip's
+ * constant speed, or at 1× under a ramp, where no one speed describes a frame.
+ */
+function slipUnitUs(item: Item, fps: number): number {
+  return (US_PER_SECOND / fps) * (hasSpeedCurve(item) ? 1 : effectiveSpeed(item.speed))
+}
+
+function slipRoom(asset: Asset | undefined, item: Item, fps: number): { before: Frames; after: Frames } {
+  if (!asset || asset.durationUs <= 0 || plainTime(item)) return sourceRoom(asset, item, fps)
+  const span = sourceSpanOf(item, fps)
+  const unit = slipUnitUs(item, fps)
+  return {
+    before: Math.floor(Math.max(0, span.startUs) / unit + FRAME_EPSILON),
+    after: Math.floor(Math.max(0, asset.durationUs - span.endUs) / unit + FRAME_EPSILON)
+  }
+}
+
+function slippedSourceStart(item: Item, asset: Asset | undefined, frames: Frames, fps: number): Micros {
+  if (plainTime(item)) return movedSourceStart(item, asset, frames, fps, item.durationInFrames)
+  const span = sourceSpanOf(item, fps)
+  let shift = Math.round(frames * slipUnitUs(item, fps))
+  if (asset && asset.durationUs > 0) shift = Math.max(-span.startUs, Math.min(shift, asset.durationUs - span.endUs))
+  return Math.max(0, item.sourceStartUs + shift)
 }
 
 // ---------------------------------------------------------------------------
@@ -351,7 +396,7 @@ function planSlip(
         `To change what it shows, edit the asset or place a different one.`
     }
   }
-  const room = sourceRoom(asset, item, timeline.fps)
+  const room = slipRoom(asset, item, timeline.fps)
   const range = { min: -room.before, max: room.after }
   if (delta === 0) return zeroDelta('slip', range)
   if (delta < range.min || delta > range.max) {
@@ -367,7 +412,7 @@ function planSlip(
     }
   }
   const next = change(item)
-  next.sourceStartUs = movedSourceStart(item, asset, delta, timeline.fps, item.durationInFrames)
+  next.sourceStartUs = slippedSourceStart(item, asset, delta, timeline.fps)
   return { ok: true, mode: 'slip', deltaFrames: delta, range, changes: [next] }
 }
 

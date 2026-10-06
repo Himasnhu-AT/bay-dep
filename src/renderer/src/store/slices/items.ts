@@ -3,7 +3,7 @@
  */
 
 import { brfAssetFields, brfCodeAssetFields } from '@shared/brf'
-import { activeTimeline, assetTrackKind, placementLayout, normaliseCrop, isCropped, NO_CROP, defaultLayout, defaultTextStyle, findAsset, findItem, findTrack, framesToUs, itemEnd, itemsOverlap, usToFrames, type Item, type Timeline, type TrackKind } from '@shared/project'
+import { activeTimeline, assetTrackKind, placementLayout, normaliseCrop, isCropped, NO_CROP, defaultLayout, defaultTextStyle, findAsset, findItem, findTrack, footageBeyond, itemEnd, itemsOverlap, plainTime, sourceEdgeAt, usToFrames, type Item, type Timeline, type TrackKind } from '@shared/project'
 import { rippleDelete, type RippleDeleteResult } from '@shared/ripple'
 import { splitItemAt } from '@shared/split'
 import { applyRelinks } from '@shared/relink'
@@ -13,7 +13,7 @@ import { detachAudio, linkedPartners, reattachAudio, unlinkItems, withLinked } f
 import { CUTOUT_PICTURE_FIELDS, cutoutPartner, planBehindSubject, type BehindSubjectResult } from '@shared/behind-subject'
 import { describeDuplicate, duplicateClips, type DuplicateResult } from '@shared/clipboard'
 import { formatTimecode } from '@shared/timecode'
-import { applySpeedPlan, planSpeed, retimedLength, type SpeedPlan } from '@shared/speed'
+import { applySpeedPlan, footageLength, planRetime, planSpeed, type SpeedPlan } from '@shared/speed'
 import { clone, makeTrack, newId, nextTrackName, placementTrack } from '../factory'
 import type { EditorActions } from '../types'
 import type { StoreKit } from '../kit'
@@ -39,6 +39,7 @@ type Actions = Pick<
   | 'duplicateSelected'
   | 'patchItem'
   | 'setClipSpeed'
+  | 'retimeClip'
   | 'detachAudio'
   | 'reattachAudio'
   | 'unlinkItems'
@@ -278,8 +279,18 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
           const project = get().project
           for (const member of group) {
             const asset = findAsset(project, member.assetId)
-            const { available } = retimedLength(member, asset?.durationUs ?? 0, member.speed, timeline.fps)
+            const available = footageLength(member, asset?.durationUs ?? 0, timeline.fps)
             delta = Math.min(delta, Math.max(0, available - member.durationInFrames))
+          }
+        }
+        // A reversed or ramped clip's head has an end of footage too — a reversed one runs into the
+        // end of its file going earlier — so its head stops there as its tail does.
+        if (edge === 'start' && delta < 0) {
+          const project = get().project
+          for (const member of group) {
+            if (plainTime(member)) continue
+            const room = footageBeyond(findAsset(project, member.assetId), member, timeline.fps).before
+            delta = Math.max(delta, -Math.floor(room + 1e-3))
           }
         }
         if (delta === 0) return
@@ -293,7 +304,8 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
             if (nextFrom < 0 || nextFrom > itemEnd(member) - 1) return
             // Trimming the head must move the read point into the source by the same
             // amount, or the clip slides its content instead of revealing less of it.
-            const nextSourceStart = member.sourceStartUs + framesToUs(delta, timeline.fps) * member.speed
+            // Through the one mapping, so a reversed clip's read point moves the other way.
+            const nextSourceStart = sourceEdgeAt(member, delta, timeline.fps)
             if (nextSourceStart < 0) return
             next = {
               from: nextFrom,
@@ -618,6 +630,19 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
       return holder.value
     },
 
+    retimeClip(itemId, change, options) {
+      const holder: { value: SpeedPlan | null } = { value: null }
+      editTimeline((timeline, project) => {
+        const found = findItem(timeline, itemId)
+        if (!found || found.track.locked) return
+        const plan = planRetime(project, timeline, itemId, change, options)
+        if (!plan) return
+        applySpeedPlan(timeline, plan)
+        holder.value = plan
+      })
+      return holder.value
+    },
+
     detachAudio(itemIds, trackId) {
       const holder: { value: ReturnType<typeof detachAudio> | null } = { value: null }
       editTimeline((tl, project) => {
@@ -691,6 +716,8 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
     },
 
     setKeyframe(itemId, property, frame, value) {
+      // A speed key changes the clip's length: it goes through `retimeClip`, which plans it.
+      if (property === 'speed') return
       editTimeline((timeline) => {
         const found = findItem(timeline, pictureTarget(timeline, itemId))
         if (!found || found.track.locked) return

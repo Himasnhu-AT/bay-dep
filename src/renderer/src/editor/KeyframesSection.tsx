@@ -22,7 +22,8 @@ const NAMES: Record<KeyframeProperty, string> = {
   height: 'Height',
   rotation: 'Rotation',
   scale: 'Scale',
-  volume: 'Volume'
+  volume: 'Volume',
+  speed: 'Speed'
 }
 
 function formatValue(property: KeyframeProperty, value: number): string {
@@ -79,7 +80,8 @@ export function KeyframesSection({ items }: { items: Item[] }): ReactNode {
   }
 
   const item = animated[0]!
-  const rows = KEYFRAME_PROPERTIES.flatMap((property) =>
+  // Speed keys are the Speed section's: changing one re-plans the clip's length.
+  const rows = KEYFRAME_PROPERTIES.filter((property) => property !== 'speed').flatMap((property) =>
     (item.keyframes?.[property] ?? []).map((key) => ({ property, key }))
   )
   const current = selected

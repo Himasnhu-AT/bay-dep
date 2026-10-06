@@ -8,7 +8,10 @@
  * on the timeline, or nowhere. That mapping lives here, once, tested, rather than in every caller.
  */
 
-import { effectiveSpeed, US_PER_SECOND, type Item } from './project'
+import { effectiveSpeed, itemFrameAtSource, plainTime, US_PER_SECOND, type Item } from './project'
+
+/** What the mapping needs of a clip: where it sits, and how it reads its source. */
+type TimedClip = Pick<Item, 'from' | 'durationInFrames' | 'sourceStartUs' | 'speed' | 'keyframes' | 'reverse'>
 
 /** One spoken line, in seconds from the start of the source file. */
 export interface TranscriptSegment {
@@ -101,7 +104,7 @@ export interface TimelineCue {
  */
 export function segmentsToCues(
   segments: readonly TranscriptSegment[],
-  clip: Pick<Item, 'from' | 'durationInFrames' | 'sourceStartUs' | 'speed'>,
+  clip: TimedClip,
   fps: number
 ): TimelineCue[] {
   return toTimeline(segments, clip, fps)
@@ -113,7 +116,7 @@ export function segmentsToCues(
  */
 export function segmentsToWords(
   segments: readonly TranscriptSegment[],
-  clip: Pick<Item, 'from' | 'durationInFrames' | 'sourceStartUs' | 'speed'>,
+  clip: TimedClip,
   fps: number
 ): TimelineCue[] {
   return toTimeline(segments.flatMap((segment) => segment.words ?? []), clip, fps)
@@ -126,18 +129,25 @@ export function segmentsToWords(
  */
 function toTimeline(
   spans: readonly { startSeconds: number; endSeconds: number; text: string }[],
-  clip: Pick<Item, 'from' | 'durationInFrames' | 'sourceStartUs' | 'speed'>,
+  clip: TimedClip,
   fps: number
 ): TimelineCue[] {
   const speed = effectiveSpeed(clip.speed)
   const sourceStart = clip.sourceStartUs / US_PER_SECOND
+  // A reversed or ramped clip goes through the one mapping's inverse; a reversed one plays its
+  // last line first, so the spans are walked in the order the clip plays them.
+  const plain = plainTime(clip)
   const toFrame = (sourceSeconds: number): number =>
-    clip.from + Math.round(((sourceSeconds - sourceStart) / speed) * fps)
+    plain
+      ? clip.from + Math.round(((sourceSeconds - sourceStart) / speed) * fps)
+      : clip.from + Math.round(itemFrameAtSource(clip, sourceSeconds * US_PER_SECOND, fps))
   const end = clip.from + clip.durationInFrames
   const cues: TimelineCue[] = []
-  for (const span of spans) {
-    const from = Math.max(clip.from, toFrame(span.startSeconds))
-    const to = Math.min(end, toFrame(span.endSeconds))
+  for (const span of clip.reverse ? [...spans].reverse() : spans) {
+    const a = toFrame(span.startSeconds)
+    const b = toFrame(span.endSeconds)
+    const from = Math.max(clip.from, Math.min(a, b))
+    const to = Math.min(end, Math.max(a, b))
     if (to - from < 1) continue
     // Abutting spans stay abutting: rounding must not make one overlap the next.
     const previous = cues[cues.length - 1]

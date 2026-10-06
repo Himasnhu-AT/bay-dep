@@ -9,7 +9,7 @@
  */
 
 import type { Item, Project, Timeline } from '@shared/project'
-import { US_PER_SECOND, effectiveSpeed, findAsset, playableTimeline, sourceTimeAt, trackAudible } from '@shared/project'
+import { US_PER_SECOND, effectiveSpeed, findAsset, playableTimeline, sourceSpanOf, sourceTimeAt, trackAudible } from '@shared/project'
 import type { CompositionSound } from '@shared/composition'
 import { audibleSpan, itemAudioGainAt, panGains, routedPanGains } from '@shared/audio-gain'
 import { volumeMayBeAudible } from '@shared/keyframes'
@@ -315,12 +315,19 @@ export function buildAudioGraph(
     // did. Before `from` this reads the handle a transition was resolved against;
     // `resolveTransition` only grants a window the footage can cover, so this is non-negative by
     // construction, and clamped only so a malformed item cannot hand ffmpeg a negative start.
-    const sourceStart = Math.max(0, sourceTimeAt(item, candidate.startFrame, fps) / US_PER_SECOND)
+    // A reversed clip is heard over the same footage its picture shows, earliest moment first in
+    // the file: the stretch between the two boundaries of what is heard, which `areverse` then
+    // turns round. (`areverse` holds the whole stretch in memory — about 23 MB a minute.)
+    const reversed = item.reverse === true
+    const sourceStart = reversed
+      ? Math.max(0, sourceSpanOf(item, fps, candidate.startFrame - item.from, candidate.endFrame - item.from).startUs / US_PER_SECOND)
+      : Math.max(0, sourceTimeAt(item, candidate.startFrame, fps) / US_PER_SECOND)
     const heard = (candidate.endFrame - candidate.startFrame) / fps
 
     const steps: string[] = formatSteps(candidate.path, channels)
     steps.push(`atrim=start=${seconds(sourceStart)}:duration=${seconds(heard * speed)}`)
     steps.push('asetpts=N/SR/TB')
+    if (reversed) steps.push('areverse', 'asetpts=N/SR/TB')
     steps.push(...atempoChain(speed))
     const delayMs = Math.round(((candidate.startFrame - fromFrame) / fps) * 1000)
     if (delayMs > 0) steps.push(`adelay=${delayMs}:all=1`)

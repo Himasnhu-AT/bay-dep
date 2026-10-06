@@ -31,7 +31,7 @@ import type { TrackMove } from '@shared/track-move'
 import type { TrimPlan, TrimRefusal, TrimSpec } from '@shared/trim'
 import type { DetachResult, ReattachResult } from '@shared/links'
 import type { BehindSubjectResult, BehindSubjectSpec } from '@shared/behind-subject'
-import type { SpeedPlan } from '@shared/speed'
+import type { RetimeChange, SpeedPlan } from '@shared/speed'
 import type { CaptionCue } from '@shared/captions'
 import type { ScriptOp } from '@shared/script'
 import type { WhisperDownload } from '@shared/whisper'
@@ -403,6 +403,12 @@ export interface EditorActions {
    * `edit_item({ speed })` runs the same plan. Returns what it did, or null for no such clip.
    */
   setClipSpeed(itemId: string, speed: number, options?: { ripple?: boolean }): SpeedPlan | null
+  /**
+   * Speed, speed ramp and direction in one plan (`planRetime`): the clip keeps its footage, so a
+   * ramp changes its length by the same rule as a constant speed; `reverse` plays the same footage
+   * backwards. Linked clips follow. Returns what it did, or null for no such clip or a locked track.
+   */
+  retimeClip(itemId: string, change: RetimeChange, options?: { ripple?: boolean }): SpeedPlan | null
   /** "Detach audio": each clip's sound onto a linked audio item (`@shared/links`). */
   detachAudio(itemIds: string[], trackId?: string): DetachResult
   /** The reverse: the picture sounds again and its linked audio item is removed. */

@@ -20,7 +20,7 @@
  */
 
 import type { Item, Project, Timeline, Track, TransitionKind } from './project'
-import { itemEnd, resolveTransition } from './project'
+import { itemEnd, plainTime, resolveTransition, sameSourceTiming } from './project'
 import { formatTimecode } from './timecode'
 
 /** Items whose spans overlap. Items that merely abut (a cut between them) do not. */
@@ -124,8 +124,10 @@ export function soundAlignedWithPicture(audio: Item, picture: Item): boolean {
     audio.assetId === picture.assetId &&
     audio.from === picture.from &&
     audio.durationInFrames === picture.durationInFrames &&
-    audio.sourceStartUs === picture.sourceStartUs &&
-    audio.speed === picture.speed
+    // A reversed or ramped clip is seeked frame by frame in the preview, never played, so there is
+    // no playing element for its sound to ride (`@shared/retime-sound`).
+    plainTime(picture) &&
+    sameSourceTiming(audio, picture)
   )
 }
 
@@ -353,6 +355,10 @@ export function detachAudio(
       fadeOutFrames: item.fadeOutFrames,
       speed: item.speed,
       linkId,
+      // The sound plays the same footage the same way: backwards with a reversed picture, and on
+      // the picture's speed ramp.
+      ...(item.reverse ? { reverse: true } : {}),
+      ...(item.keyframes?.speed?.length ? { keyframes: { speed: item.keyframes.speed.map((key) => ({ ...key })) } } : {}),
       ...(item.audioLeadFrames !== undefined ? { audioLeadFrames: item.audioLeadFrames } : {}),
       ...(item.audioTrailFrames !== undefined ? { audioTrailFrames: item.audioTrailFrames } : {}),
       ...(item.duck ? { duck: { ...item.duck } } : {})

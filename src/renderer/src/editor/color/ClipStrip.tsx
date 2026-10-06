@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useRef, type ReactNode } from 'react'
 import { Code2, Film, Image as ImageIcon } from 'lucide-react'
-import { effectiveSpeed, formatTimecode, framesToUs, type Asset, type Item } from '@shared/project'
+import { formatTimecode, sourceEdgeAt, type Asset, type Item } from '@shared/project'
 import { cn } from '@/lib/cn'
 import { stripFrameIndex } from '@/lib/mediaKinds'
 import { useFilmstrip, usePoster } from '@/lib/useMediaCache'
@@ -142,7 +142,7 @@ function Thumbnail({ asset, item, fps }: { asset: Asset | undefined; item: Item;
   const moving = asset?.kind === 'video' || asset?.kind === 'gif'
   const strip = useFilmstrip(asset, STRIP_FRAMES, STRIP_HEIGHT, moving)
   const poster = usePoster(asset, 220)
-  const middleUs = item.sourceStartUs + framesToUs(item.durationInFrames / 2, fps) * effectiveSpeed(item.speed)
+  const middleUs = sourceEdgeAt(item, item.durationInFrames / 2, fps)
   const index = asset ? stripFrameIndex(strip.length, middleUs, asset.durationUs) : -1
   const src = (index >= 0 ? strip[index] : undefined) ?? poster
   if (src) {

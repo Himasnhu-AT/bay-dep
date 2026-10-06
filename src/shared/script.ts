@@ -87,6 +87,7 @@ import {
   type Transition
 } from './project'
 import { shiftKeyframes } from './keyframes'
+import { plainTime } from './project'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -769,6 +770,16 @@ export function diffScript(
         kind = 'tail trim'
       }
 
+      if (kind !== null && kind !== 'move' && !plainTime(item)) {
+        // `src` is where the clip starts reading — for a reversed clip the late edge of its footage,
+        // and under a ramp the frames between do not divide evenly — so the arithmetic below, which
+        // is a forward clip's, would trim the wrong footage.
+        errors.push(
+          `${where}: "${label}" is ${item.reverse ? 'reversed' : 'on a speed ramp'}, so the script can move it but not ${kind} it. ` +
+            `Restore its in, out and src, and use trim_item (edge start/end, or mode slip) on ${item.id} instead.`
+        )
+        continue
+      }
       if (kind !== null) {
         if (track.locked) {
           errors.push(`${where}: ${track.name} is locked, so this clip cannot be retimed. Restore the line, or unlock ${track.name} in the UI.`)

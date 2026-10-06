@@ -12,6 +12,8 @@
 import {
   allItems,
   effectiveSpeed,
+  plainTime,
+  sourceSpanOf,
   findAsset,
   formatTimecode,
   timelineDuration,
@@ -115,9 +117,12 @@ async function sentencesOnTimeline(
     findings.push(...transcriptFindings(transcript.segments))
     // Only sentences the clip plays whole: a clip cut on half a sentence starts mid-thought,
     // which is the one thing a highlight must not do.
-    const speed = effectiveSpeed(item.speed)
-    const sourceFrom = item.sourceStartUs / US_PER_SECOND
-    const sourceTo = sourceFrom + (item.durationInFrames / fps) * speed
+    // The footage the clip reads, earliest first whichever way and however fast it plays.
+    const played = sourceSpanOf(item, fps)
+    const sourceFrom = plainTime(item) ? item.sourceStartUs / US_PER_SECOND : played.startUs / US_PER_SECOND
+    const sourceTo = plainTime(item)
+      ? sourceFrom + (item.durationInFrames / fps) * effectiveSpeed(item.speed)
+      : played.endUs / US_PER_SECOND
     const all = sentencesOf(transcript.segments)
     const whole = all.filter((s) => s.endSeconds > sourceFrom && s.startSeconds < sourceTo)
     const inside = whole.filter((s) => s.startSeconds >= sourceFrom - 1e-6 && s.endSeconds <= sourceTo + 1e-6)

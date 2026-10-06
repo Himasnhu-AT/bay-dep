@@ -3,7 +3,7 @@
  * angle at every cut, share this so a switched angle's pieces play exactly what the whole did.
  */
 
-import { framesToUs, itemEnd, type Frames, type Item, type Transition } from './project'
+import { itemEnd, sourceEdgeAt, type Frames, type Item, type Transition } from './project'
 import { sliceKeyframes } from './keyframes'
 
 /**
@@ -24,7 +24,9 @@ export function splitItemAt(item: Item, at: Frames, fps: number, id: string, tra
     id,
     from: at,
     durationInFrames: rightDuration,
-    sourceStartUs: item.sourceStartUs + Math.round(framesToUs(leftDuration, fps) * item.speed),
+    // Where the left half stops reading — through the one mapping, so a reversed or ramped clip
+    // splits into two that play exactly what the whole did.
+    sourceStartUs: sourceEdgeAt(item, leftDuration, fps),
     layout: { ...item.layout },
     fadeInFrames: 0,
     // Each half keeps the keys that shape it, so the pair draws exactly what the whole did.

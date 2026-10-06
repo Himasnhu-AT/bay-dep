@@ -89,12 +89,49 @@ export const tool: ToolSpec = {
           'the result warns how much shorter it is; pass ripple: true to move the later clips on those ' +
           'tracks by the change instead (a shorter clip then pulls them back). Pass durationInFrames too ' +
           'to set the length yourself. The result\'s retimed block reports the lengths and any moves. ' +
-          'Keyframes are item-relative and are not rescaled.'
+          'Keyframes are item-relative and are not rescaled. On a clip that has a speedRamp, a speed ' +
+          'replaces the ramp with that one constant rate.'
+      },
+      reverse: {
+        type: 'boolean',
+        description:
+          'Play the clip backwards: the same footage, last frame first. Its length and position do not ' +
+          'change. Use it for a rewind, an un-pour, a clip that should arrive rather than leave. The ' +
+          'clip\'s linked sound is reversed with it. Picture is frame-exact in preview_frame and the ' +
+          'export; SOUND plays backwards in the export and is silent in the preview (the result\'s ' +
+          '`sound` says so). After this, sourceStartSeconds reports where the clip STARTS READING, ' +
+          'which for a reversed clip is the late edge of its footage. Trim it with trim_item; ' +
+          'apply_script can move it but not retime it. false plays it forwards again.'
+      },
+      // No `type`: a preset name, a list, or null — `readSpeedRamp` checks it and names the key.
+      speedRamp: {
+        description:
+          'A speed that changes over the clip — slow motion that eases in, a freeze, a fast-slow-fast ' +
+          'montage beat. Either a preset: "ramp-down" (full speed easing to 25%), "ramp-up" (25% easing ' +
+          'to full), "montage" (2x, 50% through the middle, 2x), "bullet" (full, a near-stop in the ' +
+          'middle, full), "hold" (plays, freezes on the middle frame for one second, plays on) — or ' +
+          'your own keys: [{ frame, speed, ease? }, ...].\n' +
+          '- speed is a rate: 1 is source speed, 0.25 a quarter, 2 double, 0 a HELD frame. 0..16.\n' +
+          '- frame is ITEM-RELATIVE (0 is the clip\'s first frame) and counts frames of the clip AS IT ' +
+          'WILL BE: a ramp changes the length, so keys may sit past the present end. Before the first ' +
+          'key its speed holds; after the last, its speed holds — so the last key must be above 0.\n' +
+          '- ease shapes the change FROM this key to the next: "linear" (default), "hold" (stay, then ' +
+          'jump), "in", "out", "inOut", or a cubic-bezier.\n' +
+          'The clip keeps the footage it plays, so its LENGTH changes to fit the curve, by the same rule ' +
+          'as speed: in place it stops at the next clip (warned) unless ripple: true moves later clips. ' +
+          'The result\'s retimed block gives the new length. Cannot be combined with speed, from, ' +
+          'trackId, durationInFrames or sourceStartSeconds in one call.\n' +
+          'A ramped clip is SILENT in the preview and the export (result `sound`); keep its sound on a ' +
+          'separate, un-ramped clip if it must be heard. speedRamp: null goes back to the constant speed.\n' +
+          '100% -> 25% -> 100% around a moment 2 s into a 30 fps clip: [{ frame: 45, speed: 1, ease: "inOut" }, ' +
+          '{ frame: 60, speed: 0.25 }, { frame: 120, speed: 0.25, ease: "inOut" }, { frame: 135, speed: 1 }]. ' +
+          'Freeze for 24 frames at frame 60: [{ frame: 0, speed: 1, ease: "hold" }, { frame: 60, speed: 0, ' +
+          'ease: "hold" }, { frame: 84, speed: 1 }].'
       },
       ripple: {
         type: 'boolean',
         description:
-          'With speed: move later clips on this clip\'s track and its linked clips\' tracks by the change ' +
+          'With speed or speedRamp: move later clips on this clip\'s track and its linked clips\' tracks by the change ' +
           'in length, so nothing is clamped or left with a gap. Other tracks do not move and are named ' +
           'in a warning if they are now out of step. Default false.'
       },

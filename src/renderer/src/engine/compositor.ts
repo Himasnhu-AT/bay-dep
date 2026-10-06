@@ -27,7 +27,8 @@ import {
   cropSourceRect,
   cropDestRect,
   playableTimeline,
-  TRANSPARENT_BACKGROUND
+  TRANSPARENT_BACKGROUND,
+  sameSourceTiming
 } from '@shared/project'
 import { animatedItemAt } from '@shared/keyframes'
 import { matteRecordAt, MAX_MASK_FEATHER, subjectMaskOf } from '@shared/matte'
@@ -64,8 +65,8 @@ import {
   clamp,
   clamp01,
   finite,
-  playbackRateFor,
-  sourceSecondsAt
+  sourceSecondsAt,
+  transportFor
 } from './sync'
 
 export type RenderTarget = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D
@@ -1023,10 +1024,14 @@ export class Compositor {
     const target = sourceSecondsAt(item, asset, frame, fps)
     // Half a frame while scrubbing: closer than that is the same picture, and a seek that
     // lands on the same picture costs a decode for nothing.
-    const tolerance = mode === 'playback' ? DRIFT_TOLERANCE_SECONDS : 0.5 / fps
+    // A reversed clip, or a held frame of a ramp, cannot be played: it is stepped — paused and
+    // seeked to each frame like a scrub (`transportFor`).
+    const transport = mode === 'playback' ? transportFor(item, frame) : null
+    const running = transport !== null && transport.mode === 'play'
+    const tolerance = running ? DRIFT_TOLERANCE_SECONDS : 0.5 / fps
 
-    if (mode === 'playback') {
-      element.playbackRate = playbackRateFor(item.speed)
+    if (transport !== null && transport.mode === 'play') {
+      element.playbackRate = transport.rate
       if (element.paused) {
         // Rejected autoplay is not fatal — the picture still advances by seeking, and the
         // audio engine resumes the context on the next user gesture.
@@ -1251,7 +1256,7 @@ export function elementSlots(drawing: Item[]): Map<string, number> {
  * Trims and moves of a linked pair keep all four equal on both.
  */
 export function sameSourceMoment(a: Item, b: Item): boolean {
-  return a.assetId === b.assetId && a.from === b.from && a.sourceStartUs === b.sourceStartUs && a.speed === b.speed
+  return a.assetId === b.assetId && a.from === b.from && sameSourceTiming(a, b)
 }
 
 export interface Box {

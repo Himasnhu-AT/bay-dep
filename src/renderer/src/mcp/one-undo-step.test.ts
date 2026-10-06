@@ -275,7 +275,9 @@ const TOOL_CASES: Record<string, ToolCase[]> = {
   ],
   edit_item: [
     // A track change and a patch: `moveItem` then `patchItem`, two store calls.
-    { delta: 1, args: (f) => ({ itemId: f.a, trackId: f.v3, from: 10, volume: 0.5, fadeInFrames: 5 }) }
+    { delta: 1, args: (f) => ({ itemId: f.a, trackId: f.v3, from: 10, volume: 0.5, fadeInFrames: 5 }) },
+    // Reverse, a ramp and a ripple with a patch beside them: `patchItem` then `retimeClip`.
+    { delta: 1, args: (f) => ({ itemId: f.a, reverse: true, speedRamp: 'ramp-down', ripple: true, volume: 0.5 }) }
   ],
   split_at: [
     { delta: 1, args: () => ({ frame: 30 }) },
@@ -638,6 +640,8 @@ const STORE_CASES: Record<string, StoreCase> = {
   patchItem: { delta: 1, run: (f) => state().patchItem(f.a, { volume: 0.5, fadeInFrames: 4 }) },
   // A clip, its linked sound and the rippled clips after it: one step.
   setClipSpeed: { delta: 1, run: (f) => { state().setClipSpeed(f.a, 0.5, { ripple: true }) } },
+  // Reverse and a ramp at once, with a ripple: direction, keys, length and the clip after it.
+  retimeClip: { delta: 1, run: (f) => { state().retimeClip(f.a, { reverse: true, ramp: [{ frame: 0, value: 0.5 }] }, { ripple: true }) } },
   detachAudio: { delta: 1, run: (f) => { state().detachAudio([f.a, f.b, f.c]) } },
   reattachAudio: {
     delta: 1,

@@ -16,7 +16,7 @@
  */
 
 import type { Frames, Item, Timeline, Transition } from './project'
-import { framesToUs, itemEnd } from './project'
+import { itemEnd, sourceEdgeAt } from './project'
 import { rippleDelete } from './ripple'
 import { sliceKeyframes } from './keyframes'
 
@@ -104,7 +104,7 @@ export function insertTime(timeline: Timeline, at: Frames, span: Frames, makeId:
         id: makeId(),
         from: start + length,
         durationInFrames: tailFrames,
-        sourceStartUs: item.sourceStartUs + Math.round(framesToUs(headFrames, timeline.fps) * item.speed),
+        sourceStartUs: sourceEdgeAt(item, headFrames, timeline.fps),
         layout: { ...item.layout },
         fadeInFrames: 0,
         keyframes: sliceKeyframes(item.keyframes, headFrames, item.durationInFrames)

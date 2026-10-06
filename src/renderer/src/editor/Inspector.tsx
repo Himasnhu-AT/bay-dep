@@ -49,7 +49,9 @@ import { TextStyleSection } from './TextStyleSection'
 import { KeyDiamond, KeyNavigation, Keyed, relativeFrame } from './KeyframeControls'
 import { animatedLayoutAt, animatedVolumeAt, PICTURE_PROPERTIES } from '@shared/keyframes'
 import { canSound, commonValue, hasSourceTime, isVisualItem, timingRefusal } from '@shared/inspector'
-import { CLIP_SPEED_RANGE, retimedLength, speedNote, type SpeedPlan } from '@shared/speed'
+import { CLIP_SPEED_RANGE, footageLength, speedNote, type SpeedPlan } from '@shared/speed'
+import { hasSpeedCurve } from '@shared/speed-curve'
+import { RetimeControls } from './RetimeControls'
 import { AudioSection } from './AudioSection'
 import { ClipSection, Readout } from './ClipSection'
 import { KeyframesSection } from './KeyframesSection'
@@ -354,7 +356,9 @@ export function Inspector(): ReactNode {
     transact(() => {
       for (const item of timedItems) {
         const current = usToFrames(item.sourceStartUs, fps)
-        const deltaFrames = Math.round((sourceFrames - current) / effectiveSpeed(item.speed))
+        // A slip frame is a source frame at the clip's constant speed — or at 1× under a ramp,
+        // where no one speed describes a frame (`slipRoom` in `@shared/trim` uses the same unit).
+        const deltaFrames = Math.round((sourceFrames - current) / (hasSpeedCurve(item) ? 1 : effectiveSpeed(item.speed)))
         if (deltaFrames === 0) continue
         const result = trimEdit({ itemId: item.id, mode: 'slip', deltaFrames })
         if (!result.ok) refusals.push(result.userMessage ?? result.error)
@@ -386,7 +390,7 @@ export function Inspector(): ReactNode {
     return l.rotation !== 0 || (l.scale ?? 1) !== 1 || l.opacity !== 1
   })
 
-  const retimed = selected.some((item) => item.speed !== 1 || item.fadeInFrames > 0 || item.fadeOutFrames > 0)
+  const retimed = selected.some((item) => item.speed !== 1 || item.reverse || hasSpeedCurve(item) || item.fadeInFrames > 0 || item.fadeOutFrames > 0)
   const blended = visualItems.some((item) => (item.blendMode ?? 'normal') !== 'normal')
   const soundTouched =
     soundItems.some((item) => item.audioLeadFrames || item.audioTrailFrames || item.duck || item.pan) ||
@@ -450,7 +454,7 @@ export function Inspector(): ReactNode {
             transact(() => {
               for (const item of selected) {
                 const asset = findAsset(project, item.assetId)
-                const { available } = retimedLength(item, asset?.durationUs ?? 0, item.speed, fps)
+                const available = footageLength(item, asset?.durationUs ?? 0, fps)
                 const length = Math.min(next, available)
                 if (length < next) shortfalls.push(`“${asset?.name ?? 'clip'}” has ${formatTimecode(available, fps)} of footage from its source in`)
                 trimItem(item.id, 'end', item.from + length)
@@ -493,7 +497,7 @@ export function Inspector(): ReactNode {
       collapsible
       hint={
         timedItems.length > 0
-          ? 'Speed keeps the footage and changes the clip’s length, stopping at the next clip (Speed… in the clip menu can push later clips). Fades take a timecode, 0.5s or 15f.'
+          ? 'Speed keeps the footage and changes the clip’s length, stopping at the next clip (Speed… in the clip menu can push later clips). Typing a Speed on a ramped clip replaces the ramp. A ramp’s keys are speeds at frames of the clip; 0% holds a frame. Fades take a timecode, 0.5s or 15f.'
           : 'Fades take a timecode, 0.5s or 15f.'
       }
       actions={
@@ -538,6 +542,7 @@ export function Inspector(): ReactNode {
             defaultValue={1}
           />
         )}
+        {timedItems.length > 0 && <RetimeControls items={timedItems} />}
         <TimecodeField
           row
           label="Fade in"

@@ -30,13 +30,15 @@ const NAMES: Record<KeyframeProperty, string> = {
   height: 'height',
   rotation: 'rotation',
   scale: 'scale',
-  volume: 'volume'
+  volume: 'volume',
+  speed: 'speed'
 }
 
 /** The stored value a property holds when it has no keys. */
 export function staticValue(item: Item, property: KeyframeProperty): number {
   if (property === 'volume') return item.volume
   if (property === 'scale') return item.layout.scale ?? 1
+  if (property === 'speed') return item.speed
   return item.layout[property]
 }
 

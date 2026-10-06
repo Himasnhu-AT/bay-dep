@@ -32,7 +32,10 @@ import { describeFont } from '@shared/fonts'
 import { linkedPartners, withLinked } from '@shared/links'
 import { cutoutPartner } from '@shared/behind-subject'
 import { itemRippleNote, planItemRipple } from '@shared/item-ripple'
-import { planSpeed, retimedLength, type SpeedPlan } from '@shared/speed'
+import { planRetime, planSpeed, retimedLength, type RetimeChange, type SpeedPlan } from '@shared/speed'
+import { footageFramesOf, readSpeedRamp } from '@shared/speed-ramp'
+import { plainTime } from '@shared/project'
+import { retimeReport } from './retime'
 import { asBlendMode, lookWarnings, mergeAdjustments } from './adjustments'
 import { audioFinishPatch, audioFinishReport } from './audioFinish'
 import { GRADEABLE_KINDS, gradeWarnings, mergeGrade } from './grade'
@@ -234,7 +237,43 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
     fail(`speed must be greater than 0; got ${JSON.stringify(args.speed)}.`)
   }
   let speedPlan: SpeedPlan | null = null
-  if (args.speed !== undefined && args.durationInFrames === undefined) {
+  // Reverse and a speed ramp go through the same plan as a constant speed (`planRetime`): the
+  // clip keeps its footage, so a ramp changes its length. They are planned against the clip where
+  // it is, so a move or a hand-set length belongs in a call of its own.
+  let retime: RetimeChange | null = null
+  if (args.reverse !== undefined || args.speedRamp !== undefined) {
+    const what = [args.reverse !== undefined ? 'reverse' : null, args.speedRamp !== undefined ? 'speedRamp' : null].filter(Boolean).join(' and ')
+    const clash = (['from', 'trackId', 'durationInFrames', 'sourceStartSeconds'] as const).filter((key) => args[key] !== undefined)
+    if (clash.length > 0) {
+      fail(
+        `${what} is planned against the clip where it is, so it cannot share a call with ${clash.join(', ')}. ` +
+          `Make two calls: edit_item({ itemId: "${item.id}", ${clash[0]}: … }) first, then ${what}.`
+      )
+    }
+    if (args.speedRamp !== undefined && args.speedRamp !== null && args.speed !== undefined) {
+      fail(
+        'speedRamp is the clip\'s speed over its whole length, so speed has nothing left to set: its keys are absolute rates ' +
+          '(1 is source speed). Drop speed, or drop speedRamp for one constant rate.'
+      )
+    }
+    const footageAsset = findAsset(project(), item.assetId)
+    if (!footageAsset || !(footageAsset.durationUs > 0)) {
+      fail(
+        `${item.id} plays "${footageAsset?.name ?? item.assetId}", which has no footage to retime — a still, a title or a module ` +
+          `reads the same picture at any speed and in either direction. ${what} applies to video and audio clips.`
+      )
+    }
+    retime = {}
+    if (args.reverse !== undefined) retime.reverse = args.reverse as boolean
+    if (args.speed !== undefined) retime.speed = Number(args.speed)
+    if (args.speedRamp !== undefined) {
+      const read = readSpeedRamp(args.speedRamp, footageFramesOf(item), timeline().fps)
+      if (!read.ok) fail(read.error)
+      retime.ramp = read.keys
+    }
+    speedPlan = planRetime(project(), timeline(), item.id, retime, { ripple: args.ripple === true })
+    if (speedPlan) durationInFrames = speedPlan.length
+  } else if (args.speed !== undefined && args.durationInFrames === undefined) {
     const speed = Number(args.speed)
     if (from === item.from && destination.id === track.id) {
       speedPlan = planSpeed(project(), timeline(), item.id, speed, { ripple: args.ripple === true })
@@ -333,7 +372,9 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
   // refused, and the distinction matters: pushing a clip's read point forward to give it
   // handles for a transition does exactly this, so refusing it would block the workflow the
   // field was added for. The clip still plays; it runs out early.
-  if (sourceAsset && sourceAsset.durationUs > 0) {
+  // A reversed or ramped clip's footage is not `start + length × speed`; its length is planned
+  // against its footage above, and its edges are trimmed through `trim_item`.
+  if (sourceAsset && sourceAsset.durationUs > 0 && plainTime(item) && !retime) {
     const startUs = patch.sourceStartUs ?? item.sourceStartUs
     const givenSpeed = args.speed !== undefined ? Number(args.speed) : item.speed
     const speed = givenSpeed > 0 ? givenSpeed : 1
@@ -506,7 +547,8 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
       // the patch without them, so the length is not applied twice.
       const { durationInFrames: _length, ...rest } = patch
       store().patchItem(item.id, rest, { linked })
-      store().setClipSpeed(item.id, speedPlan.speed, { ripple: args.ripple === true })
+      if (retime) store().retimeClip(item.id, retime, { ripple: args.ripple === true })
+      else store().setClipSpeed(item.id, speedPlan.speed, { ripple: args.ripple === true })
     } else {
       store().patchItem(item.id, patch, { linked })
     }
@@ -536,6 +578,7 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
     layout: { ...after.item.layout },
     volume: after.item.volume,
     speed: after.item.speed,
+    ...retimeReport(after.item, timeline().fps),
     fadeInFrames: after.item.fadeInFrames,
     fadeOutFrames: after.item.fadeOutFrames,
     // Seconds, matching the unit the argument is in. Reporting microseconds from a surface
@@ -575,11 +618,11 @@ function describeSpeedPlan(plan: SpeedPlan): { report: Record<string, unknown>; 
   const clamp = plan.clampedBy
   const warning =
     clamp?.kind === 'next-clip'
-      ? `At ${plan.speed}x the clip needs ${plan.wanted} frames to play the same footage, but ${clamp.itemId} starts at ` +
+      ? `${plan.ramp ? 'On this ramp' : `At ${plan.speed}x`} the clip needs ${plan.wanted} frames to play the same footage, but ${clamp.itemId} starts at ` +
         `frame ${clamp.at} on ${name(clamp.trackId)}, so it is ${plan.length} frames and plays less of its source. ` +
         `Pass ripple: true to move the later clips instead.`
       : clamp?.kind === 'footage'
-        ? `Only ${clamp.available} frames of footage remain from the in-point at ${plan.speed}x, so the clip is ` +
+        ? `Only ${clamp.available} frames of footage remain from the in-point ${plan.ramp ? 'on this ramp' : `at ${plan.speed}x`}, so the clip is ` +
           `${plan.length} frames, not ${plan.wanted}.`
         : plan.outOfSyncTrackIds.length > 0
           ? itemRippleNote(plan.rippledTrackIds.map(name), plan.outOfSyncTrackIds.map(name))

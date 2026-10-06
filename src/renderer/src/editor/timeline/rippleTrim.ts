@@ -12,7 +12,7 @@
  * as one undo step.
  */
 
-import { effectiveSpeed, findItem, itemEnd, usToFrames, type Frames, type Item, type Timeline } from '@shared/project'
+import { effectiveSpeed, findItem, footageBeyond, itemEnd, plainTime, usToFrames, type Frames, type Item, type Timeline } from '@shared/project'
 import { linkedPartners, withLinked } from '@shared/links'
 import type { TrackMove } from '@shared/track-move'
 import { selectTimeline, useEditor } from '@/store/editor'
@@ -34,8 +34,16 @@ export type RippleTrimPlan =
  * How many frames a head ripple can add: the footage before the clip's in-point. Unlike
  * `trimBounds`, not limited by frame 0 — a head ripple keeps the clip's start where it is.
  */
-export function rippleHeadRoom(item: Pick<Item, 'sourceStartUs' | 'speed'>, fps: number, hasFootage: boolean): number {
+export function rippleHeadRoom(
+  item: Pick<Item, 'sourceStartUs' | 'speed' | 'keyframes' | 'reverse'>,
+  fps: number,
+  hasFootage: boolean,
+  footageUs: number = 0
+): number {
   if (!hasFootage) return Number.POSITIVE_INFINITY
+  // A reversed clip's head runs into the end of its file, and a ramp's frames are not all one
+  // length of footage: both ask the one mapping.
+  if (!plainTime(item)) return Math.floor(footageBeyond({ durationUs: footageUs }, { ...item, durationInFrames: 0 }, fps).before + 1e-3)
   return Math.floor(usToFrames(Math.max(0, item.sourceStartUs), fps) / effectiveSpeed(item.speed))
 }
 

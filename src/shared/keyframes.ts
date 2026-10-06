@@ -27,6 +27,13 @@
  * - **Speed:** does not retime keys. Speed changes which source plays, not how long the clip is
  *   on the timeline (`edit_item` keeps `durationInFrames`), and keys are picture time.
  * - **Timeline fps change:** keys scale like durations (`retimeTimeline`), keeping wall-clock time.
+ *
+ * **`speed` keys are a clip's speed ramp** (`@shared/speed-curve`), and they are keys like any
+ * other so that every rule above holds for them with no walker knowing: a head trim shifts them
+ * (the slow stretch stays on its footage), a split slices them exactly, a move carries them. What
+ * is different is what they mean — which source is read, through `sourceEdgeAt` in `project.ts` —
+ * and so how they are written: never as a bare key (`mergeKeyframes` and the store's `setKeyframe`
+ * refuse `speed`), always through `planRetime`, because changing one changes the clip's length.
  */
 
 import {
@@ -39,7 +46,8 @@ import {
   type KeyframeProperty,
   type Layout
 } from './project'
-import { easeProgress, parseEase } from './ease'
+import { parseEase } from './ease'
+import { keyframeValueAt } from './keyframe-sample'
 
 // ---------------------------------------------------------------------------
 // Eases — in `./ease`, shared with transitions; re-exported so existing imports keep working.
@@ -51,32 +59,9 @@ export { cubicBezierAt, EASE_NAMES, easeProgress, NAMED_EASES } from './ease'
 // Sampling
 // ---------------------------------------------------------------------------
 
-/**
- * The value `keys` give at item-relative `frame`, or undefined when there are none.
- *
- * Before the first key the first value holds; after the last, the last. `keys` must be sorted by
- * frame with no two on one frame — every writer here keeps them so, and the loader repairs a file
- * that is not (`repairKeyframes`).
- */
-export function keyframeValueAt(keys: readonly Keyframe[] | undefined, frame: number): number | undefined {
-  if (!keys || keys.length === 0) return undefined
-  const first = keys[0]!
-  if (frame <= first.frame) return first.value
-  const last = keys[keys.length - 1]!
-  if (frame >= last.frame) return last.value
-  // The last key at or before `frame`: binary search, since a volume ride can carry hundreds.
-  let lo = 0
-  let hi = keys.length - 1
-  while (hi - lo > 1) {
-    const mid = (lo + hi) >> 1
-    if (keys[mid]!.frame <= frame) lo = mid
-    else hi = mid
-  }
-  const a = keys[lo]!
-  const b = keys[lo + 1]!
-  const t = (frame - a.frame) / (b.frame - a.frame)
-  return a.value + (b.value - a.value) * easeProgress(a.ease, t)
-}
+// `keyframeValueAt` lives in `./keyframe-sample` (the model integrates speed keys with it, and
+// importing this file from there would be a cycle). One sampler, re-exported.
+export { keyframeValueAt }
 
 const LAYOUT_PROPERTIES = ['opacity', 'left', 'top', 'width', 'height', 'rotation', 'scale'] as const
 
@@ -122,6 +107,8 @@ export function animatedVolumeAt(item: Item, frame: Frames): number {
  * walker that skipped it on `item.volume <= 0` dropped it from the export.
  */
 export function volumeMayBeAudible(item: Item): boolean {
+  // A clip on a speed ramp is silent everywhere (`retimeSound` in `@shared/retime-sound`).
+  if (item.keyframes?.speed && item.keyframes.speed.length > 0) return false
   const keys = item.keyframes?.volume
   if (keys && keys.length > 0) return keys.some((key) => key.value > 0)
   return item.volume > 0
@@ -251,8 +238,17 @@ export const KEYFRAME_LIMITS: Record<KeyframeProperty, { min: number; max: numbe
   height: { min: 1, max: Infinity, unit: 'canvas pixels, at least 1' },
   rotation: { min: -Infinity, max: Infinity, unit: 'degrees clockwise' },
   scale: { min: 0, max: 100, unit: 'a zoom about the centre, 1 unchanged' },
-  volume: { min: 0, max: 2, unit: 'linear gain, 1 unchanged, 0 silent (or pass db instead of value)' }
+  volume: { min: 0, max: 2, unit: 'linear gain, 1 unchanged, 0 silent (or pass db instead of value)' },
+  speed: { min: 0, max: 16, unit: 'a playback rate, 1 source speed, 0 a held frame' }
 }
+
+/**
+ * The properties the general keyframe controls write: every one but `speed`. A speed key changes
+ * how much footage the clip reads, so the clip's length has to be re-planned with it
+ * (`planRetime` in `@shared/speed`); it is written through `edit_item.speedRamp` and the
+ * inspector's Speed section, never as a bare key.
+ */
+export const DRAWN_KEYFRAME_PROPERTIES: readonly KeyframeProperty[] = KEYFRAME_PROPERTIES.filter((p) => p !== 'speed')
 
 export const PICTURE_PROPERTIES: readonly KeyframeProperty[] = LAYOUT_PROPERTIES
 
@@ -278,7 +274,8 @@ const PROPERTY_WORDS: Record<KeyframeProperty, string> = {
   height: 'Height',
   rotation: 'Rotation',
   scale: 'Scale',
-  volume: 'Volume'
+  volume: 'Volume',
+  speed: 'Speed'
 }
 
 /**
@@ -293,14 +290,17 @@ export function mergeKeyframes(
   target: KeyframeTarget
 ): KeyframeMerge {
   if (given === null) {
-    return { ok: true, keyframes: undefined, changed: KEYFRAME_PROPERTIES.filter((p) => current?.[p]) }
+    // Every drawn key goes; a speed ramp stays, because removing it changes the clip's length and
+    // that is `speedRamp: null`'s plan to make.
+    const kept = current?.speed && current.speed.length > 0 ? { speed: current.speed.map((key) => ({ ...key })) } : undefined
+    return { ok: true, keyframes: kept, changed: DRAWN_KEYFRAME_PROPERTIES.filter((p) => current?.[p]) }
   }
   if (typeof given !== 'object' || Array.isArray(given)) {
     return {
       ok: false,
       error:
         '`keyframes` must be an object of { property: [{ frame, value, ease? }, …] }, or null to ' +
-        `remove every key. Animatable properties: ${KEYFRAME_PROPERTIES.join(', ')}.`
+        `remove every key. Animatable properties: ${DRAWN_KEYFRAME_PROPERTIES.join(', ')}.`
     }
   }
   const out: ItemKeyframes = current ? cloneKeyframes(current) : {}
@@ -311,11 +311,20 @@ export function mergeKeyframes(
     `${last} is its end, timeline frame ${target.from + last})`
 
   for (const [name, rawList] of Object.entries(given as Record<string, unknown>)) {
+    if (name === 'speed') {
+      return {
+        ok: false,
+        error:
+          'Speed is not keyed through `keyframes`: a speed key changes how much footage the clip reads, so its ' +
+          'length has to change with it. Pass edit_item `speedRamp` instead — a preset name, or a list of ' +
+          '{ frame, speed, ease? } — and `speedRamp: null` to go back to one constant speed.'
+      }
+    }
     if (!(KEYFRAME_PROPERTIES as readonly string[]).includes(name)) {
       return {
         ok: false,
         error:
-          `keyframes has no property "${name}". Animatable properties: ${KEYFRAME_PROPERTIES.join(', ')}` +
+          `keyframes has no property "${name}". Animatable properties: ${DRAWN_KEYFRAME_PROPERTIES.join(', ')}` +
           (name === 'x' || name === 'y' ? ' — position is left/top.' : '') +
           (name === 'zoom' ? ' — a zoom is scale.' : '.')
       }

@@ -45,6 +45,7 @@ import {
 import type { CompositionSound } from '@shared/composition'
 import { audibleSpan, itemAudioGainAt, resolveAudioOffsets, routedPanGains, transitionOfItemAt } from '@shared/audio-gain'
 import { linkedPartners, soundAlignedWithPicture } from '@shared/links'
+import { retimeSound } from '@shared/retime-sound'
 import {
   scheduleCompositionSounds,
   soundSecondsAt,
@@ -644,10 +645,15 @@ export class AudioEngine {
         this.#route(source, nodes, track.id)
         // The shared gain — volume, fades, transition, J/L offsets, duck — the same function
         // export's envelope is sampled from, so the two cannot be re-decided apart.
-        source.gain.gain.value = clamp(finite(routed.gain, 0), 0, 2)
+        // A reversed clip is silent here and backwards in the export (`retimeSound`): an element
+        // cannot play backwards, so it is held at zero and its own `<audio>` is not run forwards.
+        const silentHere = retimeSound(item).preview === 'silent'
+        source.gain.gain.value = silentHere ? 0 : clamp(finite(routed.gain, 0), 0, 2)
         this.#setPan(source, routed.pan)
 
-        if (routed.detached) {
+        if (silentHere) {
+          if (element instanceof HTMLAudioElement && !element.paused) element.pause()
+        } else if (routed.detached) {
           if (element instanceof HTMLAudioElement) {
             this.#position(element, item.speed, routed.detached.mediaSeconds, fps, playing)
           }

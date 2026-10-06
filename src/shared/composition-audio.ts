@@ -29,7 +29,7 @@
 
 import type { CompositionSound } from './composition'
 import type { Frames, Item } from './project'
-import { effectiveSpeed, US_PER_SECOND } from './project'
+import { effectiveSpeed, plainTime, US_PER_SECOND } from './project'
 
 /** A declared sound placed on the timeline for one item. */
 export interface ScheduledSound {
@@ -65,6 +65,10 @@ export function scheduleCompositionSounds(
   fps: number
 ): ScheduledSound[] {
   const rate = fps > 0 ? fps : 30
+  // A reversed or ramped composition clip plays none of its declared sounds, in the preview or
+  // the export: the schedule below is one straight line through composition time, which neither
+  // is. Its picture still follows `sourceTimeAt`.
+  if (!plainTime(item)) return []
   const speed = effectiveSpeed(item.speed)
   const itemStart = item.from / rate
   const sourceStart = item.sourceStartUs / US_PER_SECOND

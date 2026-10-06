@@ -1073,6 +1073,28 @@ projects — indexing an array yields `T | undefined` and you must handle it.
   beyond each end — exact); slip and speed leave them; `retimeTimeline` scales them. Anything that
   asks "can this clip sound" must use `volumeMayBeAudible`, not `item.volume > 0` — a clip keyed up
   from volume 0 was otherwise dropped from export.
+- **Reverse and speed ramps live in the one source-time mapping, `sourceEdgeAt`** (`@shared/project`,
+  `@shared/speed-curve`, `@shared/speed`, `@shared/retime-sound`; `edit_item.reverse`/`speedRamp`).
+  `sourceEdgeAt(item, rel, fps)` is the source time at a frame *boundary*; `sourceTimeAt` is the
+  boundary a frame starts on forwards and ends on reversed, so a frame always shows the earliest
+  moment of the footage it covers and a reversed clip shows the forward clip's frames in the
+  opposite order. `item.reverse` keeps `sourceStartUs` meaning "where it starts reading" — the
+  *late* edge of a reversed clip — which is why every head-moving edit (split, trim, roll, ripple,
+  insert) writes `sourceStartUs = sourceEdgeAt(item, d, fps)` and is right both ways. A ramp is
+  `item.keyframes.speed` (absolute rates, item-relative frames, 0 holds a frame), so shift and
+  slice carry it; its integral is a **sum over frames** (`consumedFrames`), the same arithmetic
+  as setting `playbackRate` once a frame. A clip with neither is `plainTime` and takes the
+  arithmetic it always had (`speed-curve.test.ts` holds a literal table). **Changing a ramp keeps
+  the footage and changes the clip's length** (`planRetime`), stopping at the next clip unless
+  `ripple` — the constant-speed rule. Anything that reads source time back onto the timeline uses
+  `itemFrameAtSource`; the tools that measure a file in a straight line (silences, levels, sync,
+  `apply_script` retimes) refuse a reversed or ramped clip by name. **Sound: a ramped clip is
+  silent in the preview and the export** (`itemAudioGainAt`, `volumeMayBeAudible`); **a reversed
+  clip is silent in the preview and backwards in the export** (`areverse`, measured through the real
+  ffmpeg in `reverse-audio-render.test.ts`); the inspector, the clip badge and the tool result all
+  say which. The preview *steps* a reversed clip or a held frame (`transportFor`: paused, a seek per
+  frame) — export and `preview_frame` wait for each seek and are frame-exact; what frame rate the
+  stepped preview reaches was **not measured** (`test/app/speed.mjs`, unrun).
 - **The `.bay` format changes additively within a version, and any other change is a bump.** A new
   *optional* field needs nothing: older builds of the same version load the file, carry the key
   through (the loader whitelists nothing) and write it back. Renaming, removing or retyping a field

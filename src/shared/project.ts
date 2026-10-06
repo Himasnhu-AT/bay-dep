@@ -15,6 +15,7 @@
 
 import { formatTimecode as formatTimecodeShared } from './timecode'
 import { easeProgress } from './ease'
+import { consumedFrames, frameAtConsumed, hasSpeedCurve, speedKeysOf } from './speed-curve'
 import type { CompositionVariable } from './composition'
 import type { BrfDocument } from './brf'
 import type { BeatGrid } from './beats'
@@ -289,7 +290,10 @@ export const KEYFRAME_PROPERTIES = [
   'height',
   'rotation',
   'scale',
-  'volume'
+  'volume',
+  // A clip's speed over its length — a ramp (`@shared/speed-curve`). Unlike the others it changes
+  // which source is read, not how it is drawn: `sourceEdgeAt` integrates it.
+  'speed'
 ] as const
 
 export type KeyframeProperty = (typeof KEYFRAME_PROPERTIES)[number]
@@ -558,6 +562,13 @@ export interface Item {
    * clip at the same source time. Absent is the fast path. Optional and additive.
    */
   masks?: Mask[]
+  /**
+   * Plays its footage backwards. `sourceStartUs` is still "where this item starts reading" — for a
+   * reversed clip that is the *late* edge of its footage, and it reads down from there
+   * (`sourceEdgeAt`, the one mapping). Absent or false is forwards, which is every project written
+   * before this. Its sound is reversed in the export; `@shared/retime-sound` says what the preview does.
+   */
+  reverse?: boolean
 }
 
 /**
@@ -1086,12 +1097,117 @@ export function itemsAtFrame(timeline: Timeline, frame: Frames, kind?: TrackKind
 }
 
 /**
+ * Whether the clip reads its source at one constant rate, forwards — every clip before reverse and
+ * speed ramps existed. The arithmetic such a clip gets is unchanged, to the microsecond.
+ */
+export function plainTime(item: Pick<Item, 'reverse' | 'keyframes'>): boolean {
+  return !item.reverse && !hasSpeedCurve(item)
+}
+
+/** Microseconds of source read over `rel` frames of the clip from its first: speed and ramp included. */
+function sourceReachUs(item: Pick<Item, 'speed' | 'keyframes'>, rel: number, fps: number): Micros {
+  if (!hasSpeedCurve(item)) return Math.round(framesToUs(rel, fps) * effectiveSpeed(item.speed))
+  return Math.round((consumedFrames(item, rel) / fps) * US_PER_SECOND)
+}
+
+/**
+ * **The one mapping from timeline time to source time.** The source time at the *boundary* `rel`
+ * frames into the item (0 is the start of its first frame, `durationInFrames` the end of its
+ * last; outside that range it is the handle a transition or a J/L cut reads).
+ *
+ * Direction and speed ramp live here and nowhere else: forwards the clip reads up from
+ * `sourceStartUs`, reversed it reads down from it. Every edit that moves a clip's head by `d`
+ * frames writes `sourceStartUs = sourceEdgeAt(item, d, fps)` and is right in both directions.
+ */
+export function sourceEdgeAt(
+  item: Pick<Item, 'sourceStartUs' | 'speed' | 'keyframes' | 'reverse'>,
+  rel: number,
+  fps: number
+): Micros {
+  const reach = sourceReachUs(item, rel, fps)
+  return item.reverse ? item.sourceStartUs - reach : item.sourceStartUs + reach
+}
+
+/**
  * Where in the source, in microseconds, item `item` is reading at timeline frame `frame`.
- * Honours `speed`. Callers must have checked the frame is inside the item.
+ * Honours `speed`, a speed ramp and `reverse`. Callers must have checked the frame is inside the
+ * item (or mean its handle).
+ *
+ * A frame covers the stretch of source between its two boundaries and shows the *earliest* moment
+ * of it. Forwards that is the boundary it starts on. Reversed it is the boundary it ends on — so a
+ * reversed clip's last frame is exactly the first frame of its footage, its first frame is the
+ * last, and it shows the very frames the forward clip does, in the opposite order.
  */
 export function sourceTimeAt(item: Item, frame: Frames, fps: number): Micros {
-  const elapsed = framesToUs(frame - item.from, fps)
-  return item.sourceStartUs + Math.round(elapsed * effectiveSpeed(item.speed))
+  const rel = frame - item.from
+  return sourceEdgeAt(item, item.reverse ? rel + 1 : rel, fps)
+}
+
+/**
+ * The stretch of source the clip covers over item-relative frames `fromRel..toRel` (its own
+ * length by default), earliest first whichever way it plays.
+ */
+export function sourceSpanOf(
+  item: Pick<Item, 'sourceStartUs' | 'speed' | 'keyframes' | 'reverse' | 'durationInFrames'>,
+  fps: number,
+  fromRel: number = 0,
+  toRel: number = item.durationInFrames
+): { startUs: Micros; endUs: Micros } {
+  const a = sourceEdgeAt(item, fromRel, fps)
+  const b = sourceEdgeAt(item, toRel, fps)
+  return a <= b ? { startUs: a, endUs: b } : { startUs: b, endUs: a }
+}
+
+/**
+ * The inverse of `sourceEdgeAt`: the item-relative frame boundary (fractional) at which the clip
+ * reads source time `us`. Not clamped to the clip — the caller decides what outside means. Inside
+ * a held frame it is where the hold starts; `±Infinity` when the clip never reads `us` because it
+ * ends, or began, on a hold.
+ */
+export function itemFrameAtSource(
+  item: Pick<Item, 'sourceStartUs' | 'speed' | 'keyframes' | 'reverse'>,
+  us: Micros,
+  fps: number
+): number {
+  const reach = ((item.reverse ? item.sourceStartUs - us : us - item.sourceStartUs) / US_PER_SECOND) * fps
+  return frameAtConsumed(item, reach)
+}
+
+/**
+ * Footage, in timeline frames (fractional), before the clip's first frame and after its last —
+ * how far its head can be pulled earlier and its tail later. Through the one mapping, so a
+ * reversed clip's head room is the footage *after* its late edge. Unbounded for a still, and at
+ * an end the clip holds on.
+ */
+export function footageBeyond(
+  asset: Pick<Asset, 'durationUs'> | undefined,
+  item: Pick<Item, 'sourceStartUs' | 'speed' | 'keyframes' | 'reverse' | 'durationInFrames'>,
+  fps: number
+): { before: number; after: number } {
+  if (!asset || asset.durationUs <= 0) {
+    return { before: Number.POSITIVE_INFINITY, after: Number.POSITIVE_INFINITY }
+  }
+  // The edge the head runs into going earlier, and the one the tail runs into going later.
+  const headLimit = item.reverse ? asset.durationUs : 0
+  const tailLimit = item.reverse ? 0 : asset.durationUs
+  const before = -itemFrameAtSource(item, headLimit, fps)
+  const after = itemFrameAtSource(item, tailLimit, fps) - item.durationInFrames
+  return { before: Math.max(0, before), after: Math.max(0, after) }
+}
+
+/** Whether two clips read the same file at the same moments: same in-point, speed, ramp and direction. */
+export function sameSourceTiming(
+  a: Pick<Item, 'sourceStartUs' | 'speed' | 'keyframes' | 'reverse'>,
+  b: Pick<Item, 'sourceStartUs' | 'speed' | 'keyframes' | 'reverse'>
+): boolean {
+  if (a.sourceStartUs !== b.sourceStartUs || a.speed !== b.speed || Boolean(a.reverse) !== Boolean(b.reverse)) return false
+  const ka = speedKeysOf(a)
+  const kb = speedKeysOf(b)
+  if (!ka || !kb) return ka === kb
+  return (
+    ka.length === kb.length &&
+    ka.every((key, i) => key.frame === kb[i]!.frame && key.value === kb[i]!.value && String(key.ease ?? '') === String(kb[i]!.ease ?? ''))
+  )
 }
 
 /**
@@ -1121,6 +1237,12 @@ export function handlesFor(asset: Asset | undefined, item: Item, fps: number): {
 } {
   if (!asset || asset.durationUs <= 0) {
     return { before: Number.POSITIVE_INFINITY, after: Number.POSITIVE_INFINITY }
+  }
+  if (!plainTime(item)) {
+    // A reversed or ramped clip: the same question through the one mapping. Floored — a part
+    // frame of handle is not a frame a transition can read.
+    const room = footageBeyond(asset, item, fps)
+    return { before: Math.floor(room.before + 1e-3), after: Math.floor(room.after + 1e-3) }
   }
   const speed = effectiveSpeed(item.speed)
   const consumedUs = framesToUs(item.durationInFrames, fps) * speed

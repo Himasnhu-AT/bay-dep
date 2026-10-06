@@ -16,7 +16,7 @@
  * Refusals say what the caller can do instead: which ids, which frames, which track is locked.
  */
 
-import { itemEnd, type Item, type Timeline, type Track } from './project'
+import { itemEnd, sameSourceTiming, type Item, type Timeline, type Track } from './project'
 import { subjectMaskOf, type SubjectMask } from './matte'
 
 export interface BehindSubjectSpec {
@@ -111,7 +111,7 @@ export function planBehindSubject(timeline: Timeline, spec: BehindSubjectSpec, o
   const existing = timeline.tracks
     .flatMap((track, index) => track.items.map((item) => ({ item, track, index })))
     .find(({ item, index }) => item.id !== video.item.id && index > video.index && subjectMaskOf(item) && !subjectMaskOf(item)?.assetId &&
-      item.assetId === video.item.assetId && item.from === video.item.from && item.sourceStartUs === video.item.sourceStartUs && item.speed === video.item.speed)
+      item.assetId === video.item.assetId && item.from === video.item.from && sameSourceTiming(item, video.item))
   if (existing && existing.index > overlay.index) {
     if (existing.track.locked) {
       return {
@@ -220,7 +220,7 @@ export function cutoutPartner(timeline: Timeline, item: Item): Item | null {
     if (track.kind !== 'video') continue
     for (const other of track.items) {
       if (other.id === item.id || other.linkId !== item.linkId || subjectMaskOf(other)) continue
-      if (other.assetId === item.assetId && other.from === item.from && other.sourceStartUs === item.sourceStartUs && other.speed === item.speed) return other
+      if (other.assetId === item.assetId && other.from === item.from && sameSourceTiming(other, item)) return other
     }
   }
   return null

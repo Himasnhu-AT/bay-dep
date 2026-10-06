@@ -35,6 +35,7 @@ import { resolveGrade } from '@shared/grade'
 import { describeKeyframes } from '@shared/keyframes'
 import { linkedPartners } from '@shared/links'
 import { describeFont, importedFonts } from '@shared/fonts'
+import { retimeReport } from './retime'
 
 function describeItem(item: Item): Record<string, unknown> {
   return {
@@ -181,12 +182,15 @@ export function inspectItem(args: Record<string, unknown>): Record<string, unkno
       sourceStartSeconds: item.sourceStartUs / 1_000_000,
       speed: item.speed,
       // What is left of the source from here, so a caller can size a trim or a transition's
-      // handles without deriving it from two other numbers in different units.
+      // handles without deriving it from two other numbers in different units. A reversed clip
+      // reads down from its start point, so what is left is what lies before it.
       ...(asset && asset.durationUs > 0
         ? {
-            sourceRemainingSeconds: Math.max(0, asset.durationUs - item.sourceStartUs) / 1_000_000
+            sourceRemainingSeconds:
+              (item.reverse ? Math.max(0, item.sourceStartUs) : Math.max(0, asset.durationUs - item.sourceStartUs)) / 1_000_000
           }
-        : {})
+        : {}),
+      ...retimeReport(item, tl.fps)
     },
     layout: { ...item.layout },
     canvas: { width: tl.width, height: tl.height },

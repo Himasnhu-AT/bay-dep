@@ -107,7 +107,13 @@ export function describeChanges(before: Project, after: Project): ChangeLine[] {
       } else if (o.from !== item.from || o.durationInFrames !== item.durationInFrames) {
         out.push({ kind: 'changed', text: `Trimmed ${name} to ${span}` })
       }
-      if (o.sourceStartUs !== item.sourceStartUs && o.from === item.from) {
+      const reversedNow = Boolean(o.reverse) !== Boolean(item.reverse)
+      if (reversedNow) out.push({ kind: 'changed', text: item.reverse ? `Reversed ${name}` : `${name} plays forwards again` })
+      if (!same(o.keyframes?.speed, item.keyframes?.speed)) {
+        out.push({ kind: 'changed', text: item.keyframes?.speed?.length ? `Speed ramp on ${name}` : `Removed the speed ramp from ${name}` })
+      }
+      // Reversing moves the read point to the other edge of the same footage; that is not a slip.
+      if (o.sourceStartUs !== item.sourceStartUs && o.from === item.from && !reversedNow) {
         out.push({ kind: 'changed', text: `Slipped ${name} to start ${(item.sourceStartUs / 1e6).toFixed(2)}s into its source` })
       }
       if (o.fadeInFrames !== item.fadeInFrames) out.push({ kind: 'changed', text: `Fade in on ${name}: ${o.fadeInFrames} → ${item.fadeInFrames} frames` })

@@ -542,7 +542,7 @@ export function Timeline(): ReactNode {
         const bounds = trimBounds(item, footageUs, timeline.fps)
         if (current.edge === 'start') {
           // A ripple head keeps the clip's start, so frame 0 does not limit it; the footage does.
-          const earliest = current.ripple ? item.from - rippleHeadRoom(item, timeline.fps, footageUs > 0) : bounds.earliestFrom
+          const earliest = current.ripple ? item.from - rippleHeadRoom(item, timeline.fps, footageUs > 0, footageUs) : bounds.earliestFrom
           const from = Math.max(earliest, Math.min(frame, itemEnd(item) - 1))
           return { ...current, from, durationInFrames: itemEnd(item) - from }
         }
