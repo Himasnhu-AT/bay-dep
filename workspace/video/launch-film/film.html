@@ -1,0 +1,812 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>Bay — give it a podcast, ask, and it edits</title>
+    <style>
+      body { margin: 0; background: #121212; }
+      #root { position: relative; width: 1920px; height: 1080px; overflow: hidden; background: #121212; }
+      .clip { position: absolute; inset: 0; }
+      canvas { width: 1920px; height: 1080px; display: block; }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="bay-launch" data-start="0" data-width="1920" data-height="1080" data-duration="42.3">
+      <section id="stage" class="clip" data-start="0" data-duration="42.3">
+        <canvas id="c" width="1920" height="1080"></canvas>
+      </section>
+    </div>
+    <script src="bay-motion.js"></script>
+    <script>
+      // ---- the film, as numbers ------------------------------------------------------------
+      const W = 1920, H = 1080, DUR = 42.3, FPS = 30;
+      const C = {
+        ground: '#121212', bar: '#1b1b1b', panel: '#171717', raised: '#212121', chip: '#262626', line: '#2b2b2b',
+        ink: '#ededed', text: '#c9c9c9', mute: '#8a8a8a', dim: '#5e5e5e', accent: '#d9773f', play: '#e5484d',
+        v: '#3f5d7d', a: '#3b6f50', sky: '#5ec4ff', ok: '#4cc38a', amber: '#f5a524'
+      };
+      const SANS = 'Inter, system-ui, -apple-system, "Helvetica Neue", sans-serif';
+      const MONO = 'ui-monospace, "SF Mono", Menlo, monospace';
+      const mc = document.createElement('canvas').getContext('2d');
+      const tw = (s, font) => { mc.font = font; return mc.measureText(s).width; };
+
+      // One table of times. Every time is snapped to a frame, so the picture changes on exactly the
+      // frame its time names — and the sound, which reads the same table, lands on that frame too.
+      const fr = (s) => Math.round(s * FPS) / FPS;
+      const SENT = 'Make a 40-second vertical short from the best moment of this podcast.', BRK = 45;
+      const T = {
+        fileIn: 0.5, poolDrop: 1.1, grab: 1.367, clipDrop: 1.9, toPrompt: 2.7, promptClick: 3.267, type0: 3.367, send: 6.5,
+        card: [7.3, 11.1, 14.55, 21.05, 23.75, 26.2, 29.75],     // each tool card appears
+        out: [7.8, 11.5, 15.0, 21.4, 24.1, 26.55, 30.2],         // the camera leaves the card for the edit
+        back: [10.2, 13.7, 20.2, 23.05, 25.5, 29.0, 32.5],       // and comes back
+        done: [10.75, 14.2, 20.75, 23.5, 25.95, 29.45, 33.05],   // the card turns to a tick
+        slide: [8.4, 8.75, 9.1], guide: 9.47,                    // sync_angles: three clips slide into line
+        scroll: 11.95, light: 12.5, mk: [12.8, 13.0],            // find_highlights: transcript, passage, markers
+        cuts: 15.55, up: 16.6, run: 17.2, runEnd: 19.6,          // switch_speakers: the cuts, then the playhead runs
+        pmark: 21.85, close: 22.2,                               // remove_silences
+        level: 24.55, lufs: 24.75,                               // level_voices
+        subTrack: 27.0, word: [27.35, 27.55, 27.75, 27.95, 28.15], // add_subtitles
+        flip: 30.75, flipLand: 31.3,                             // set_canvas
+        changes: 33.4, row0: 33.9, rowStep: 0.133, revert: 35.0, wide: 36.2, end: 38.2, logoLand: 39.0, line1: 39.55, line2: 40.1
+      };
+      for (const k in T) T[k] = Array.isArray(T[k]) ? T[k].map(fr) : fr(T[k]);
+      T.typeEnd = fr(T.type0 + SENT.length / 25);                // 25 characters a second
+      const WQ = [0.467, 0.4, 0.467, 0.367, 0.367, 0.367, 0.467]; // how long each whip takes
+      const typed = (t) => (t < T.type0 ? 0 : Math.min(SENT.length, Math.floor((t - T.type0) * 25 + 1e-6)));
+      const keyTime = (i) => Math.ceil((T.type0 + (i + 1) / 25) * FPS - 1e-6) / FPS; // the frame key i first shows on
+
+      // ---- layout: Bay's editor, edge to edge, as the home camera sees it -------------------
+      const TOP = 52, MID = 642, STATUS = 1000, TABS = 1030;
+      const POOL = { x: 0, w: 400 }, VIEW = { x: 400, w: 720 }, INSP = { x: 1120, w: 320 }, AG = { x: 1440, w: 480 };
+      const TL = { x: 400, w: 1040, lane: 590, ruler: 684, rows: 716 };
+      const ROW_H = 52, RG = 2, SUB_H = 40;
+      const PPS = 9, LEN = 90;                                    // pixels per second; the recording is 1:30
+      const TURNS = [0, 8, 15, 23, 30, 38, 46, 55, 61, 69, 77, 84, 90]; // who is talking: host first, then alternating
+      const PAUSES = [[12, 1.0], [27, 0.9], [50, 1.1], [58.5, 1.0], [66, 0.9], [73, 1.1], [86, 1.0]];
+      const REMOVED = PAUSES.reduce((s, p) => s + p[1], 0);
+      const PICK = [42, 82];                                      // the best moment: 0:42 – 1:22
+      const turnOf = (sec) => { let i = 0; while (i < TURNS.length - 2 && sec >= TURNS[i + 1]) i++; return i; };
+      const whoAt = (sec) => (turnOf(sec) % 2 ? 'G' : 'H');
+      const inPause = (sec) => PAUSES.some((p) => sec >= p[0] && sec < p[0] + p[1]);
+      const ATOMS = (() => {
+        const pts = new Set(TURNS); PAUSES.forEach((p) => { pts.add(p[0]); pts.add(p[0] + p[1]); });
+        const a = [...pts].sort((x, y) => x - y), out = [];
+        for (let i = 0; i < a.length - 1; i++) out.push({ a: a[i], b: a[i + 1], pause: inPause(a[i]), turn: turnOf(a[i]) });
+        return out;
+      })();
+      const closeP = (t) => BM.EASES.expoOut(BM.progress(t, T.close, T.close + 0.3));
+      function X(sec, t) { // where a moment of the recording sits on the timeline, once the pauses before it are gone
+        const cp = closeP(t); let rem = 0;
+        if (cp > 0) for (const p of PAUSES) rem += BM.clamp(sec - p[0], 0, p[1]);
+        return TL.lane + PPS * (sec - rem * cp);
+      }
+      const TRACKS = [
+        { id: 'vG', kind: 'v', who: 'G', badge: 'V2', name: 'Video 2', label: 'Guest cam', off0: 38, slide: 0 },
+        { id: 'vH', kind: 'v', who: 'H', badge: 'V1', name: 'Video 1', label: 'Host cam', off0: 0 },
+        { id: 'aH', kind: 'a', who: 'H', badge: 'A1', name: 'Audio 1', label: 'Host mic', off0: 62, slide: 1 },
+        { id: 'aG', kind: 'a', who: 'G', badge: 'A2', name: 'Audio 2', label: 'Guest mic', off0: 30, slide: 2 }
+      ];
+      const offOf = (tr, t) => (tr.off0 ? tr.off0 * (1 - BM.EASES.expoOut(BM.progress(t, T.slide[tr.slide], T.slide[tr.slide] + 0.3))) : 0);
+      const clipGrow = (t) => BM.EASES.expoOut(BM.progress(t, T.clipDrop, T.clipDrop + 0.3));
+      const subOpen = (t) => BM.EASES.cubicOut(BM.progress(t, T.subTrack, T.subTrack + 0.3));
+      const rowY = (i, t) => TL.rows + (SUB_H + RG) * subOpen(t) + i * (ROW_H + RG);
+      const cutAt = (i) => T.cuts + (Math.max(1, i) - 1) * 0.07;  // the razor reaches boundary i
+      const levelP = (t) => BM.EASES.cubicOut(BM.progress(t, T.level, T.level + 0.35));
+      const gainOf = (tr, t) => BM.lerp(tr.who === 'H' ? 1 : 0.5, 0.78, levelP(t));
+      const hash = (i) => { const s = Math.sin(i * 127.1 + 311.7) * 43758.5453; return s - Math.floor(s); };
+      const two = (n) => String(n).padStart(2, '0');
+      const mss = (s) => Math.floor(s / 60) + ':' + two(Math.floor(s % 60));
+      const tcode = (s) => { const f = Math.max(0, Math.round(s * 30)); return '00:' + two(Math.floor(f / 1800)) + ':' + two(Math.floor(f / 30) % 60) + ':' + two(f % 30); };
+      function playSec(t) { // where the playhead is, in the recording's own seconds
+        if (t < T.mk[1]) return 0;
+        if (t < T.subTrack) return PICK[0] + 22 * BM.progress(t, T.run, T.runEnd);
+        return 64 + 1.6 * BM.progress(t, T.subTrack + 0.2, T.word[4] + 0.3);
+      }
+      const whoShown = (t) => (t < T.slide[0] + 0.15 ? 'H' : t < T.cuts ? 'G' : whoAt(playSec(t))); // the top enabled camera under the playhead
+
+      // The viewer's canvas: 16:9 fits the panel by width, 9:16 by height.
+      const VC = { x: 760, y: 344 };
+      const VIEW_A = { x: VC.x - 340, y: VC.y - 191.25, w: 680, h: 382.5, r: 2 };
+      const VIEW_B = { x: VC.x - 135, y: VC.y - 240, w: 270, h: 480, r: 2 };
+      function viewerBox(t) {
+        const m = BM.rectMorph(t, T.flip, T.flipLand, VIEW_A, VIEW_B, { curve: 'quintInOut' });
+        const hit = BM.impact(t, T.flipLand, { squashX: 0.04, squashY: 0.05 });
+        const w = m.w * hit.sx, h = m.h * hit.sy;
+        return { x: m.cx - w / 2, y: m.cy - h / 2, w, h, r: 2, p: m.p };
+      }
+      const WORDS = ['That', 'sounds', 'almost', 'too', 'simple.'], SUB_A = 34, SUB_B = 28;
+      const WLAY = (() => {
+        const fa = `800 ${SUB_A}px ${SANS}`, fb = `800 ${SUB_B}px ${SANS}`;
+        const wa = WORDS.map((w) => tw(w, fa)), wb = WORDS.map((w) => tw(w, fb));
+        const spa = tw(' ', fa) * 1.1, spb = tw(' ', fb) * 1.1, A = [], B = [];
+        let x = VC.x - (wa.reduce((s, w) => s + w, 0) + spa * 4) / 2;
+        wa.forEach((w) => { A.push({ cx: x + w / 2, cy: VIEW_A.y + VIEW_A.h - 48, w }); x += w + spa; });
+        [[0, 1], [2, 3], [4]].forEach((ln, r) => {
+          let lx = VC.x - (ln.reduce((s, i) => s + wb[i], 0) + spb * (ln.length - 1)) / 2;
+          ln.forEach((i) => { B[i] = { cx: lx + wb[i] / 2, cy: VIEW_B.y + VIEW_B.h - 132 + r * 34, w: wb[i] }; lx += wb[i] + spb; });
+        });
+        return { A, B };
+      })();
+      function wordBox(t, i) {
+        const p = viewerBox(t).p, a = WLAY.A[i], b = WLAY.B[i], land = BM.wordLand(t, T.word[i], { rise: 16 });
+        const size = BM.lerp(SUB_A, SUB_B, p), w = BM.lerp(a.w, b.w, p) * land.s;
+        const cx = BM.lerp(a.cx, b.cx, p), cy = BM.lerp(a.cy, b.cy, p) + land.y;
+        return { cx, cy, size, s: land.s, x: cx - w / 2, y: cy - (size * land.s) / 2, w, h: size * land.s, op: land.op };
+      }
+
+      // The Agent panel.
+      const PB = { x: 1456, y: 850, w: 448, h: 140, r: 14 };       // the prompt box
+      const F_MSG = `400 17px ${SANS}`;
+      const L1 = SENT.slice(0, BRK), L2 = SENT.slice(BRK + 1);
+      const PRE1 = [], PRE2 = [];
+      for (let i = 0; i <= L1.length; i++) PRE1.push(tw(L1.slice(0, i), F_MSG));
+      for (let i = 0; i <= L2.length; i++) PRE2.push(tw(L2.slice(0, i), F_MSG));
+      const MW = Math.max(PRE1[L1.length], PRE2[L2.length]) + 32;
+      const MSG_A = { x: PB.x + 2, y: PB.y + 8, w: MW, h: 68, r: 14 }, MSG_B = { x: AG.x + AG.w - 16 - MW, y: 162, w: MW, h: 68, r: 14 };
+      const msgBox = (t) => BM.rectMorph(t, T.send + 0.033, T.send + 0.467, MSG_A, MSG_B, { curve: 'cubicOut' });
+      const CARDS = [
+        { name: 'sync_angles', done: '4 clips in sync' },
+        { name: 'find_highlights', done: '0:42 – 1:22 · score 91' },
+        { name: 'switch_speakers', done: '12 shots' },
+        { name: 'remove_silences', done: '7 pauses · −7.0 s' },
+        { name: 'level_voices', done: '−16 LUFS' },
+        { name: 'add_subtitles', done: 'Subtitles on V3' },
+        { name: 'set_canvas', done: '1080 × 1920' }
+      ];
+      const cardRect = (i) => ({ x: 1456, y: 244 + i * 48, w: 448, h: 42, r: 9 });
+      const agentY = (i) => Math.max(240, 244 + Math.min(i, 6) * 48 - 40);
+      const CH = { x: 1456, y: 582, w: 448, h: 256, r: 12 };       // the Changes card
+      const CH_ROWS = [['Synced 4 clips by sound', '4 clips'], ['Marked the best moment', '0:42 – 1:22'], ['Cut cameras to the speaker', '12 shots'], ['Removed 7 pauses', '−00:00:07:00'],
+        ['Levelled 2 voices', '−16 LUFS'], ['Added Subtitles track', 'V3'], ['Canvas 16:9 → 9:16', '1080 × 1920']];
+
+      // The media pool, the transcript, and the thing being dragged.
+      const TILES = [{ x: 16, y: 250, who: 'H', kind: 'v', name: 'Host cam.mov' }, { x: 206, y: 250, who: 'G', kind: 'v', name: 'Guest cam.mov' },
+        { x: 16, y: 392, who: 'H', kind: 'a', name: 'Host mic.wav' }, { x: 206, y: 392, who: 'G', kind: 'a', name: 'Guest mic.wav' }];
+      const LINES = [[0, 'H', 'Welcome back to the show.'], [8, 'G', 'Thanks for having me.'], [15, 'H', 'You post a lot more these days.'], [23, 'G', 'We used to post once a month.'],
+        [30, 'H', 'So what changed?'], [38, 'G', 'Honestly, one small habit.'], [42, 'G', 'We stopped waiting for the perfect take.'], [46, 'H', 'You just hit record?'],
+        [55, 'G', 'Record, find the best bit, post it.'], [61, 'H', 'That sounds almost too simple.'], [69, 'G', 'It is simple. That is the point.'], [77, 'H', 'Okay, I am stealing that.'], [84, 'G', 'Please do.']];
+      const LROW = 64, LTOP = 152, PASS = [6, 11];
+      const scrollY = (t) => 190 * BM.EASES.cubicInOut(BM.progress(t, T.scroll, T.scroll + 0.5));
+      const passBox = (t) => ({ x: 8, y: LTOP + PASS[0] * LROW - scrollY(t) - 2, w: 384, h: (PASS[1] - PASS[0] + 1) * LROW });
+      const PK = [
+        [T.fileIn, -70, 470], [T.poolDrop, 110, 320], [T.grab, 110, 320], [T.clipDrop, 650, 770], [T.clipDrop + 0.1, 650, 770],
+        [T.clipDrop + 0.333, 760, 965], [T.toPrompt, 760, 965], [T.promptClick - 0.067, 1650, 900], [T.type0 + 1.5, 1650, 900],
+        [T.typeEnd - 0.067, PB.x + PB.w - 28, PB.y + 112], [T.send + 0.167, PB.x + PB.w - 28, PB.y + 112], [T.send + 0.6, 1990, 1130]
+      ];
+      function pointerAt(t) { // straight, eased runs between rests: in a rest it does not move at all
+        if (t <= PK[0][0]) return { x: PK[0][1], y: PK[0][2] };
+        for (let i = 0; i < PK.length - 1; i++) {
+          const a = PK[i], b = PK[i + 1];
+          if (t <= b[0]) { const e = BM.EASES.cubicInOut(BM.progress(t, a[0], b[0])); return { x: BM.lerp(a[1], b[1], e), y: BM.lerp(a[2], b[2], e) }; }
+        }
+        const z = PK[PK.length - 1]; return { x: z[1], y: z[2] };
+      }
+      const CLICKS = [T.grab, T.promptClick, T.send];
+      const pointerS = (t) => CLICKS.reduce((s, tc) => s * BM.press(t, tc - 0.1).s, 1);
+      function ghostAt(t) { // the four files in the hand
+        if ((t >= T.fileIn && t < T.poolDrop) || (t >= T.grab && t < T.clipDrop)) { const p = pointerAt(t); return { x: p.x + 16, y: p.y + 12, w: 132, h: 74, r: 6 }; }
+        return null;
+      }
+
+      // The end card: the app's own mark and name, grown out of the top bar.
+      const F_LOGO = `700 23px ${SANS}`;
+      const LOCK_W = 38 + tw('bay', F_LOGO) + 2;
+      const LOGO_A = { x: 36, y: 12, w: LOCK_W, h: 28, r: 0 };
+      const LOGO_K = 7.2;
+      const LOGO_B = { x: W / 2 - (LOCK_W * LOGO_K) / 2, y: 413 - 14 * LOGO_K, w: LOCK_W * LOGO_K, h: 28 * LOGO_K, r: 0 };
+      const LINE1 = 'A video editor you can talk to.', LINE2 = 'On your own Mac. Every change on your undo stack.';
+      const L1W = tw(LINE1, `600 63px ${SANS}`), L2W = tw(LINE2, `400 39px ${SANS}`), LINE1_Y = 620, LINE2_Y = 702;
+      const irisAt = (t) => BM.iris(t, T.end, T.end + 0.75, 49, 26, { from: 14, curve: 'quartOut' });
+      function logoBox(t) {
+        const m = BM.rectMorph(t, T.end, T.logoLand, LOGO_A, LOGO_B, { curve: 'cubicInOut' });
+        const hit = BM.impact(t, T.logoLand, { squashX: 0.03, squashY: 0.05 });
+        const w = m.w * hit.sx, h = m.h * hit.sy;
+        return { x: m.cx - w / 2, y: m.cy - h / 2, w, h };
+      }
+      const line1 = (t) => BM.lineReveal(t, T.line1, 0, { dist: 70 });
+      const line2 = (t) => BM.lineReveal(t, T.line2, 0, { dist: 50 });
+
+      // ---- the camera: it pushes, pulls or whips; between moves it is dead still -------------
+      const WHIP = [0.72, 0, 0.18, 1];
+      const AGENT = { x: 1620, zoom: 3.2 };
+      const SHOT = [{ x: 940, y: 786, zoom: 1.85 }, { x: 685.7, y: 694.3, zoom: 1.4 }, { x: 940, y: 786, zoom: 1.85 }, { x: 1040, y: 820, zoom: 2.1 },
+        { x: 784, y: 864, zoom: 2.5 }, { x: 800, y: 470, zoom: 1.45 }, { x: 950, y: 322, zoom: 1.9 }];
+      const EXTRA = [
+        [{ t: T.slide[0] }, { t: T.guide, x: 950, y: 800, zoom: 1.95, curve: 'sineInOut' }],                                   // push in while they line up
+        [],
+        [{ t: T.cuts }, { t: T.cuts + 0.8, x: 950, y: 800, zoom: 1.95, curve: 'sineInOut' }, { t: T.up },
+          { t: T.up + 0.5, x: 880, y: 495, zoom: 1.4, curve: 'cubicInOut' }, { t: T.run }, { t: T.runEnd, y: 470, zoom: 1.5, curve: 'sineInOut' }], // up to viewer and cameras
+        [{ t: T.pmark }, { t: T.close + 0.3, zoom: 2.2, curve: 'sineInOut' }],
+        [],
+        [{ t: T.subTrack }, { t: T.word[4] + 0.3, x: 780, y: 400, zoom: 1.7, curve: 'sineInOut' }],
+        [{ t: T.flip }, { t: T.flipLand + 0.033, zoom: 2, curve: 'cubicOut' }]
+      ];
+      const KEYS = [
+        { t: 0, x: 960, y: 540, zoom: 1 },
+        { t: T.fileIn },
+        { t: T.clipDrop + 0.3, x: 738.5, y: 560, zoom: 1.3, curve: 'cubicOut' },          // push in on the drop
+        { t: T.toPrompt },
+        { t: T.toPrompt + 0.467, x: 1600, y: 900, zoom: 3, curve: WHIP },                  // whip to the prompt box
+        { t: T.type0 },
+        { t: T.typeEnd, x: 1629, y: 916, zoom: 3.3, curve: 'sineInOut' },                  // push in while it is typed
+        { t: T.send + 0.033 },
+        { t: T.send + 0.5, x: AGENT.x, y: agentY(0), zoom: AGENT.zoom, curve: WHIP }       // up to the chat with the message
+      ];
+      for (let i = 0; i < 7; i++) {
+        KEYS.push({ t: T.out[i] }, Object.assign({ t: T.out[i] + WQ[i], curve: WHIP }, SHOT[i]));
+        EXTRA[i].forEach((k) => KEYS.push(k));
+        KEYS.push({ t: T.back[i] }, { t: T.back[i] + WQ[i], x: AGENT.x, y: agentY(i + 1), zoom: AGENT.zoom, curve: WHIP });
+      }
+      KEYS.push({ t: T.changes }, { t: T.changes + 0.467, y: CH.y + CH.h / 2, curve: 'cubicInOut' }, { t: T.wide }, { t: T.wide + 0.667, x: 960, y: 540, zoom: 1, curve: WHIP });
+      function camera(t) {
+        const cam = BM.cameraAt(t, KEYS);
+        const hit = BM.shake(t, T.flipLand, { amp: 6, rot: 0.12, seed: 4 });
+        return { x: cam.x + hit.x / cam.zoom, y: cam.y + hit.y / cam.zoom, zoom: cam.zoom, rot: (cam.rot || 0) + hit.rot };
+      }
+      const worldMatrix = (t) => BM.layerMatrix(camera(t));
+
+      // ---- what is on screen, in screen pixels: the oracle and the blur both read this ------
+      const onFrame = (b) => b.op > 0 && b.x < W && b.y < H && b.x + b.w > 0 && b.y + b.h > 0;
+      function track(t) {
+        const M = worldMatrix(t), out = {}, ir = irisAt(t);
+        const put = (id, x, y, w, h, op) => {
+          if (op === undefined) op = 1;
+          if (!(op > 0) || !(w > 0) || !(h > 0)) return;
+          const b = BM.boxToScreen(M, { x, y, w, h, op });
+          if (onFrame(b)) out[id] = b;
+        };
+        if (!(t >= T.end && ir.covered)) {
+          put('editor', 0, 0, W, H);
+          put('agent', AG.x, TOP, AG.w, STATUS - TOP);
+          put('timeline', TL.x, MID, TL.w, STATUS - MID);
+          put('prompt', PB.x, PB.y, PB.w, PB.h);
+          const v = viewerBox(t); put('viewer', v.x, v.y, v.w, v.h);
+          const p = pointerAt(t); if (t > T.fileIn && t < T.send + 0.6) put('pointer', p.x, p.y, 20, 30);
+          const g = ghostAt(t); if (g) put('file', g.x, g.y, g.w, g.h);
+          if (t >= T.clipDrop) {
+            const lim = TL.lane + (LEN * PPS + 70) * clipGrow(t);
+            TRACKS.forEach((tr, i) => { const off = offOf(tr, t), x0 = X(0, t) + off; put(tr.id, x0, rowY(i, t), Math.min(X(LEN, t) + off, lim) - x0, ROW_H); });
+            if (t >= T.slide[2] + 0.3) put('tail', X(74.1, t), rowY(0, t), X(LEN, t) - X(74.1, t), 4 * (ROW_H + RG));
+          }
+          if (t >= T.card[1]) { const pb = passBox(t); put('passage', pb.x, pb.y, pb.w, pb.h); }
+          T.mk.forEach((tm, i) => { if (t >= tm) put('mark' + i, X(PICK[i], t) - 7, TL.ruler - BM.cardPop(t, tm).dy, 14, 30); });
+          if (t >= T.send + 0.033) { const m = msgBox(t); put('msg', m.x, m.y, m.w, m.h); }
+          CARDS.forEach((cd, i) => { if (t >= T.card[i]) { const pop = BM.cardPop(t, T.card[i]), r = cardRect(i); put('card' + (i + 1), r.x, r.y + pop.dy, r.w, r.h, pop.op); } });
+          if (t >= T.changes) { const pop = BM.cardPop(t, T.changes); put('changes', CH.x, CH.y + pop.dy, CH.w, CH.h, pop.op); }
+          if (t >= T.subTrack + 0.15) { const pop = BM.cardPop(t, T.subTrack + 0.15); put('subs', X(0, t), TL.rows + 5 + pop.dy, X(LEN, t) - X(0, t), SUB_H - 10, pop.op); }
+          WORDS.forEach((w, i) => { if (t >= T.word[i]) { const b = wordBox(t, i); put('word' + i, b.x, b.y, b.w, b.h, b.op); } });
+        }
+        const lb = t < T.end ? LOGO_A : logoBox(t); put('logo', lb.x, lb.y, lb.w, lb.h);
+        if (t >= T.end) {
+          out.ground = { x: 49 - ir.r, y: 26 - ir.r, w: ir.r * 2, h: ir.r * 2, op: 1 };
+          const l1 = line1(t); if (l1.visible) out.line1 = { x: W / 2 - L1W / 2, y: LINE1_Y - 32 + Math.min(l1.y, 32), w: L1W, h: 64, op: 1 };
+          const l2 = line2(t); if (l2.visible) out.line2 = { x: W / 2 - L2W / 2, y: LINE2_Y - 20 + Math.min(l2.y, 20), w: L2W, h: 40, op: 1 };
+        }
+        return out;
+      }
+
+      // ---- drawing helpers -------------------------------------------------------------------
+      const rr = (c, x, y, w, h, r) => { c.beginPath(); c.roundRect(x, y, Math.max(0, w), Math.max(0, h), Math.max(0, Math.min(r, w / 2, h / 2))); };
+      function label(c, s, x, y, px, weight, colour, align, family) {
+        c.font = `${weight} ${px}px ${family || SANS}`; c.fillStyle = colour; c.textAlign = align || 'left'; c.textBaseline = 'middle'; c.fillText(s, x, y);
+      }
+      function chip(c, x, y, w, h, r, fill, stroke) {
+        rr(c, x, y, w, h, r);
+        if (fill) { c.fillStyle = fill; c.fill(); }
+        if (stroke) { c.strokeStyle = stroke; c.lineWidth = 1; c.stroke(); }
+      }
+      function glyph(c, x, y, col) { c.strokeStyle = col; c.lineWidth = 1.4; rr(c, x - 7, y - 6, 14, 12, 3); c.stroke(); }
+      function chev(c, x, y, col) { c.strokeStyle = col; c.lineWidth = 1.4; c.lineCap = 'round'; c.beginPath(); c.moveTo(x - 4, y - 2); c.lineTo(x, y + 2); c.lineTo(x + 4, y - 2); c.stroke(); }
+      function icon(c, kind, x, y, col) { // the timeline's own tools, drawn small
+        c.strokeStyle = col; c.fillStyle = col; c.lineWidth = 1.5; c.lineCap = 'round'; c.lineJoin = 'round'; c.beginPath();
+        if (kind === 'arrow') { c.moveTo(x - 4, y - 7); c.lineTo(x - 4, y + 6); c.lineTo(x - 0.5, y + 2.5); c.lineTo(x + 2, y + 8); c.lineTo(x + 4.4, y + 6.8); c.lineTo(x + 2, y + 1.6); c.lineTo(x + 6.4, y + 1.6); c.closePath(); c.stroke(); }
+        else if (kind === 'range') { c.moveTo(x - 3, y - 6); c.lineTo(x - 6, y - 6); c.lineTo(x - 6, y + 6); c.lineTo(x - 3, y + 6); c.moveTo(x + 3, y - 6); c.lineTo(x + 6, y - 6); c.lineTo(x + 6, y + 6); c.lineTo(x + 3, y + 6); c.stroke(); }
+        else if (kind === 'razor') { c.arc(x - 4, y + 4, 2.6, 0, Math.PI * 2); c.moveTo(x + 6.6, y + 4); c.arc(x + 4, y + 4, 2.6, 0, Math.PI * 2); c.moveTo(x - 2.6, y + 2); c.lineTo(x + 4, y - 7); c.moveTo(x + 2.6, y + 2); c.lineTo(x - 4, y - 7); c.stroke(); }
+        else if (kind === 'magnet') { c.moveTo(x - 5, y - 6); c.lineTo(x - 5, y + 1); c.arc(x, y + 1, 5, Math.PI, 0, true); c.lineTo(x + 5, y - 6); c.stroke(); }
+        else if (kind === 'link') { c.ellipse(x - 3, y, 5, 3.4, 0, 0, Math.PI * 2); c.stroke(); c.beginPath(); c.ellipse(x + 3, y, 5, 3.4, 0, 0, Math.PI * 2); c.stroke(); }
+        else if (kind === 'mark') { c.moveTo(x - 4.5, y - 6.5); c.lineTo(x + 4.5, y - 6.5); c.lineTo(x + 4.5, y + 6.5); c.lineTo(x, y + 3); c.lineTo(x - 4.5, y + 6.5); c.closePath(); c.stroke(); }
+        else { c.roundRect(x - 7, y - 6, 14, 10, 3); c.moveTo(x - 3, y + 4); c.lineTo(x - 3, y + 7.5); c.lineTo(x + 1, y + 4); c.stroke(); }
+      }
+      function drawLockup(c, b) { // the mark is a tiny timeline with its playhead; the name beside it
+        const s = b.h / 28;
+        c.save(); c.translate(b.x, b.y); c.scale(b.w / LOCK_W, s);
+        c.fillStyle = '#52708f'; rr(c, 2, 6, 20, 4.5, 2); c.fill(); rr(c, 6, 12, 24, 4.5, 2); c.fill();
+        c.fillStyle = '#3f7a55'; rr(c, 2, 18, 16, 4.5, 2); c.fill();
+        c.fillStyle = C.accent; c.fillRect(13.2, 2, 1.6, 24);
+        if (!b.markOnly) { c.font = F_LOGO; c.fillStyle = C.ink; c.textAlign = 'left'; c.textBaseline = 'middle'; c.fillText('bay', 38, 14.5); }
+        c.restore();
+      }
+      const PAL = {
+        H: { bg: ['#33434e', '#1b2328'], top: '#3f5c69', skin: '#e2b793', neck: '#cfa07d', hair: '#33261f' },
+        G: { bg: ['#4a3d36', '#221c19'], top: '#7a4b5c', skin: '#dcaa85', neck: '#c79873', hair: '#c9a25b' }
+      };
+      function drawPerson(c, r, who) { // the footage: one person to camera. Clipped to r, cover-fitted by height
+        const s = r.h / 400, p = PAL[who];
+        c.save(); rr(c, r.x, r.y, r.w, r.h, r.r || 0); c.clip();
+        c.translate(r.x + r.w / 2, r.y); c.scale(s, s);
+        const g = c.createLinearGradient(0, 0, 0, 400); g.addColorStop(0, p.bg[0]); g.addColorStop(1, p.bg[1]);
+        c.fillStyle = g; c.fillRect(-360, 0, 720, 400);
+        if (who === 'H') {
+          c.fillStyle = 'rgba(255,214,170,0.13)'; rr(c, -316, 46, 128, 176, 6); c.fill();
+          c.fillStyle = 'rgba(255,255,255,0.10)'; c.fillRect(176, 150, 152, 5);
+          [[190, 44, '#51636e'], [208, 58, '#6a5a4d'], [226, 50, '#465864'], [262, 36, '#5d6a60']].forEach(([dx, hh, col]) => { c.fillStyle = col; c.fillRect(dx, 150 - hh, 14, hh); });
+        } else {
+          c.fillStyle = 'rgba(255,196,120,0.14)'; c.beginPath(); c.arc(-236, 120, 84, 0, Math.PI * 2); c.fill();
+          c.fillStyle = 'rgba(255,220,160,0.55)'; rr(c, -250, 92, 28, 40, 8); c.fill(); c.fillStyle = '#5b4a40'; c.fillRect(-238, 132, 4, 120);
+          c.fillStyle = '#41604a'; c.beginPath(); c.ellipse(262, 232, 34, 62, 0.2, 0, Math.PI * 2); c.fill(); c.beginPath(); c.ellipse(228, 250, 26, 50, -0.4, 0, Math.PI * 2); c.fill();
+          c.fillStyle = p.hair; rr(c, -72, 128, 144, 170, 62); c.fill();
+        }
+        c.fillStyle = p.top; c.beginPath(); c.ellipse(0, 436, 152, 148, 0, Math.PI, 0); c.fill();
+        c.fillStyle = p.neck; rr(c, -23, 248, 46, 60, 12); c.fill();
+        c.fillStyle = p.skin; c.beginPath(); c.arc(0, 196, 62, 0, Math.PI * 2); c.fill();
+        c.fillStyle = p.hair; c.beginPath(); c.arc(0, 186, 65, Math.PI * 1.02, Math.PI * 1.98); c.quadraticCurveTo(0, 148, -64.8, 182); c.fill();
+        c.fillStyle = '#2d2420'; c.beginPath(); c.arc(-22, 194, 4.2, 0, Math.PI * 2); c.arc(22, 194, 4.2, 0, Math.PI * 2); c.fill();
+        c.strokeStyle = '#8e5a45'; c.lineWidth = 3; c.lineCap = 'round'; c.beginPath(); c.arc(0, 214, 15, Math.PI * 0.2, Math.PI * 0.8); c.stroke();
+        c.restore();
+      }
+      const THUMB = {}; // each camera's picture, drawn once: the filmstrips and tiles reuse it
+      ['H', 'G'].forEach((who) => { const cv = document.createElement('canvas'); cv.width = 272; cv.height = 152; drawPerson(cv.getContext('2d'), { x: 0, y: 0, w: 272, h: 152 }, who); THUMB[who] = cv; });
+      function micBars(c, x, y, w, h, who) { c.fillStyle = '#6cc492'; for (let i = 0; i * 5 < w - 6; i++) { const a = 0.2 + 0.8 * hash(i + (who === 'G' ? 400 : 0)), bh = Math.max(2, a * h * 0.7); c.fillRect(x + 3 + i * 5, y + h / 2 - bh / 2, 3, bh); } }
+
+      // ---- the editor, panel by panel ----------------------------------------------------------
+      function drawTop(c, t) {
+        c.fillStyle = C.bar; c.fillRect(0, 0, W, TOP); c.fillStyle = C.line; c.fillRect(0, TOP - 1, W, 1);
+        if (t < T.end) drawLockup(c, LOGO_A);
+        c.fillStyle = '#333'; c.fillRect(140, 14, 1, 24);
+        [['Library', 152, 96], ['Inspector', 254, 108], ['Timeline', 368, 102], ['Agent', 476, 86]].forEach(([s, x, w]) => {
+          chip(c, x, 10, w, 32, 7, C.chip); glyph(c, x + 19, 26, '#bdbdbd'); label(c, s, x + 35, 26.5, 14, 500, '#d6d6d6');
+        });
+        label(c, 'Swift Amber Wren', 1004, 26.5, 15, 500, C.ink, 'right');
+        chip(c, 1018, 11, 84, 30, 7, null, '#333'); label(c, '✓ Saved', 1060, 26.5, 13, 500, C.mute, 'center');
+        chip(c, 1446, 11, 118, 30, 7, '#1f1f1f', '#333'); chip(c, 1449, 14, 70, 24, 5, 'rgba(217,119,63,0.2)');
+        label(c, 'Resolve', 1484, 26.5, 13, 600, C.accent, 'center'); label(c, 'AI', 1541, 26.5, 13, 500, C.mute, 'center');
+        c.strokeStyle = C.dim; c.lineWidth = 1.6; c.lineCap = 'round';
+        c.beginPath(); c.arc(1610, 28, 7, Math.PI * 1.1, Math.PI * 1.9); c.stroke(); c.beginPath(); c.arc(1646, 28, 7, Math.PI * 1.1, Math.PI * 1.9); c.stroke();
+        c.strokeStyle = '#c9c9c9'; c.beginPath(); c.arc(1694, 26, 6.5, 0, Math.PI * 2); c.stroke(); c.beginPath(); c.arc(1694, 26, 2, 0, Math.PI * 2); c.stroke();
+        label(c, 'Settings', 1710, 26.5, 14, 500, '#c9c9c9');
+        chip(c, 1804, 9, 100, 34, 7, C.accent); label(c, 'Export', 1866, 26.5, 15, 600, '#ffffff', 'center');
+        c.strokeStyle = '#ffffff'; c.lineWidth = 1.8; c.beginPath(); c.moveTo(1826, 31); c.lineTo(1826, 20); c.moveTo(1821.5, 24.5); c.lineTo(1826, 20); c.lineTo(1830.5, 24.5); c.stroke();
+      }
+
+      function drawPool(c, t) {
+        const script = t >= T.card[1]; // find_highlights reads the transcript
+        c.fillStyle = C.panel; c.fillRect(0, TOP, POOL.w, STATUS - TOP);
+        if (script) { // the transcript: it scrolls to the passage, and the passage lights
+          c.save(); c.beginPath(); c.rect(0, 142, POOL.w, STATUS - 142); c.clip();
+          const sy = scrollY(t), pb = passBox(t);
+          if (t >= T.light) { const tick = BM.checkTick(t, T.light); c.fillStyle = `rgba(245,165,36,${0.14 + 0.1 * (tick.s - 1)})`; rr(c, pb.x, pb.y, pb.w, pb.h, 8); c.fill(); c.fillStyle = C.amber; c.fillRect(pb.x, pb.y + 6, 3, pb.h - 12); }
+          LINES.forEach(([sec, who, s], i) => {
+            const y = LTOP + i * LROW - sy, lit = t >= T.light && i >= PASS[0] && i <= PASS[1];
+            label(c, mss(sec), 22, y + 18, 12.5, 500, lit ? C.amber : C.mute, 'left', MONO);
+            label(c, who === 'H' ? 'Host' : 'Guest', 66, y + 18, 13, 600, who === 'H' ? '#8fb1d6' : '#d6a0b4');
+            label(c, s, 22, y + 42, 15, lit ? 500 : 400, lit ? C.ink : '#b5b5b5');
+          });
+          c.restore();
+        }
+        [26, 66, 104, 144].forEach((x, i) => glyph(c, x, 75, i === (script ? 3 : 0) ? C.ink : C.mute));
+        c.fillStyle = C.accent; c.fillRect(script ? 132 : 14, 96, 24, 2);
+        c.fillStyle = '#1d1d1d'; c.fillRect(0, 98, POOL.w, 44);
+        label(c, script ? 'Transcript' : 'Media Pool', 16, 120.5, 16, 600, C.ink); label(c, '···', 380, 119, 16, 700, C.mute, 'right');
+        c.fillStyle = C.line; c.fillRect(POOL.w - 1, TOP, 1, STATUS - TOP);
+        if (script) return;
+        [['+', 'Import', 18], ['∞', 'Import URL', 108], ['≡', 'Captions', 232]].forEach(([g, s, x]) => { label(c, g, x, 167.5, 16, 500, C.mute); label(c, s, x + 22, 168, 15, 500, '#a8a8a8'); });
+        label(c, '✦', 18, 207.5, 14, 500, C.mute); label(c, 'Motion Graphic', 40, 208, 15, 500, '#a8a8a8');
+        c.fillStyle = C.line; c.fillRect(0, 232, POOL.w, 1);
+        if (t < T.poolDrop) { // the real empty state
+          glyph(c, 200, 524, C.mute); label(c, 'No media yet', 200, 558, 15, 600, C.ink, 'center');
+          ['Import video, audio, images or captions,', 'or drag in files from Finder, or drop files', 'anywhere in the window.'].forEach((s, i) => label(c, s, 200, 584 + i * 18, 13, 400, C.mute, 'center'));
+          chip(c, 136, 648, 128, 34, 7, C.chip, '#363636'); label(c, 'Import media', 200, 665.5, 14, 500, C.ink, 'center');
+        } else TILES.forEach((tl, i) => {
+          const pop = BM.cardPop(t, T.poolDrop + i * 0.033);
+          if (pop.op <= 0) return;
+          c.globalAlpha = pop.op;
+          if (tl.kind === 'v') { c.save(); rr(c, tl.x, tl.y + pop.dy, 178, 100, 6); c.clip(); c.drawImage(THUMB[tl.who], tl.x, tl.y + pop.dy, 178, 100); c.restore(); }
+          else { chip(c, tl.x, tl.y + pop.dy, 178, 100, 6, '#1f3a2b'); micBars(c, tl.x, tl.y + pop.dy, 178, 100, tl.who); }
+          chip(c, tl.x + 136, tl.y + 76 + pop.dy, 36, 18, 4, 'rgba(0,0,0,0.6)'); label(c, '1:30', tl.x + 154, tl.y + 85.5 + pop.dy, 11.5, 600, C.ink, 'center');
+          label(c, tl.name, tl.x + 2, tl.y + 116 + pop.dy, 13.5, 500, C.text);
+          c.globalAlpha = 1;
+        });
+      }
+
+      function drawViewer(c, t) {
+        c.fillStyle = C.ground; c.fillRect(VIEW.x, TOP, VIEW.w, MID - TOP);
+        c.fillStyle = C.bar; c.fillRect(VIEW.x, TOP, VIEW.w, 40);
+        chip(c, 412, 60, 62, 24, 6, '#222222'); label(c, 'Fit', 424, 72.5, 13, 500, C.text); chev(c, 460, 72, C.mute);
+        label(c, 'Timeline', 754, 72.5, 14, 600, C.mute, 'right'); label(c, '— Timeline 1', 760, 72.5, 14, 600, C.ink);
+        label(c, tcode(playSec(t)), 1106, 72.5, 15, 500, C.accent, 'right', MONO);
+        const v = viewerBox(t), has = t >= T.clipDrop + 0.1;
+        c.fillStyle = '#000000'; rr(c, v.x, v.y, v.w, v.h, v.r); c.fill();
+        if (!has) {
+          glyph(c, VC.x, VC.y - 26, C.mute); label(c, 'Nothing on the timeline yet', VC.x, VC.y + 6, 15, 600, C.text, 'center');
+          label(c, 'Import media, then double-click a clip or drag it onto a track.', VC.x, VC.y + 30, 13, 400, C.mute, 'center');
+        } else {
+          drawPerson(c, v, whoShown(t));
+          c.save(); rr(c, v.x, v.y, v.w, v.h, v.r); c.clip();
+          let spoken = -1; T.word.forEach((wt, i) => { if (t >= wt) spoken = i; });
+          WORDS.forEach((w, i) => { // word by word; the spoken word is the lit one
+            if (t < T.word[i]) return;
+            const wb = wordBox(t, i);
+            c.save(); c.globalAlpha = wb.op; c.translate(wb.cx, wb.cy); c.scale(wb.s, wb.s);
+            c.font = `800 ${wb.size}px ${SANS}`; c.textAlign = 'center'; c.textBaseline = 'middle'; c.lineJoin = 'round';
+            c.strokeStyle = 'rgba(8,10,12,0.9)'; c.lineWidth = 6.5; c.strokeText(w, 0, 0);
+            c.fillStyle = i === spoken ? C.sky : '#ffffff'; c.fillText(w, 0, 0);
+            c.restore();
+          });
+          c.restore();
+        }
+        c.strokeStyle = '#303030'; c.lineWidth = 1; rr(c, v.x, v.y, v.w, v.h, v.r); c.stroke();
+        // transport
+        c.fillStyle = C.bar; c.fillRect(VIEW.x, 598, VIEW.w, 44); c.fillStyle = C.line; c.fillRect(VIEW.x, 598, VIEW.w, 1);
+        c.strokeStyle = C.mute; c.lineWidth = 1.6; c.lineCap = 'round'; c.lineJoin = 'round';
+        [430, 464, 500, 574, 610, 644].forEach((x, i) => { const d = i < 3 ? -1 : 1; c.beginPath(); c.moveTo(x - 3 * d, 613); c.lineTo(x + 3 * d, 620); c.lineTo(x - 3 * d, 627); c.stroke(); });
+        c.strokeStyle = C.text; c.beginPath(); c.moveTo(532, 612); c.lineTo(544, 620); c.lineTo(532, 628); c.closePath(); c.stroke();
+        label(c, '[', 700, 619, 16, 500, C.mute, 'center'); label(c, ']', 734, 619, 16, 500, C.mute, 'center');
+        label(c, tcode(playSec(t)), 930, 620.5, 15, 500, C.ink, 'center', MONO);
+        glyph(c, 1064, 620, C.mute); label(c, '···', 1104, 619, 15, 700, C.mute, 'right');
+      }
+
+      function drawInspector(c, t) {
+        c.fillStyle = C.panel; c.fillRect(INSP.x, TOP, INSP.w, MID - TOP);
+        c.fillStyle = C.bar; c.fillRect(INSP.x, TOP, INSP.w, 40);
+        c.fillStyle = C.line; c.fillRect(INSP.x, TOP, 1, MID - TOP);
+        label(c, 'Inspector', 1136, 72.5, 15, 600, C.ink);
+        label(c, 'Timeline', 1136, 110, 14, 600, C.ink); c.fillStyle = C.accent; c.fillRect(1134, 126, 62, 2);
+        c.fillStyle = '#1d1d1d'; c.fillRect(INSP.x + 1, 128, INSP.w - 1, 36); chev(c, 1142, 146, C.mute); label(c, 'Timeline', 1158, 146.5, 14, 600, C.ink);
+        const mid = fr((T.flip + T.flipLand) / 2), flipped = t >= mid, tick = BM.checkTick(t, mid), hot = flipped && t < T.back[6];
+        [['Canvas', flipped ? '9:16 · 1080 × 1920' : '16:9 · 1920 × 1080', true], ['Frame rate', '30', true], ['Background', '#000000', false]].forEach(([k, val, dd], i) => {
+          const y = 176 + i * 44;
+          label(c, k, 1136, y + 17.5, 14, 500, C.mute);
+          chip(c, 1232, y, 192, 34, 7, C.raised, i === 0 && hot ? C.accent : '#303030');
+          if (i === 2) { c.fillStyle = '#000000'; rr(c, 1240, y + 7, 20, 20, 3); c.fill(); c.strokeStyle = '#444'; c.stroke(); }
+          const s = i === 0 ? 0.92 + 0.08 * (flipped ? tick.s : 1) : 1;
+          c.save(); c.translate(i === 2 ? 1270 : 1244, y + 17.5); c.scale(s, s); label(c, val, 0, 0, 14, 500, C.ink); c.restore();
+          if (dd) chev(c, 1408, y + 17, C.mute);
+        });
+        label(c, 'Resolution', 1136, 324, 14, 500, C.mute); label(c, flipped ? '1080 × 1920' : '1920 × 1080', 1424, 324, 14, 500, C.mute, 'right');
+        label(c, 'Tracks', 1136, 350, 14, 500, C.mute); label(c, t >= T.subTrack ? '5' : t >= T.clipDrop ? '4' : '2', 1424, 350, 14, 500, C.mute, 'right');
+        chip(c, 1136, 372, 288, 34, 7, C.chip, '#333'); label(c, 'Project Settings...', 1280, 389.5, 14, 500, C.ink, 'center');
+        c.fillStyle = '#1d1d1d'; c.fillRect(INSP.x + 1, 424, INSP.w - 1, 36); label(c, 'Selection', 1136, 442.5, 14, 600, C.ink);
+        label(c, 'Select a clip. Shift-click adds to', 1136, 482, 13, 400, C.mute); label(c, 'the selection.', 1136, 500, 13, 400, C.mute);
+      }
+
+      function trackHeader(c, y, h, badge, col, name, buttons) {
+        c.fillStyle = col; c.fillRect(TL.x, y, 3, h);
+        chip(c, 414, y + h / 2 - 11, 34, 22, 5, col); label(c, badge, 431, y + h / 2 + 0.5, 12.5, 700, '#f2f2f2', 'center');
+        label(c, name, 458, y + h / 2 + 0.5, 15, 500, '#bdbdbd');
+        if (buttons) ['M', 'S'].forEach((b, i) => { chip(c, 528 + i * 27, y + h / 2 - 10, 23, 20, 4, '#242424', '#363636'); label(c, b, 539.5 + i * 27, y + h / 2 + 0.5, 10.5, 600, C.mute, 'center'); });
+      }
+
+      function drawTrackClip(c, t, tr, y) {
+        const off = offOf(tr, t), x0 = X(0, t) + off, x1 = Math.min(X(LEN, t) + off, TL.lane + (LEN * PPS + 70) * clipGrow(t));
+        if (x1 - x0 < 1) return;
+        const isV = tr.kind === 'v', gain = gainOf(tr, t);
+        c.save(); rr(c, x0, y, x1 - x0, ROW_H, 6); c.clip();
+        c.fillStyle = isV ? '#2b4358' : '#24412f'; c.fillRect(x0, y, x1 - x0, ROW_H);
+        ATOMS.forEach((at) => {
+          const ax0 = X(at.a, t) + off, ax1 = X(at.b, t) + off;
+          if (ax1 - ax0 < 0.5 || ax0 > x1) return;
+          if (isV) { // a filmstrip of that camera; the pieces switch_speakers turned off go dark
+            c.save(); c.beginPath(); c.rect(ax0, y + 14, ax1 - ax0, ROW_H - 14); c.clip();
+            const per = 68 / PPS;
+            for (let j = Math.floor(at.a / per); j * per < at.b; j++) c.drawImage(THUMB[tr.who], ax0 + (j * per - at.a) * PPS, y + 14, 67, ROW_H - 14);
+            const offNow = (at.turn % 2 ? 'G' : 'H') !== tr.who && t >= cutAt(at.turn);
+            c.fillStyle = offNow ? 'rgba(16,18,20,0.8)' : 'rgba(30,46,62,0.28)'; c.fillRect(ax0, y + 14, ax1 - ax0, ROW_H - 14);
+            c.restore();
+          } else if (at.pause) { c.fillStyle = '#3f7a59'; c.fillRect(ax0, y + ROW_H / 2 - 1, ax1 - ax0, 2); }
+          else {
+            c.fillStyle = '#6cc492';
+            const talking = (at.turn % 2 ? 'G' : 'H') === tr.who;
+            for (let s = at.a + 0.2; s < at.b - 0.15; s += 0.5) {
+              const clap = Math.abs(s - 3.2) < 0.3 || Math.abs(s - 4.2) < 0.3; // the two claps every clip heard
+              const a = clap ? 1 : (talking ? 0.3 + 0.7 * hash(Math.round(s * 2)) : 0.07 + 0.09 * hash(Math.round(s * 2) + 99)) * gain;
+              const bh = Math.max(2, a * ROW_H * 0.84);
+              c.fillRect(ax0 + (s - at.a) * PPS, y + ROW_H / 2 - bh / 2, 3, bh);
+            }
+          }
+        });
+        if (isV) { // the camera's own sound: only the claps are drawn, on the name strip
+          c.fillStyle = '#35516b'; c.fillRect(x0, y, x1 - x0, 14);
+          c.fillStyle = '#e8eef4'; [3.2, 4.2].forEach((s) => c.fillRect(X(s, t) + off, y + 2, 3, 10));
+          label(c, tr.label, X(6, t) + off, y + 7.5, 10.5, 600, '#d5dee6');
+          if (t >= T.cuts) for (let i = 1; i < TURNS.length - 1; i++) if (t >= cutAt(i)) { c.fillStyle = '#141414'; c.fillRect(X(TURNS[i], t) + off - 1, y, 2, ROW_H); }
+        } else {
+          chip(c, X(6, t) + off, y + 3, 58, 14, 3, 'rgba(18,30,22,0.85)'); label(c, tr.label, X(6, t) + off + 5, y + 10.5, 10.5, 600, '#cfe9d9');
+          if (t >= T.lufs) { const pop = BM.cardPop(t, T.lufs); c.globalAlpha = pop.op; chip(c, X(6, t) + off + 64, y + 3 + pop.dy * 0.4, 62, 14, 3, C.accent); label(c, '−16 LUFS', X(6, t) + off + 95, y + 10.5 + pop.dy * 0.4, 10.5, 700, '#1a120c', 'center'); c.globalAlpha = 1; }
+        }
+        PAUSES.forEach((p) => { // remove_silences: marked on every track, then closed on every track
+          const pa = X(p[0], t) + off, pb = X(p[0] + p[1], t) + off;
+          if (pb - pa > 0.5) { if (t >= T.pmark) { c.fillStyle = 'rgba(217,119,63,0.5)'; c.fillRect(pa, y, pb - pa, ROW_H); c.fillStyle = C.accent; c.fillRect(pa, y, 1.2, ROW_H); c.fillRect(pb - 1.2, y, 1.2, ROW_H); } }
+          else if (t >= T.close) { c.fillStyle = '#141414'; c.fillRect(pa - 1, y, 2, ROW_H); }
+        });
+        c.restore();
+      }
+
+      function drawTimeline(c, t) {
+        const right = TL.x + TL.w, so = subOpen(t);
+        c.fillStyle = C.panel; c.fillRect(TL.x, MID, TL.w, STATUS - MID);
+        c.fillStyle = C.bar; c.fillRect(TL.x, MID, TL.w, 42); c.fillStyle = C.line; c.fillRect(TL.x, MID, TL.w, 1); c.fillRect(TL.x, TL.ruler, TL.w, 1);
+        [[412, 1, 'arrow'], [448, 0, 'range'], [508, 0, 'razor'], [712, 1, 'magnet'], [748, 1, 'link'], [878, 0, 'mark'], [908, 0, 'note']].forEach(([x, on, kind]) => {
+          chip(c, x, 648, 30, 30, 6, on ? 'rgba(217,119,63,0.2)' : null); icon(c, kind, x + 15, 663, on ? C.accent : C.mute);
+        });
+        chev(c, 488, 663, C.mute);
+        [['Edit', 560], ['Clip', 636], ['Mark', 812]].forEach(([s, x]) => { label(c, s, x, 663.5, 14, 500, C.text); chev(c, x + 44, 663, C.mute); });
+        c.fillStyle = '#333'; [546, 622, 698, 796].forEach((x) => c.fillRect(x, 652, 1, 22));
+        c.fillStyle = '#3a3a3a'; rr(c, 1300, 661, 110, 4, 2); c.fill(); c.fillStyle = C.accent; rr(c, 1300, 661, 40, 4, 2); c.fill();
+        c.fillStyle = '#f0f0f0'; c.beginPath(); c.arc(1340, 663, 6, 0, Math.PI * 2); c.fill();
+        // ruler: a label every ten seconds
+        c.letterSpacing = '1.4px'; label(c, 'TIMELINE', 416, 699.5, 12, 600, C.mute); c.letterSpacing = '0px';
+        if (t >= T.mk[1]) { c.fillStyle = 'rgba(245,165,36,0.16)'; c.fillRect(X(PICK[0], t), TL.ruler + 1, X(PICK[1], t) - X(PICK[0], t), 30); }
+        for (let i = 0; TL.lane + i * 22.5 < right - 8; i++) {
+          const x = TL.lane + i * 22.5, major = i % 4 === 0;
+          c.fillStyle = major ? '#555' : '#363636'; c.fillRect(x, TL.ruler + (major ? 18 : 24), 1.2, major ? 12 : 6);
+          if (major) label(c, mss(i * 2.5), x + 6, TL.ruler + 12, 12.5, 500, C.mute);
+        }
+        c.fillStyle = C.line; c.fillRect(TL.x, 714, TL.w, 1); c.fillRect(TL.lane - 6, 714, 1, STATUS - 714);
+        // lanes and headers
+        c.fillStyle = '#1a1a1a';
+        if (so > 0) c.fillRect(TL.lane - 5, TL.rows, right - TL.lane + 5, SUB_H * so);
+        TRACKS.forEach((tr, i) => c.fillRect(TL.lane - 5, rowY(i, t), right - TL.lane + 5, ROW_H));
+        if (so > 0) { // the Subtitles track opens above everything and pushes the rows down
+          c.save(); c.beginPath(); c.rect(TL.x, TL.rows, TL.w, SUB_H * so + 1); c.clip();
+          c.globalAlpha = so; trackHeader(c, TL.rows, SUB_H, 'V3', C.v, 'Subtitles'); c.globalAlpha = 1;
+          const pop = BM.cardPop(t, T.subTrack + 0.15);
+          if (pop.op > 0) {
+            const px = X(playSec(t), t), xa = X(0, t), xb = X(LEN, t), iy = TL.rows + 5 + pop.dy;
+            c.globalAlpha = pop.op;
+            chip(c, xa, iy, xb - xa, SUB_H - 10, 6, 'rgba(94,196,255,0.14)', 'rgba(94,196,255,0.6)');
+            let x = xa + 8, i = 0;
+            while (x < xb - 30) { const w = 12 + hash(i++) * 20; c.fillStyle = x <= px ? C.sky : 'rgba(94,196,255,0.32)'; rr(c, x, iy + 12, w, 6, 3); c.fill(); x += w + 6; }
+            c.globalAlpha = 1;
+          }
+          c.restore();
+        }
+        TRACKS.forEach((tr, i) => trackHeader(c, rowY(i, t), ROW_H, tr.badge, tr.kind === 'v' ? C.v : C.a, tr.name, true));
+        const py = rowY(4, t) + 20;
+        if (py < 986) { label(c, '+  Video', 424, py, 14, 500, C.text); label(c, '+  Audio', 506, py, 14, 500, C.text); }
+        if (t < T.clipDrop) { // the real empty hint
+          c.strokeStyle = '#3a3a3a'; c.lineWidth = 1; c.setLineDash([4, 4]); rr(c, 800, 744, 400, 56, 8); c.stroke(); c.setLineDash([]);
+          label(c, 'Drag media here or press ⌘I to import', 816, 772.5, 13, 400, C.mute);
+          chip(c, 1072, 756, 116, 32, 7, C.chip); label(c, 'Import media...', 1130, 772.5, 13, 500, C.ink, 'center');
+        } else {
+          TRACKS.forEach((tr, i) => drawTrackClip(c, t, tr, rowY(i, t)));
+          if (t >= T.guide && t < T.back[0] + WQ[0]) { // sync_angles: the claps now sit on one line
+            const tick = BM.checkTick(t, T.guide); c.globalAlpha = Math.min(1, tick.s);
+            c.fillStyle = C.accent; [3.2, 4.2].forEach((s) => c.fillRect(X(s, t) + 0.5, rowY(0, t) - 4, 2, 4 * (ROW_H + RG) + 6)); c.globalAlpha = 1;
+          }
+        }
+        // find_highlights: the two markers, dropped on the ruler
+        T.mk.forEach((tm, i) => {
+          if (t < tm) return;
+          const pop = BM.cardPop(t, tm), x = X(PICK[i], t), y = TL.ruler + 2 - pop.dy;
+          c.globalAlpha = pop.op; c.fillStyle = C.amber; c.fillRect(x - 0.75, y + 10, 1.5, rowY(4, t) - y - 12);
+          c.beginPath(); c.moveTo(x - 6, y); c.lineTo(x + 6, y); c.lineTo(x + 6, y + 9); c.lineTo(x, y + 15); c.lineTo(x - 6, y + 9); c.closePath(); c.fill();
+          if (i === 0) { chip(c, x + 10, y, 132, 15, 3, C.amber); label(c, '1 · Best moment · 91', x + 15, y + 8, 10.5, 700, '#231703'); }
+          c.globalAlpha = 1;
+        });
+        // the playhead
+        const px = X(playSec(t), t);
+        c.fillStyle = C.play; c.fillRect(px - 1, TL.ruler + 2, 2, 988 - TL.ruler);
+        c.beginPath(); c.moveTo(px - 7, TL.ruler + 1); c.lineTo(px + 7, TL.ruler + 1); c.lineTo(px + 7, TL.ruler + 10); c.lineTo(px, TL.ruler + 17); c.lineTo(px - 7, TL.ruler + 10); c.closePath(); c.fill();
+        c.fillStyle = '#333'; rr(c, TL.lane, 992, 620, 4, 2); c.fill();
+      }
+
+      function drawStatus(c, t) {
+        c.fillStyle = '#161616'; c.fillRect(0, STATUS, W, TABS - STATUS); c.fillStyle = C.line; c.fillRect(0, STATUS, W, 1);
+        const flipped = t >= fr((T.flip + T.flipLand) / 2), hot = t >= T.close && t < T.close + 0.6;
+        let x = 420;
+        [['Format', flipped ? '1080×1920' : '1920×1080'], ['fps', '30'], ['Duration', t >= T.clipDrop ? tcode(LEN - REMOVED * closeP(t)) : tcode(0)]].forEach(([k, val], i) => {
+          label(c, k, x, 1015.5, 14.5, 400, C.mute); x += tw(k, `400 14.5px ${SANS}`) + 7;
+          label(c, val, x, 1015.5, 14.5, i === 2 ? 700 : 500, i === 2 && hot ? C.accent : (i === 2 ? C.ink : C.text), 'left', i === 2 ? MONO : SANS); x += tw(val, `${i === 2 ? 700 : 500} 14.5px ${i === 2 ? MONO : SANS}`) + 22;
+        });
+        label(c, 'All changes saved', x, 1015.5, 14.5, 400, C.mute);
+        label(c, 'Master', 1716, 1015.5, 13, 400, C.mute, 'right'); c.fillStyle = '#2e2e2e'; rr(c, 1726, 1009, 150, 5, 2); c.fill(); rr(c, 1726, 1017, 150, 5, 2); c.fill();
+        c.fillStyle = C.bar; c.fillRect(0, TABS, W, H - TABS); c.fillStyle = C.line; c.fillRect(0, TABS, W, 1);
+        ['Media', 'Edit', 'Color', 'Audio', 'Deliver'].forEach((s, i) => {
+          const tx = 760 + i * 100, on = i === 1;
+          if (on) { c.fillStyle = C.accent; c.fillRect(tx - 26, TABS, 52, 2); }
+          glyph(c, tx, 1048, on ? C.accent : C.mute); label(c, s, tx, 1066, 12, 500, on ? C.accent : C.mute, 'center');
+        });
+        glyph(c, 1850, 1055, C.text); glyph(c, 1890, 1055, C.text);
+      }
+
+      const SKILLS = [['Talking Head', 'Editing', '#6b3d2a'], ['Captions', '', '#2e4a6e'], ['Short-form Edit', '', '#5c2a4e'], ['Lower Third', '', '#2f5a45'],
+        ['Motion', 'Graphics', '#46357a'], ['Opening Title', '', '#6e5220'], ['Rough Cut from', 'Clips', '#3d3d3d'], ['Polish with', 'Transitions', '#1f5a5a']];
+      function drawPrompt(c, t) {
+        const n = typed(t), live = t >= T.promptClick && t < T.send, pr = BM.press(t, T.send - 0.1), has = n > 0 && t < T.send;
+        chip(c, PB.x, PB.y, PB.w, PB.h, PB.r, C.raised, live ? '#4d4d4d' : '#333333');
+        if (!has) {
+          label(c, 'Describe what you’d like to create... (@ to pin, / for', PB.x + 18, PB.y + 30, 17, 400, '#6e6e6e'); label(c, 'skills)', PB.x + 18, PB.y + 54, 17, 400, '#6e6e6e');
+        } else {
+          c.font = F_MSG; c.fillStyle = C.ink; c.textAlign = 'left'; c.textBaseline = 'middle';
+          c.fillText(L1.slice(0, Math.min(n, BRK)), PB.x + 18, PB.y + 30); if (n > BRK + 1) c.fillText(L2.slice(0, n - BRK - 1), PB.x + 18, PB.y + 54);
+        }
+        if (live) { const two_ = n > BRK, cx = two_ ? PRE2[Math.max(0, n - BRK - 1)] : PRE1[n]; c.fillStyle = C.ink; c.fillRect(PB.x + 18 + cx + (n ? 1.5 : -4), PB.y + (two_ ? 43 : 19), 1.6, 22); }
+        const ry = PB.y + 112;
+        label(c, '@', PB.x + 18, ry - 0.5, 15, 500, C.mute); label(c, 'Pin', PB.x + 38, ry, 14.5, 500, C.text);
+        glyph(c, PB.x + 86, ry, C.mute); label(c, 'Attach', PB.x + 100, ry, 14.5, 500, C.text);
+        c.strokeStyle = C.mute; c.lineWidth = 1.4; c.beginPath(); c.arc(PB.x + 172, ry, 7, 0, Math.PI * 2); c.stroke(); label(c, 'Range', PB.x + 186, ry, 14.5, 500, C.text);
+        chip(c, PB.x + 244, ry - 13, 26, 26, 13, null, '#3a3a3a');
+        c.save(); c.translate(PB.x + PB.w - 28, ry); c.scale(pr.s, pr.s);
+        c.fillStyle = has ? C.accent : '#383838'; c.beginPath(); c.arc(0, 0, 16, 0, Math.PI * 2); c.fill();
+        c.strokeStyle = has ? '#1a1a1a' : '#777777'; c.lineWidth = 2; c.lineJoin = 'round'; c.lineCap = 'round';
+        c.beginPath(); c.moveTo(0, 6.5); c.lineTo(0, -6.5); c.moveTo(-5.5, -1); c.lineTo(0, -6.5); c.lineTo(5.5, -1); c.stroke();
+        c.restore();
+      }
+
+      function drawAgent(c, t) {
+        c.fillStyle = C.panel; c.fillRect(AG.x, TOP, AG.w, STATUS - TOP); c.fillStyle = C.line; c.fillRect(AG.x, TOP, 1, STATUS - TOP);
+        c.fillStyle = C.bar; c.fillRect(AG.x + 1, TOP, AG.w - 1, 48);
+        drawLockup(c, { x: 1458, y: 65, w: LOCK_W * 0.8, h: 22.4, markOnly: true });
+        label(c, 'Agent', 1486, 76.5, 17, 600, C.ink); chip(c, 1546, 64, 62, 25, 12.5, null, '#3a3a3a'); label(c, 'Claude', 1577, 76.5, 13, 500, C.text, 'center');
+        label(c, '+ New', 1808, 76.5, 14, 500, C.dim, 'right'); label(c, '···', 1862, 75, 15, 700, C.mute, 'right'); label(c, '×', 1896, 76, 20, 400, C.text, 'center');
+        glyph(c, 1466, 123, C.ink); label(c, 'Chat', 1482, 123.5, 14.5, 600, C.ink); c.fillStyle = C.accent; c.fillRect(1456, 144, 64, 2);
+        label(c, '✦', 1540, 123, 13, 500, C.mute); label(c, 'Generate', 1558, 123.5, 14.5, 500, C.mute);
+        c.fillStyle = C.line; c.fillRect(AG.x, 146, AG.w, 1);
+        const lift = BM.cardLift(t, T.send); // the empty state, until something is sent
+        if (lift.op > 0.01) {
+          c.save(); c.globalAlpha = lift.op; c.translate(0, lift.dy);
+          label(c, 'What do you want to create today?', 1680, 398, 17, 500, C.ink, 'center');
+          SKILLS.forEach(([a, b, col], i) => {
+            const x = 1456 + (i % 2) * 232, y = 428 + Math.floor(i / 2) * 72;
+            chip(c, x, y, 216, 62, 10, '#1d1d1d', '#2b2b2b'); chip(c, x + 10, y + 16, 30, 30, 7, col); glyph(c, x + 25, y + 31, '#f0f0f0');
+            if (b) { label(c, a, x + 52, y + 22, 15, 500, C.ink); label(c, b, x + 52, y + 41, 15, 500, C.ink); } else label(c, a, x + 52, y + 31.5, 15, 500, C.ink);
+            if (i === 4) label(c, 'NEW', x + 204, y + 32, 10.5, 700, C.accent, 'right');
+          });
+          label(c, 'More  ›', 1680, 734, 14, 500, C.mute, 'center');
+          label(c, 'It reads the project and makes the edits. Every change', 1680, 782, 13, 400, C.mute, 'center'); label(c, 'shows as a diff you can revert.', 1680, 800, 13, 400, C.mute, 'center');
+          c.restore();
+        }
+        drawPrompt(c, t);
+        if (t >= T.send + 0.033) { // the message, risen out of the prompt box
+          const m = msgBox(t), g = Math.round(33 + 13 * m.p);
+          chip(c, m.x, m.y, m.w, m.h, m.r, `rgb(${g},${g},${g})`);
+          c.font = F_MSG; c.fillStyle = C.ink; c.textAlign = 'left'; c.textBaseline = 'middle'; c.fillText(L1, m.x + 16, m.y + 22); c.fillText(L2, m.x + 16, m.y + 46);
+        }
+        CARDS.forEach((cd, i) => { // each tool call is a card: running, then done
+          if (t < T.card[i]) return;
+          const pop = BM.cardPop(t, T.card[i]), r = cardRect(i), tick = BM.checkTick(t, T.done[i]), cx = r.x + 22, cy = r.y + r.h / 2;
+          c.save(); c.globalAlpha = pop.op; c.translate(r.x + r.w / 2, cy + pop.dy); c.scale(pop.s, pop.s); c.translate(-(r.x + r.w / 2), -cy);
+          chip(c, r.x, r.y, r.w, r.h, r.r, C.raised, tick.on ? '#343434' : 'rgba(217,119,63,0.65)');
+          if (tick.on) {
+            c.fillStyle = C.ok; c.beginPath(); c.arc(cx, cy, 9 * tick.s, 0, Math.PI * 2); c.fill();
+            c.strokeStyle = '#10261b'; c.lineWidth = 2; c.lineCap = 'round'; c.lineJoin = 'round';
+            c.beginPath(); c.moveTo(cx - 4, cy + 0.5); c.lineTo(cx - 1, cy + 3.4); c.lineTo(cx + 4.3, cy - 3); c.stroke();
+          } else {
+            c.lineWidth = 2.2; c.lineCap = 'round'; c.strokeStyle = '#3d3d3d'; c.beginPath(); c.arc(cx, cy, 8, 0, Math.PI * 2); c.stroke();
+            const a = (t - T.card[i]) * 7; c.strokeStyle = C.accent; c.beginPath(); c.arc(cx, cy, 8, a, a + 1.9); c.stroke();
+          }
+          label(c, cd.name, r.x + 42, cy + 0.5, 15, 600, C.ink, 'left', MONO);
+          label(c, tick.on ? cd.done : 'Running…', r.x + r.w - 14, cy + 0.5, 13, 500, tick.on ? C.text : C.accent, 'right');
+          c.restore();
+        });
+        if (t >= T.changes) { // every change is a diff you can revert
+          const pop = BM.cardPop(t, T.changes);
+          c.save(); c.globalAlpha = pop.op; c.translate(0, pop.dy);
+          chip(c, CH.x, CH.y, CH.w, CH.h, CH.r, '#1e1e1e', '#3a3a3a');
+          label(c, 'Changes', CH.x + 16, CH.y + 22, 15, 600, C.ink); label(c, '7 edits', CH.x + CH.w - 16, CH.y + 22, 13, 500, C.mute, 'right');
+          c.fillStyle = '#303030'; c.fillRect(CH.x, CH.y + 40, CH.w, 1);
+          CH_ROWS.forEach(([a, b], i) => {
+            const tr = T.row0 + i * T.rowStep;
+            if (t < tr) return;
+            const land = BM.wordLand(t, tr, { rise: 8 }), y = CH.y + 58 + i * 23 + land.y;
+            c.globalAlpha = pop.op * land.op;
+            c.fillStyle = C.ok; c.fillRect(CH.x + 16, y - 7, 3, 14);
+            label(c, a, CH.x + 30, y + 0.5, 14, 500, C.ink); label(c, b, CH.x + CH.w - 16, y + 0.5, 12, 500, C.mute, 'right', MONO);
+          });
+          c.globalAlpha = pop.op;
+          if (t >= T.revert) {
+            const bp = BM.cardPop(t, T.revert); c.globalAlpha = pop.op * bp.op;
+            label(c, 'On your undo stack', CH.x + 16, CH.y + CH.h - 23 + bp.dy, 13, 400, C.mute);
+            chip(c, CH.x + CH.w - 112, CH.y + CH.h - 38 + bp.dy, 96, 30, 7, '#2a2a2a', '#555555');
+            c.strokeStyle = C.ink; c.lineWidth = 1.6; c.lineCap = 'round'; c.beginPath(); c.arc(CH.x + CH.w - 92, CH.y + CH.h - 22 + bp.dy, 5.5, Math.PI * 0.9, Math.PI * 2.2); c.stroke();
+            label(c, 'Revert', CH.x + CH.w - 78, CH.y + CH.h - 22.5 + bp.dy, 14, 600, C.ink);
+          }
+          c.restore();
+        }
+      }
+
+      function drawPointer(c, t, M) {
+        const g = ghostAt(t);
+        if (g) { // four files, held as a stack
+          c.setTransform(...BM.matCanvas(M));
+          [12, 6].forEach((d) => chip(c, g.x + d, g.y + d, g.w, g.h, 6, '#22303a', 'rgba(255,255,255,0.3)'));
+          c.save(); rr(c, g.x, g.y, g.w, g.h, 6); c.clip(); c.drawImage(THUMB.H, g.x, g.y, g.w, g.h); c.restore();
+          c.strokeStyle = 'rgba(255,255,255,0.5)'; c.lineWidth = 1.2; rr(c, g.x, g.y, g.w, g.h, 6); c.stroke();
+          c.fillStyle = C.accent; c.beginPath(); c.arc(g.x + g.w + 6, g.y - 2, 11, 0, Math.PI * 2); c.fill(); label(c, '4', g.x + g.w + 6, g.y - 1.5, 13, 700, '#ffffff', 'center');
+        }
+        if (t <= T.fileIn || t >= T.send + 0.6) return;
+        const p = pointerAt(t);
+        c.setTransform(...BM.matCanvas(BM.matMultiply(M, BM.matTranslate(p.x, p.y), BM.matScale(pointerS(t)))));
+        c.fillStyle = '#ffffff'; c.strokeStyle = '#16181d'; c.lineWidth = 1.6; c.lineJoin = 'round';
+        c.beginPath(); c.moveTo(0, 0); c.lineTo(0, 22); c.lineTo(5.5, 16.5); c.lineTo(9.6, 25.5); c.lineTo(13.8, 23.4); c.lineTo(9.6, 14.5); c.lineTo(17, 14.5); c.closePath(); c.fill(); c.stroke();
+      }
+
+      function drawEnd(c, t) { // the ground opens out of the mark in the top bar; the mark becomes the name
+        const ir = irisAt(t);
+        c.setTransform(1, 0, 0, 1, 0, 0);
+        c.save(); c.beginPath(); c.arc(49, 26, ir.r, 0, Math.PI * 2); c.clip();
+        c.fillStyle = C.ground; c.fillRect(0, 0, W, H);
+        const l1 = line1(t);
+        if (l1.visible) { c.save(); c.beginPath(); c.rect(W / 2 - L1W / 2 - 20, LINE1_Y - 40, L1W + 40, 80); c.clip(); label(c, LINE1, W / 2, LINE1_Y + l1.y, 63, 600, C.ink, 'center'); c.restore(); }
+        const l2 = line2(t);
+        if (l2.visible) { c.save(); c.beginPath(); c.rect(W / 2 - L2W / 2 - 20, LINE2_Y - 26, L2W + 40, 52); c.clip(); label(c, LINE2, W / 2, LINE2_Y + l2.y, 39, 400, C.mute, 'center'); c.restore(); }
+        c.restore();
+        drawLockup(c, logoBox(t));
+      }
+
+      function draw(c, t) {
+        c.setTransform(1, 0, 0, 1, 0, 0); c.globalAlpha = 1;
+        c.fillStyle = C.ground; c.fillRect(0, 0, W, H);
+        const ending = t >= T.end, ir = ending ? irisAt(t) : null;
+        if (!(ending && ir.covered)) {
+          const M = worldMatrix(t);
+          c.setTransform(...BM.matCanvas(M));
+          drawPool(c, t); drawViewer(c, t); drawInspector(c, t); drawTimeline(c, t); drawAgent(c, t); drawStatus(c, t); drawTop(c, t);
+          drawPointer(c, t, M);
+        }
+        if (ending) drawEnd(c, t);
+      }
+
+      // ---- the frame: a 180 degree shutter, with as many sub-frames as the travel needs ------
+      const view = document.getElementById('c'), out = view.getContext('2d');
+      const scratch = document.createElement('canvas'); scratch.width = W; scratch.height = H;
+      const sc = scratch.getContext('2d');
+      const SHUTTER = 0.5 / FPS;
+      function travel(t0, t1) {
+        const a = track(t0), b = track(t1);
+        let far = BM.frameTravel(camera(t0), camera(t1));
+        for (const id in a) if (b[id] && id !== 'editor') far = Math.max(far, BM.boxTravel(a[id], b[id]));
+        return far;
+      }
+      function time(t) {
+        const open = t - SHUTTER / 2, n = BM.blurSamples(travel(open, open + SHUTTER));
+        if (n === 1) { draw(out, t); return; } // a hold is drawn once, exactly at t: dead still
+        for (let i = 0; i < n; i++) {
+          draw(sc, open + (SHUTTER * (i + 0.5)) / n);
+          out.setTransform(1, 0, 0, 1, 0, 0); out.globalAlpha = 1 / (i + 1); out.drawImage(scratch, 0, 0);
+        }
+        out.globalAlpha = 1;
+      }
+
+      // ---- what bay and its tools read -------------------------------------------------------
+      const r3 = (v) => Math.round(v * 1000) / 1000;
+      const sxAt = (t, x, y) => BM.toScreen(worldMatrix(t), x, y)[0];
+      const pan = (x) => Math.round(BM.clamp((x / (W / 2) - 1) * 0.3, -0.3, 0.3) * 100) / 100; // gentle: never past 0.3
+      window.__film = {
+        beats: [0, T.fileIn, T.toPrompt, T.send, T.out[0], T.slide[0], T.slide[1], T.slide[2], T.back[0], T.out[1], T.back[1], T.out[2], T.up, T.back[2],
+          T.out[3], T.close, T.back[3], T.out[4], T.back[4], T.out[5], T.back[5], T.out[6], T.flip, T.back[6], T.changes, T.wide, T.end].map(r3),
+        cuts: [],
+        inFrame: {
+          editor: [0, T.end], prompt: [T.promptClick, T.send], viewer: [T.out[6] + 0.5, T.back[6]],
+          logo: [T.logoLand + 0.2, DUR, 'whole'], line1: [T.line1 + 0.7, DUR, 'whole'], line2: [T.line2 + 0.7, DUR, 'whole']
+        },
+        blur: true, // time(t) draws its own motion blur, above
+        track,
+        // Every sound takes its time from the table the picture is drawn from: same event, same frame.
+        events: () => {
+          const ev = [], add = (t, what, material, gain, x, more) => ev.push(Object.assign({ t: r3(t), material, gain, pan: pan(x), what }, more || {}));
+          add(T.poolDrop, 'four files land in the media pool', 'drop', 0.4, sxAt(T.poolDrop, 200, 350), { pitch: -3 });
+          add(T.clipDrop, 'four clips land on the timeline', 'knock', 0.5, sxAt(T.clipDrop, 650, 770), { size: 1.3, brightness: 0.4 });
+          for (let i = 7; i < SENT.length; i += 8) { // one soft tick every eighth key, on a letter that shows
+            const k = SENT[i] === ' ' ? i + 1 : i;
+            add(keyTime(k), 'key ' + (k + 1) + ' (“' + SENT[k] + '”) appears', 'knock', 0.15, sxAt(keyTime(k), PB.x + 200, PB.y + 40), { size: 0.5, brightness: 0.7 });
+          }
+          add(T.send - 0.1, 'send is pressed', 'knock', 0.42, sxAt(T.send - 0.1, PB.x + PB.w - 28, PB.y + 112), { size: 1.1, brightness: 0.45 });
+          CARDS.forEach((cd, i) => {
+            add(T.card[i], cd.name + ' card appears', 'drop', 0.34, sxAt(T.card[i], 1680, 300), { pitch: -2, size: 0.8 });
+            add(T.done[i], cd.name + ' card turns to ✓', 'bell', 0.34, sxAt(T.done[i], 1680, 300), { pitch: [0, 2, 4, 5, 7, 9, 11][i], size: 0.9 }); // one step up per card
+          });
+          add(T.out[0], 'camera whips to the timeline', 'whoosh', 0.22, 800, { size: 0.9 });
+          add(T.out[6], 'camera whips to the viewer', 'whoosh', 0.22, 800, { size: 0.9 });
+          add(T.flipLand, 'the frame lands at 9:16', 'thump', 0.9, sxAt(T.flipLand, VC.x, VC.y));                 // the one big hit
+          add(T.wide, 'camera pulls back to the whole editor', 'whoosh', 0.24, 960, { size: 1.2 });
+          [12, 16, 19].forEach((p) => add(T.logoLand, 'the name lands', 'bell', 0.42, 960, { pitch: p, size: 1.6 })); // the steps resolve
+          return ev.sort((a, b) => a.t - b.t);
+        }
+      };
+      time(0);
+      window.__timelines['bay-launch'] = { time, duration: () => DUR };
+    </script>
+  </body>
+</html>

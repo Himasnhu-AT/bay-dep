@@ -1,0 +1,290 @@
+{
+ "durationSeconds": 42.3,
+ "events": [
+  {
+   "t": 1.1,
+   "material": "drop",
+   "gain": 0.4,
+   "pan": -0.23,
+   "what": "four files land in the media pool",
+   "pitch": -3
+  },
+  {
+   "t": 1.9,
+   "material": "knock",
+   "gain": 0.5,
+   "pan": -0.04,
+   "what": "four clips land on the timeline",
+   "size": 1.3,
+   "brightness": 0.4
+  },
+  {
+   "t": 3.7,
+   "material": "knock",
+   "gain": 0.15,
+   "pan": 0.05,
+   "what": "key 8 (“4”) appears",
+   "size": 0.5,
+   "brightness": 0.7
+  },
+  {
+   "t": 4.033,
+   "material": "knock",
+   "gain": 0.15,
+   "pan": 0.05,
+   "what": "key 16 (“d”) appears",
+   "size": 0.5,
+   "brightness": 0.7
+  },
+  {
+   "t": 4.333,
+   "material": "knock",
+   "gain": 0.15,
+   "pan": 0.05,
+   "what": "key 24 (“a”) appears",
+   "size": 0.5,
+   "brightness": 0.7
+  },
+  {
+   "t": 4.7,
+   "material": "knock",
+   "gain": 0.15,
+   "pan": 0.04,
+   "what": "key 33 (“f”) appears",
+   "size": 0.5,
+   "brightness": 0.7
+  },
+  {
+   "t": 4.967,
+   "material": "knock",
+   "gain": 0.15,
+   "pan": 0.04,
+   "what": "key 40 (“e”) appears",
+   "size": 0.5,
+   "brightness": 0.7
+  },
+  {
+   "t": 5.3,
+   "material": "knock",
+   "gain": 0.15,
+   "pan": 0.03,
+   "what": "key 48 (“o”) appears",
+   "size": 0.5,
+   "brightness": 0.7
+  },
+  {
+   "t": 5.667,
+   "material": "knock",
+   "gain": 0.15,
+   "pan": 0.03,
+   "what": "key 57 (“t”) appears",
+   "size": 0.5,
+   "brightness": 0.7
+  },
+  {
+   "t": 5.933,
+   "material": "knock",
+   "gain": 0.15,
+   "pan": 0.03,
+   "what": "key 64 (“d”) appears",
+   "size": 0.5,
+   "brightness": 0.7
+  },
+  {
+   "t": 6.4,
+   "material": "knock",
+   "gain": 0.42,
+   "pan": 0.25,
+   "what": "send is pressed",
+   "size": 1.1,
+   "brightness": 0.45
+  },
+  {
+   "t": 7.3,
+   "material": "drop",
+   "gain": 0.34,
+   "pan": 0.06,
+   "what": "sync_angles card appears",
+   "pitch": -2,
+   "size": 0.8
+  },
+  {
+   "t": 7.8,
+   "material": "whoosh",
+   "gain": 0.22,
+   "pan": -0.05,
+   "what": "camera whips to the timeline",
+   "size": 0.9
+  },
+  {
+   "t": 10.767,
+   "material": "bell",
+   "gain": 0.34,
+   "pan": 0.06,
+   "what": "sync_angles card turns to ✓",
+   "pitch": 0,
+   "size": 0.9
+  },
+  {
+   "t": 11.1,
+   "material": "drop",
+   "gain": 0.34,
+   "pan": 0.06,
+   "what": "find_highlights card appears",
+   "pitch": -2,
+   "size": 0.8
+  },
+  {
+   "t": 14.2,
+   "material": "bell",
+   "gain": 0.34,
+   "pan": 0.06,
+   "what": "find_highlights card turns to ✓",
+   "pitch": 2,
+   "size": 0.9
+  },
+  {
+   "t": 14.567,
+   "material": "drop",
+   "gain": 0.34,
+   "pan": 0.06,
+   "what": "switch_speakers card appears",
+   "pitch": -2,
+   "size": 0.8
+  },
+  {
+   "t": 20.767,
+   "material": "bell",
+   "gain": 0.34,
+   "pan": 0.06,
+   "what": "switch_speakers card turns to ✓",
+   "pitch": 4,
+   "size": 0.9
+  },
+  {
+   "t": 21.067,
+   "material": "drop",
+   "gain": 0.34,
+   "pan": 0.06,
+   "what": "remove_silences card appears",
+   "pitch": -2,
+   "size": 0.8
+  },
+  {
+   "t": 23.5,
+   "material": "bell",
+   "gain": 0.34,
+   "pan": 0.06,
+   "what": "remove_silences card turns to ✓",
+   "pitch": 5,
+   "size": 0.9
+  },
+  {
+   "t": 23.767,
+   "material": "drop",
+   "gain": 0.34,
+   "pan": 0.06,
+   "what": "level_voices card appears",
+   "pitch": -2,
+   "size": 0.8
+  },
+  {
+   "t": 25.967,
+   "material": "bell",
+   "gain": 0.34,
+   "pan": 0.06,
+   "what": "level_voices card turns to ✓",
+   "pitch": 7,
+   "size": 0.9
+  },
+  {
+   "t": 26.2,
+   "material": "drop",
+   "gain": 0.34,
+   "pan": 0.06,
+   "what": "add_subtitles card appears",
+   "pitch": -2,
+   "size": 0.8
+  },
+  {
+   "t": 29.467,
+   "material": "bell",
+   "gain": 0.34,
+   "pan": 0.06,
+   "what": "add_subtitles card turns to ✓",
+   "pitch": 9,
+   "size": 0.9
+  },
+  {
+   "t": 29.767,
+   "material": "drop",
+   "gain": 0.34,
+   "pan": 0.06,
+   "what": "set_canvas card appears",
+   "pitch": -2,
+   "size": 0.8
+  },
+  {
+   "t": 30.2,
+   "material": "whoosh",
+   "gain": 0.22,
+   "pan": -0.05,
+   "what": "camera whips to the viewer",
+   "size": 0.9
+  },
+  {
+   "t": 31.3,
+   "material": "thump",
+   "gain": 0.9,
+   "pan": -0.12,
+   "what": "the frame lands at 9:16"
+  },
+  {
+   "t": 33.033,
+   "material": "bell",
+   "gain": 0.34,
+   "pan": 0.06,
+   "what": "set_canvas card turns to ✓",
+   "pitch": 11,
+   "size": 0.9
+  },
+  {
+   "t": 36.2,
+   "material": "whoosh",
+   "gain": 0.24,
+   "pan": 0,
+   "what": "camera pulls back to the whole editor",
+   "size": 1.2
+  },
+  {
+   "t": 39,
+   "material": "bell",
+   "gain": 0.42,
+   "pan": 0,
+   "what": "the name lands",
+   "pitch": 12,
+   "size": 1.6
+  },
+  {
+   "t": 39,
+   "material": "bell",
+   "gain": 0.42,
+   "pan": 0,
+   "what": "the name lands",
+   "pitch": 16,
+   "size": 1.6
+  },
+  {
+   "t": 39,
+   "material": "bell",
+   "gain": 0.42,
+   "pan": 0,
+   "what": "the name lands",
+   "pitch": 19,
+   "size": 1.6
+  }
+ ],
+ "name": "Bay launch film v3 — effects",
+ "atFrame": 0,
+ "trackId": "trk_8ba631a7-acc5-47f3-85d2-71350e6b0dda"
+}
