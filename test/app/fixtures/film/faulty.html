@@ -1,0 +1,85 @@
+<!doctype html>
+<!--
+  check_film fixture: carried.html with one fault per remaining leg, so its carry still passes.
+
+  - faults: time(t) counts its calls and lets the hero drift by the count (not a function of t),
+    and throws from 11 s on.
+  - curves: `streak` crosses 200 px a frame for five frames at 2 s, with no blur declared.
+  - framing: `dot` is promised in frame from 1 to 10 s and is off frame from 4 to 5 s.
+
+  Expected from check_film: verdict fail; faults fail (impure, and 31 of 361 samples threw at
+  30 fps), curves fail (streak 200 px/frame), framing fail (dot off frame 4–4.97 s), continuity
+  pass (hero carries all three boundaries).
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { margin: 0 }
+  .card { position: absolute; left: 500px; top: 300px; width: 900px; height: 500px; border-radius: 24px }
+  #hero { position: absolute; left: 0; top: 0; width: 200px; height: 200px; border-radius: 50%; background: #ffb020 }
+  #streak { position: absolute; left: 0; top: 0; width: 100px; height: 100px; background: #ffffff }
+  #dot { position: absolute; left: 0; top: 0; width: 120px; height: 120px; border-radius: 50%; background: #ff4060 }
+</style>
+</head>
+<body>
+<div data-composition-id="film-faulty" data-duration="12" style="width:1920px;height:1080px;position:relative;overflow:hidden;background:#101014">
+  <div class="card" id="card0" style="background:#2b59c3"></div>
+  <div class="card" id="card1" style="background:#c32b59"></div>
+  <div class="card" id="card2" style="background:#2bc38a"></div>
+  <div class="card" id="card3" style="background:#8a2bc3"></div>
+  <div id="hero"></div>
+  <div id="streak"></div>
+  <div id="dot"></div>
+</div>
+<script>
+(function () {
+  var BEATS = [0, 1, 5, 7.5]
+  var EASES = [
+    function (u) { return 1 - Math.pow(1 - u, 3) },
+    function (u) { return u },
+    function (u) { return u * u * (3 - 2 * u) }
+  ]
+  var calls = 0
+  function clamp(u) { return Math.min(1, Math.max(0, u)) }
+  function beatAt(t) {
+    var beat = 0
+    for (var i = 1; i < BEATS.length; i += 1) if (t >= BEATS[i]) beat = i
+    return beat
+  }
+  // The fault: `calls` is state carried between seeks, so the same t lands in a new place.
+  function heroX(t) {
+    var x = 100 + calls * 0.05
+    for (var i = 1; i < BEATS.length; i += 1) x += 300 * EASES[i - 1](clamp((t - (BEATS[i] - 0.1)) / 0.4))
+    return x
+  }
+  function streakX(t) { return 100 + 1000 * clamp((t - 2) / (5 / 30)) }
+  function dotX(t) { return t >= 4 && t < 5 ? 1960 : 900 }
+  function time(t) {
+    if (t >= 11) throw new Error('late frames are broken')
+    calls += 1
+    var beat = beatAt(t)
+    for (var i = 0; i < BEATS.length; i += 1) document.getElementById('card' + i).style.opacity = i === beat ? '1' : '0'
+    document.getElementById('hero').style.transform = 'translate(' + heroX(t) + 'px, 60px)'
+    document.getElementById('streak').style.transform = 'translate(' + streakX(t) + 'px, 900px)'
+    document.getElementById('dot').style.transform = 'translate(' + dotX(t) + 'px, 500px)'
+  }
+  window.__timelines['film-faulty'] = { time: time, duration: function () { return 12 } }
+  window.__film = {
+    beats: BEATS,
+    inFrame: { dot: [1, 10] },
+    track: function (t) {
+      var boxes = {
+        hero: { x: heroX(t), y: 60, w: 200, h: 200, op: 1 },
+        streak: { x: streakX(t), y: 900, w: 100, h: 100, op: 1 },
+        dot: { x: dotX(t), y: 500, w: 120, h: 120, op: 1 }
+      }
+      boxes['card' + beatAt(t)] = { x: 500, y: 300, w: 900, h: 500, op: 1 }
+      return boxes
+    }
+  }
+  time(0)
+})()
+</script>
+</body>
+</html>

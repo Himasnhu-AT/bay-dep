@@ -11,6 +11,7 @@
  */
 
 import { fatalFaults, faultsOnWrite, type CompositionFault } from '@shared/composition'
+import { motionFileMessage } from '@shared/motion-file'
 import { bay } from '@/lib/bay'
 import { fail, type Handlers } from './helpers'
 import { store } from './helpers'
@@ -53,6 +54,14 @@ export async function writeComposition(
   const info = inspected.info
   const faults = faultsOnWrite(inspected.faults)
   const fatal = fatalFaults(faults)
+  // The move library: there, or the reason `BM` is not what the document expects. The reason goes
+  // first among the problems — a missing `BM` throws inside time(t), which nothing else reports.
+  const motion = written.motion
+  const motionNote = motion?.state === 'written' ? { motionLibrary: motionFileMessage(motion) } : {}
+  const problems = [
+    ...(motion && motion.state !== 'written' ? [`warning: ${motionFileMessage(motion)}`] : []),
+    ...faults.map(describe)
+  ]
 
   // Written either way — an agent fixing a composition needs the broken file on disk to edit,
   // and refusing to write would make the fix a rewrite from nothing every time.
@@ -62,7 +71,8 @@ export async function writeComposition(
       written: true,
       imported: false,
       usable: false,
-      problems: faults.map(describe),
+      problems,
+      ...motionNote,
       note:
         `The file is on disk but cannot be placed yet: ${fatal.length} fatal problem` +
         `${fatal.length === 1 ? '' : 's'}. Fix ${fatal.length === 1 ? 'it' : 'them'} and call ` +
@@ -79,7 +89,8 @@ export async function writeComposition(
       usable: true,
       compositionId: info?.compositionId,
       durationSeconds: info?.durationSeconds,
-      ...(faults.length > 0 ? { problems: faults.map(describe) } : {})
+      ...motionNote,
+      ...(problems.length > 0 ? { problems } : {})
     }
   }
 
@@ -104,7 +115,8 @@ export async function writeComposition(
     height: asset.height,
     // Reported even when nothing is fatal, because the non-fatal ones are the ones that hide:
     // a blocked network request renders as a still frame with nothing in any log.
-    ...(faults.length > 0 ? { problems: faults.map(describe) } : {}),
+    ...(problems.length > 0 ? { problems } : {}),
+    ...motionNote,
     next: `Place it with place_asset { assetId: "${asset.id}" }.`
   }
 }

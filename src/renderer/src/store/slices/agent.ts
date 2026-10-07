@@ -11,6 +11,7 @@ import { MAX_AGENT_CHECKPOINTS } from '../agent-turns'
 import type { EditorActions, EditorState } from '../types'
 import type { StoreKit } from '../kit'
 import { HISTORY_LIMIT } from '../kit'
+import { noteStep } from '../history-notes'
 
 /**
  * The log line for a think that just ended — "Thought for 2m 24s" — or null when it was too short
@@ -83,6 +84,7 @@ export function agentSlice({ set, get, restoreFiles }: StoreKit): Actions {
         .map((e) => e.id)
       // A fresh object, stamped like any edit — and the identity undo/redo recognise it by.
       const restored = { ...checkpoint.before, updatedAt: Date.now() }
+      noteStep(state.project, 'Revert the agent’s changes')
       set((current) => {
         const past = [...current.past, current.project]
         if (past.length > HISTORY_LIMIT) past.shift()

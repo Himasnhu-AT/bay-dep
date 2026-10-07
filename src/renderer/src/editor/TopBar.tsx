@@ -12,11 +12,13 @@ import {
   Undo2,
   Upload
 } from 'lucide-react'
-import { BayMark, Button, IconButton, SegmentedControl, Tooltip, ToolButton } from '@/components'
+import { Badge, BayMark, Button, IconButton, SegmentedControl, Tooltip, ToolButton } from '@/components'
+import { HOST_LABEL, hostOf } from '@shared/host'
 import { cn } from '@/lib/cn'
 import { runCommand, shortcutOf } from '@/lib/commands'
 import { useElementSize } from '@/lib/useElementSize'
 import { useEditor, type LayoutMode, type RegionId } from '@/store/editor'
+import { HistoryMenu } from './HistoryMenu'
 
 export interface TopBarProps {
   /** Export the timeline now (the quick export dialog). */
@@ -173,6 +175,8 @@ export function TopBar({ onExport, saving, regions, panelToggles }: TopBarProps)
   const toggleRegion = useEditor((state) => state.toggleRegion)
   const agentDocked = useEditor((state) => state.agentDocked)
   const setAgentDocked = useEditor((state) => state.setAgentDocked)
+  // Says where this project is edited, beside its name, when that is not here.
+  const inResolve = useEditor((state) => hostOf(state.project)) === 'resolve'
 
   const barRef = useRef<HTMLElement>(null)
   const { width } = useElementSize(barRef)
@@ -226,12 +230,23 @@ export function TopBar({ onExport, saving, regions, panelToggles }: TopBarProps)
 
       <div className="flex min-w-0 max-w-[36vw] items-center gap-2">
         <ProjectName />
+        {inResolve && (
+          <Badge tone="accent" className="no-drag">
+            <span data-project-host="resolve">{HOST_LABEL.resolve}</span>
+          </Badge>
+        )}
         <SaveButton saving={saving} />
       </div>
 
       <div className="no-drag flex min-w-0 items-center justify-end gap-0.5">
-        <LayoutSwitch />
-        <span aria-hidden="true" className="mx-1 h-4 w-px shrink-0 bg-line-strong" />
+        {/* The layout switch chooses between bay's two layouts of its own timeline (one of them
+            named after Resolve's pages); a project edited in Resolve has neither. */}
+        {!inResolve && (
+          <>
+            <LayoutSwitch />
+            <span aria-hidden="true" className="mx-1 h-4 w-px shrink-0 bg-line-strong" />
+          </>
+        )}
         <IconButton
           label="Undo"
           shortcut={shortcutOf('edit.undo')}
@@ -246,6 +261,7 @@ export function TopBar({ onExport, saving, regions, panelToggles }: TopBarProps)
           disabled={!canRedo}
           onClick={redo}
         />
+        <HistoryMenu />
         <span aria-hidden="true" className="mx-1 h-4 w-px shrink-0 bg-line-strong" />
         {/* Named "Settings", as its dialog is; Resolve calls the same thing Preferences. */}
         <ToolButton

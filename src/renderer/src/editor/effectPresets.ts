@@ -78,7 +78,8 @@ export function fadePresetActive(frames: number, items: readonly Item[]): boolea
 }
 
 export function speedPresetActive(speed: number, items: readonly Item[]): boolean {
-  return items.length > 0 && items.every((item) => Math.abs(item.speed - speed) < 1e-9)
+  // A ramped clip plays at no one speed, whatever its constant field still holds.
+  return items.length > 0 && items.every((item) => !item.keyframes?.speed?.length && Math.abs(item.speed - speed) < 1e-9)
 }
 
 /**

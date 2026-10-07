@@ -4,13 +4,14 @@
  *
  * Selected with `BAY_AGENT_RUNTIME=sdk`; the CLI runtime (`cli.ts`) stays the default. The two
  * are meant to be indistinguishable from the panel, so the sandbox here is **the CLI's sandbox,
- * imported, not restated**: the same proxy entry (`bayMcpServer`), the same allow-list
- * (`allowedToolNames`), the same built-in allow-list (`BUILT_IN_TOOLS`). A restriction added to one
+ * imported, not restated**: the same server entries (`mcpServers` — bay, and the Resolve
+ * connector for a project edited there), the same allow-list (`allowedToolNames`), the same
+ * built-in allow-list (`BUILT_IN_TOOLS`). A restriction added to one
  * reaches the other without anyone remembering to copy it. Mapped onto the SDK's options:
  *
  * | CLI flag                         | SDK option                         |
  * | -------------------------------- | ---------------------------------- |
- * | `--mcp-config` (bay only)        | `mcpServers: { bay }`              |
+ * | `--mcp-config` (bay, + Resolve)  | `mcpServers` (the same entries)    |
  * | `--strict-mcp-config`            | `strictMcpConfig: true`            |
  * | `--allowedTools …`               | `allowedTools`                     |
  * | `--tools <readers>,Skill`        | `tools: [...BUILT_IN_TOOLS]`       |
@@ -50,7 +51,7 @@ import type { Options, SDKMessage, SDKUserMessage } from '@anthropic-ai/claude-a
 import { parseAgentTuning, type AgentEvent, type AgentTuning } from '@shared/agent'
 import {
   allowedToolNames,
-  bayMcpServer,
+  mcpServers,
   BUILT_IN_TOOLS,
   turnTimeoutFor,
   type CliOptions,
@@ -110,9 +111,11 @@ export function sdkOptions(
     ...(tuning.model === 'default' ? {} : { model: tuning.model }),
     cwd: options.cwd,
     systemPrompt: options.systemPrompt,
-    mcpServers: { bay: { type: 'stdio', ...bayMcpServer(options) } },
+    mcpServers: Object.fromEntries(
+      Object.entries(mcpServers(options)).map(([name, server]) => [name, { type: 'stdio' as const, ...server }])
+    ),
     strictMcpConfig: true,
-    allowedTools: allowedToolNames(),
+    allowedTools: allowedToolNames(options),
     tools: [...BUILT_IN_TOOLS],
     permissionPrompts: 'none',
     // The agent's own working directory, which holds only bay's skills — see cli.ts.

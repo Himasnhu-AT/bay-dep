@@ -7,7 +7,7 @@
  */
 
 import { clampCutThreshold, DEFAULT_CUT_THRESHOLD, type SceneCut } from '@shared/ipc'
-import { allItems, effectiveSpeed, findAsset, itemEnd, US_PER_SECOND, type Asset, type Item } from '@shared/project'
+import { allItems, effectiveSpeed, findAsset, itemEnd, itemFrameAtSource, plainTime, US_PER_SECOND, type Asset, type Item } from '@shared/project'
 import { bay } from '@/lib/bay'
 import { fail, project, resolveAsset, resolveItem, timeline, ToolError, type Handlers } from './helpers'
 
@@ -42,6 +42,14 @@ async function cutsOf(asset: Asset, threshold: number | undefined): Promise<Scen
  * Null when the clip does not play it.
  */
 export function cutFrameOnItem(item: Item, us: number, fps: number): number | null {
+  if (!plainTime(item)) {
+    // The same rule through the one mapping: the first timeline frame on the far side of the
+    // cut — at or after it forwards, before it for a reversed clip, which crosses it going down.
+    const boundary = itemFrameAtSource(item, us, fps)
+    if (!Number.isFinite(boundary)) return null
+    const frame = item.from + (item.reverse ? Math.floor(boundary + 1e-6) : Math.ceil(boundary - 1e-6))
+    return frame >= item.from && frame < itemEnd(item) ? frame : null
+  }
   if (us < item.sourceStartUs) return null
   const elapsedSeconds = (us - item.sourceStartUs) / effectiveSpeed(item.speed) / US_PER_SECOND
   const frame = item.from + Math.ceil(elapsedSeconds * fps - 1e-6)

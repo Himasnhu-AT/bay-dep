@@ -231,12 +231,14 @@ export const RESOURCES: readonly ResourceSpec[] = [
   },
   {
     uri: 'bay://guide/motion-design',
-    name: 'Motion design: a film as a program',
+    name: 'Motion design: one film, carried',
     description:
-      'Read before a launch film, promo or title sequence: a canvas program drawn as a function ' +
-      'of time — a protagonist, morphs instead of fades, the UI redrawn and choreographed, ' +
-      'meaning in the transitions — with a tested kit (curves, spring, masked words, scramble, ' +
-      'tabular count-ups, morphing boxes, cursor and tap, sub-frame motion blur).',
+      'Read before a launch film, promo, title sequence or any graphic with more than one beat: ' +
+      'how a film is planned (measure the reference, three concepts, a beat sheet of rhythm and ' +
+      'carry), the rules, every move in the BM library (bay-motion.js) with which carry suits ' +
+      'which boundary and the curves by t80, the window.__film contract with what each ' +
+      'check_film leg fails on and where it is blind, sound with score_sfx, and a tested kit: a ' +
+      'whole film on BM with a keyed camera, three carried boundaries and motion blur.',
     mimeType: 'text/markdown'
   }
 ] as const

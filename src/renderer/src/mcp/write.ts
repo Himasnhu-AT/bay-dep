@@ -32,10 +32,15 @@ import { describeFont } from '@shared/fonts'
 import { linkedPartners, withLinked } from '@shared/links'
 import { cutoutPartner } from '@shared/behind-subject'
 import { itemRippleNote, planItemRipple } from '@shared/item-ripple'
-import { planSpeed, retimedLength, type SpeedPlan } from '@shared/speed'
+import { planRetime, planSpeed, retimedLength, type RetimeChange, type SpeedPlan } from '@shared/speed'
+import { footageFramesOf, readSpeedRamp } from '@shared/speed-ramp'
+import { plainTime } from '@shared/project'
+import { retimeReport } from './retime'
 import { asBlendMode, lookWarnings, mergeAdjustments } from './adjustments'
 import { audioFinishPatch, audioFinishReport } from './audioFinish'
 import { GRADEABLE_KINDS, gradeWarnings, mergeGrade } from './grade'
+import { mergeMasks } from './masks'
+import { ADJUSTMENT_UNREAD_ARGS, isAdjustmentAsset } from '@shared/adjustment-layer'
 import { coerce } from '@shared/composition'
 import { activeTimeline, isCropped, normaliseCrop } from '@shared/project'
 import { bay } from '@/lib/bay'
@@ -54,6 +59,7 @@ import {
 import { frameOrPlayhead, itemsCrossing } from './read'
 import { mergeTextStyle } from './textStyle'
 import { describeKeyframes, mergeKeyframes } from '@shared/keyframes'
+import { describeAnimation, mergeAnimation, transitionEnds } from '@shared/animation'
 import { KEYFRAME_PROPERTIES } from '@shared/project'
 
 export async function importMedia(args: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -189,7 +195,7 @@ export function placeAsset(args: Record<string, unknown>): Record<string, unknow
 }
 
 /** edit_item arguments that set a picture field — on a subject cut-out, its clip's (`CUTOUT_PICTURE_FIELDS`). */
-const PICTURE_ARGS = ['left', 'top', 'width', 'height', 'opacity', 'rotation', 'scale', 'crop', 'keyframes', 'grade', 'adjustments', 'fadeInFrames', 'fadeOutFrames'] as const
+const PICTURE_ARGS = ['left', 'top', 'width', 'height', 'opacity', 'rotation', 'scale', 'crop', 'keyframes', 'grade', 'adjustments', 'fadeInFrames', 'fadeOutFrames', 'masks', 'animation'] as const
 
 export function editItem(args: Record<string, unknown>): Record<string, unknown> {
   const { item, track } = resolveItem(String(args.itemId))
@@ -204,6 +210,19 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
         `${item.id} is the subject cut-out of clip ${clip.id} and draws with that clip's picture, so ${picture.join(', ')} ` +
           `must be set on the clip: edit_item({ itemId: "${clip.id}", … }). The cut-out follows it — zoom, crop, keyframes and grade included.`,
         'This is the subject cut-out of the clip under the title. Select that clip to change its framing, crop, keyframes or grade — the cut-out follows it.'
+      )
+    }
+  }
+
+  // An adjustment layer always covers the whole frame and has no source: a field it does not
+  // read would be stored, read back as set, and change nothing.
+  if (isAdjustmentAsset(findAsset(project(), item.assetId))) {
+    const unread = ADJUSTMENT_UNREAD_ARGS.filter((key) => args[key] !== undefined)
+    if (unread.length > 0) {
+      fail(
+        `${item.id} is an adjustment layer: it always covers the whole frame and has no footage or sound of its own, so ${unread.join(', ')} ` +
+          `${unread.length === 1 ? 'does' : 'do'} nothing on it. To limit where it acts, give it masks (fractions of the frame); to change how strongly, opacity. ` +
+          `It takes from, durationInFrames, trackId, opacity, fades, grade, adjustments, masks and opacity keyframes.`
       )
     }
   }
@@ -234,7 +253,43 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
     fail(`speed must be greater than 0; got ${JSON.stringify(args.speed)}.`)
   }
   let speedPlan: SpeedPlan | null = null
-  if (args.speed !== undefined && args.durationInFrames === undefined) {
+  // Reverse and a speed ramp go through the same plan as a constant speed (`planRetime`): the
+  // clip keeps its footage, so a ramp changes its length. They are planned against the clip where
+  // it is, so a move or a hand-set length belongs in a call of its own.
+  let retime: RetimeChange | null = null
+  if (args.reverse !== undefined || args.speedRamp !== undefined) {
+    const what = [args.reverse !== undefined ? 'reverse' : null, args.speedRamp !== undefined ? 'speedRamp' : null].filter(Boolean).join(' and ')
+    const clash = (['from', 'trackId', 'durationInFrames', 'sourceStartSeconds'] as const).filter((key) => args[key] !== undefined)
+    if (clash.length > 0) {
+      fail(
+        `${what} is planned against the clip where it is, so it cannot share a call with ${clash.join(', ')}. ` +
+          `Make two calls: edit_item({ itemId: "${item.id}", ${clash[0]}: … }) first, then ${what}.`
+      )
+    }
+    if (args.speedRamp !== undefined && args.speedRamp !== null && args.speed !== undefined) {
+      fail(
+        'speedRamp is the clip\'s speed over its whole length, so speed has nothing left to set: its keys are absolute rates ' +
+          '(1 is source speed). Drop speed, or drop speedRamp for one constant rate.'
+      )
+    }
+    const footageAsset = findAsset(project(), item.assetId)
+    if (!footageAsset || !(footageAsset.durationUs > 0)) {
+      fail(
+        `${item.id} plays "${footageAsset?.name ?? item.assetId}", which has no footage to retime — a still, a title or a module ` +
+          `reads the same picture at any speed and in either direction. ${what} applies to video and audio clips.`
+      )
+    }
+    retime = {}
+    if (args.reverse !== undefined) retime.reverse = args.reverse as boolean
+    if (args.speed !== undefined) retime.speed = Number(args.speed)
+    if (args.speedRamp !== undefined) {
+      const read = readSpeedRamp(args.speedRamp, footageFramesOf(item), timeline().fps)
+      if (!read.ok) fail(read.error)
+      retime.ramp = read.keys
+    }
+    speedPlan = planRetime(project(), timeline(), item.id, retime, { ripple: args.ripple === true })
+    if (speedPlan) durationInFrames = speedPlan.length
+  } else if (args.speed !== undefined && args.durationInFrames === undefined) {
     const speed = Number(args.speed)
     if (from === item.from && destination.id === track.id) {
       speedPlan = planSpeed(project(), timeline(), item.id, speed, { ripple: args.ripple === true })
@@ -333,7 +388,9 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
   // refused, and the distinction matters: pushing a clip's read point forward to give it
   // handles for a transition does exactly this, so refusing it would block the workflow the
   // field was added for. The clip still plays; it runs out early.
-  if (sourceAsset && sourceAsset.durationUs > 0) {
+  // A reversed or ramped clip's footage is not `start + length × speed`; its length is planned
+  // against its footage above, and its edges are trimmed through `trim_item`.
+  if (sourceAsset && sourceAsset.durationUs > 0 && plainTime(item) && !retime) {
     const startUs = patch.sourceStartUs ?? item.sourceStartUs
     const givenSpeed = args.speed !== undefined ? Number(args.speed) : item.speed
     const speed = givenSpeed > 0 ? givenSpeed : 1
@@ -442,6 +499,11 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
     }
     patch.grade = mergeGrade(item.grade, args.grade, (id) => findAsset(project(), id))
   }
+  // Shape masks: checked in `masks.ts` (and `@shared/shape-mask`), which names the bad field and
+  // its legal range. The clip's subject mask, if it has one, is kept.
+  if (args.masks !== undefined) {
+    patch.masks = mergeMasks(item, findAsset(project(), item.assetId), args.masks)
+  }
   if (args.blendMode !== undefined) {
     const spec = findTool('edit_item')
     const allowed =
@@ -476,10 +538,29 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
       from,
       durationInFrames,
       hasPicture: track.kind === 'video',
-      hasAudio: Boolean(asset?.hasAudio) || asset?.kind === 'html'
+      hasAudio: Boolean(asset?.hasAudio) || asset?.kind === 'html',
+      isText: asset?.kind === 'text',
+      hasSource: track.kind === 'video' && asset?.kind !== 'text',
+      item
     })
     if (!merged.ok) fail(merged.error, merged.userMessage)
     patch.keyframes = merged.keyframes
+  }
+
+  // Animation presets: checked against the clip as it will be after this call, like the keys.
+  const presetNotes: string[] = []
+  if (args.animation !== undefined) {
+    const asset = findAsset(project(), item.assetId)
+    const merged = mergeAnimation(item.animation, args.animation, {
+      itemId: item.id,
+      durationInFrames,
+      fps: timeline().fps,
+      hasPicture: track.kind === 'video',
+      isText: asset?.kind === 'text'
+    })
+    if (!merged.ok) fail(merged.error)
+    patch.animation = merged.animation
+    presetNotes.push(...merged.notes)
   }
 
   const fadeIn = patch.fadeInFrames ?? item.fadeInFrames
@@ -506,7 +587,8 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
       // the patch without them, so the length is not applied twice.
       const { durationInFrames: _length, ...rest } = patch
       store().patchItem(item.id, rest, { linked })
-      store().setClipSpeed(item.id, speedPlan.speed, { ripple: args.ripple === true })
+      if (retime) store().retimeClip(item.id, retime, { ripple: args.ripple === true })
+      else store().setClipSpeed(item.id, speedPlan.speed, { ripple: args.ripple === true })
     } else {
       store().patchItem(item.id, patch, { linked })
     }
@@ -523,6 +605,8 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
     ...(speedReport?.warning ? [speedReport.warning] : []),
     ...(sourceTailWarning ? [sourceTailWarning] : []),
     ...shadowedByKeys(args, after.item),
+    ...presetNotes,
+    ...presetsSetAside(after.item),
     ...gradeWarnings(after.item.grade, findAsset(project(), after.item.assetId)),
     ...sound.warnings,
     ...look.warnings
@@ -536,6 +620,7 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
     layout: { ...after.item.layout },
     volume: after.item.volume,
     speed: after.item.speed,
+    ...retimeReport(after.item, timeline().fps),
     fadeInFrames: after.item.fadeInFrames,
     fadeOutFrames: after.item.fadeOutFrames,
     // Seconds, matching the unit the argument is in. Reporting microseconds from a surface
@@ -547,9 +632,11 @@ export function editItem(args: Record<string, unknown>): Record<string, unknown>
     ...(after.item.adjustments ? { adjustments: after.item.adjustments } : {}),
     ...(after.item.blendMode ? { blendMode: after.item.blendMode } : {}),
     ...(after.item.grade ? { grade: after.item.grade } : {}),
+    ...(after.item.masks ? { masks: after.item.masks } : {}),
     ...(after.item.keyframes
       ? { keyframes: after.item.keyframes, animation: describeKeyframes(after.item) }
       : {}),
+    ...(after.item.animation ? { presets: { ...after.item.animation, plays: describeAnimation(after.item, transitionEnds(timeline(), after.item.id)) } } : {}),
     ...(look.filter !== null ? { filter: look.filter } : {}),
     ...(sound.report ?? {}),
     ...linkReport(after.item.id),
@@ -575,11 +662,11 @@ function describeSpeedPlan(plan: SpeedPlan): { report: Record<string, unknown>; 
   const clamp = plan.clampedBy
   const warning =
     clamp?.kind === 'next-clip'
-      ? `At ${plan.speed}x the clip needs ${plan.wanted} frames to play the same footage, but ${clamp.itemId} starts at ` +
+      ? `${plan.ramp ? 'On this ramp' : `At ${plan.speed}x`} the clip needs ${plan.wanted} frames to play the same footage, but ${clamp.itemId} starts at ` +
         `frame ${clamp.at} on ${name(clamp.trackId)}, so it is ${plan.length} frames and plays less of its source. ` +
         `Pass ripple: true to move the later clips instead.`
       : clamp?.kind === 'footage'
-        ? `Only ${clamp.available} frames of footage remain from the in-point at ${plan.speed}x, so the clip is ` +
+        ? `Only ${clamp.available} frames of footage remain from the in-point ${plan.ramp ? 'on this ramp' : `at ${plan.speed}x`}, so the clip is ` +
           `${plan.length} frames, not ${plan.wanted}.`
         : plan.outOfSyncTrackIds.length > 0
           ? itemRippleNote(plan.rippledTrackIds.map(name), plan.outOfSyncTrackIds.map(name))
@@ -588,11 +675,52 @@ function describeSpeedPlan(plan: SpeedPlan): { report: Record<string, unknown>; 
 }
 
 /**
+ * A preset on an end a transition crosses: stored, and not played while the transition is there.
+ * Said, for the same reason a static field under keys is — it reads back as accepted.
+ */
+function presetsSetAside(item: Item): string[] {
+  const animation = item.animation
+  if (!animation || (!animation.in && !animation.out)) return []
+  const ends = transitionEnds(timeline(), item.id)
+  const out: string[] = []
+  if (ends.head && animation.in) {
+    out.push(
+      `animation.in ("${animation.in.kind}") is stored but does not play: a transition crosses this clip's first frame, ` +
+        `and the transition decides how it arrives. remove_transition to let the preset play.`
+    )
+  }
+  if (ends.tail && animation.out) {
+    out.push(
+      `animation.out ("${animation.out.kind}") is stored but does not play: a transition crosses this clip's last frame, ` +
+        `and the transition decides how it leaves. remove_transition to let the preset play.`
+    )
+  }
+  return out
+}
+
+/** Where a keyable property's static value arrives in `edit_item`'s arguments. */
+function staticArg(args: Record<string, unknown>, property: string): unknown {
+  const nested = (group: string, key: string): unknown => {
+    const holder = args[group]
+    return typeof holder === 'object' && holder !== null ? (holder as Record<string, unknown>)[key] : undefined
+  }
+  if (property.startsWith('crop') && property.length > 4) return nested('crop', property.charAt(4).toLowerCase() + property.slice(5))
+  if (property === 'fontSize' || property === 'letterSpacing') return nested('text', property)
+  if (args[property] !== undefined) return args[property]
+  return nested('adjustments', property)
+}
+
+/**
  * A static field set in this call on a property whose keys decide it at every frame: stored, and
  * drawn nowhere. Said, because it reads back as accepted and changes nothing on screen.
  */
-function shadowedByKeys(args: Record<string, unknown>, item: Item): string[] {
+function shadowedByKeys(rawArgs: Record<string, unknown>, item: Item): string[] {
   const out: string[] = []
+  const args: Record<string, unknown> = {}
+  for (const property of KEYFRAME_PROPERTIES) {
+    const given = staticArg(rawArgs, property)
+    if (given !== undefined) args[property] = given
+  }
   for (const property of KEYFRAME_PROPERTIES) {
     if (args[property] === undefined) continue
     const keys = item.keyframes?.[property]
@@ -846,13 +974,29 @@ export function setPlayhead(args: Record<string, unknown>): Record<string, unkno
   }
 }
 
-export function undo(): Record<string, unknown> {
+export function undo(args: Record<string, unknown> = {}): Record<string, unknown> {
   const state = store()
+  const before = timelineDuration(timeline())
+  const itemsBefore = allItems(timeline()).length
+  if (args.position !== undefined) {
+    // To a point in the history (`read_history`), back or forward: as many undos or redos as
+    // that takes, each a real one. Refused, with the range there is, for a point that is not.
+    const was = state.past.length
+    const jumped = state.jumpToHistory(Number(args.position))
+    if ('error' in jumped) fail(`${jumped.error} Call read_history for the positions.`)
+    const after = timeline()
+    return {
+      position: jumped.position,
+      undid: Math.max(0, was - jumped.position),
+      redid: Math.max(0, jumped.position - was),
+      remainingUndoSteps: store().past.length,
+      timeline: { durationInFrames: timelineDuration(after), itemCount: allItems(after).length },
+      changed: { durationWas: before, itemCountWas: itemsBefore }
+    }
+  }
   if (state.past.length === 0) {
     fail('There is nothing to undo — no change has been made to this project yet.')
   }
-  const before = timelineDuration(timeline())
-  const itemsBefore = allItems(timeline()).length
   state.undo()
   const after = timeline()
   return {
@@ -875,5 +1019,5 @@ export const handlers: Handlers = {
   remove_range: (args) => removeRange(args),
   add_track: (args) => addTrack(args),
   set_playhead: (args) => setPlayhead(args),
-  undo: () => undo(),
+  undo: (args) => undo(args),
 }

@@ -28,9 +28,11 @@ import type { AgentEntry, AgentEvent, AgentProvider, AgentTuning } from '@shared
 import type { AgentAttachmentInput } from '@shared/agent-attachments'
 import type { McpToolCall, McpToolResult } from '@shared/mcp'
 import type { Project } from '@shared/project'
+import type { AutosaveTarget, OpenedProject, RecoveryOffer } from '@shared/autosave'
 import type { WhisperDownload } from '@shared/whisper'
 import type { VisionStatus } from '@shared/visual-search'
 import type { AccessStatus } from '@shared/access'
+import type { ProjectHost, ResolveStatus } from '@shared/host'
 import type { UpdateStatus } from '@shared/update'
 
 const api: BayApi = {
@@ -95,8 +97,10 @@ const api: BayApi = {
     saveCaptions: (defaultName: string, text: string) =>
       ipcRenderer.invoke(IPC.mediaSaveCaptions, defaultName, text) as Promise<string | null>,
     freezeFrame: (request) => ipcRenderer.invoke(IPC.mediaFreezeFrame, request),
+    scoreSfx: (name, score) => ipcRenderer.invoke(IPC.mediaScoreSfx, name, score),
     subjectMatte: (request) => ipcRenderer.invoke(IPC.mediaSubjectMatte, request),
     subjectMatteIndex: (key) => ipcRenderer.invoke(IPC.mediaSubjectMatteIndex, key),
+    audioEffectBake: (request) => ipcRenderer.invoke(IPC.mediaAudioEffectBake, request),
     pathForFile: (file: File) => {
       // A `File` is one of the few complex objects contextBridge passes through intact
       // rather than proxying, which is what makes this work at all. It throws for a File
@@ -159,7 +163,7 @@ const api: BayApi = {
   },
 
   agent: {
-    start: (options?: { provider?: AgentProvider; tuning?: AgentTuning }) => ipcRenderer.invoke(IPC.agentStart, options),
+    start: (options?: { provider?: AgentProvider; tuning?: AgentTuning; host?: ProjectHost }) => ipcRenderer.invoke(IPC.agentStart, options),
     configure: (tuning: AgentTuning) => ipcRenderer.invoke(IPC.agentConfigure, tuning),
     providers: () => ipcRenderer.invoke(IPC.agentProviders),
     send: (text: string, attachments?: AgentAttachmentInput[]) => ipcRenderer.invoke(IPC.agentSend, text, attachments),
@@ -185,6 +189,7 @@ const api: BayApi = {
     writeGenerated: (name, html) => ipcRenderer.invoke(IPC.compositionWriteGenerated, name, html),
     import: (paths) => ipcRenderer.invoke(IPC.compositionImport, paths),
     frameAt: (request) => ipcRenderer.invoke(IPC.compositionFrameAt, request),
+    film: (request) => ipcRenderer.invoke(IPC.compositionFilm, request),
     release: (assetId) => ipcRenderer.invoke(IPC.compositionRelease, assetId)
   },
 
@@ -200,8 +205,19 @@ const api: BayApi = {
     recent: () => ipcRenderer.invoke(IPC.projectRecent) as Promise<RecentProject[]>,
     autosave: (project: Project) =>
       ipcRenderer.invoke(IPC.projectAutosave, project) as Promise<void>,
+    recovery: (opened: OpenedProject) =>
+      ipcRenderer.invoke(IPC.projectRecovery, opened) as Promise<RecoveryOffer | null>,
+    unsaved: () => ipcRenderer.invoke(IPC.projectUnsaved) as Promise<RecoveryOffer[]>,
+    recover: (target: AutosaveTarget) => ipcRenderer.invoke(IPC.projectRecover, target) as Promise<Project>,
+    discardRecovery: (target: AutosaveTarget) =>
+      ipcRenderer.invoke(IPC.projectDiscardRecovery, target) as Promise<void>,
+    revealRecovery: (target: AutosaveTarget) =>
+      ipcRenderer.invoke(IPC.projectRevealRecovery, target) as Promise<void>,
+    setAsideRecovery: (target: AutosaveTarget) =>
+      ipcRenderer.invoke(IPC.projectSetAsideRecovery, target) as Promise<string>,
     launchRequest: () => ipcRenderer.invoke(IPC.projectLaunchRequest) as Promise<Project | null>,
-    create: () => ipcRenderer.invoke(IPC.projectCreate) as Promise<Project>,
+    create: (options?: { host?: ProjectHost }) =>
+      ipcRenderer.invoke(IPC.projectCreate, options) as Promise<Project>,
     forget: (filePath: string) => ipcRenderer.invoke(IPC.projectForget, filePath) as Promise<void>,
     reveal: (filePath: string) => ipcRenderer.invoke(IPC.projectReveal, filePath) as Promise<void>,
     rename: (filePath: string, name: string) =>
@@ -211,13 +227,17 @@ const api: BayApi = {
     trash: (filePath: string) => ipcRenderer.invoke(IPC.projectTrash, filePath) as Promise<void>
   },
 
+  resolve: {
+    status: () => ipcRenderer.invoke(IPC.resolveStatus) as Promise<ResolveStatus>,
+    open: () => ipcRenderer.invoke(IPC.resolveOpen) as Promise<{ ok: boolean; error?: string }>
+  },
   export: {
     start: (request: ExportRequest) =>
       ipcRenderer.invoke(IPC.exportStart, request) as Promise<ExportJob>,
     pushFrame: (frame: ExportFrame) =>
       ipcRenderer.invoke(IPC.exportPushFrame, frame) as Promise<void>,
-    finish: (jobId: string) => ipcRenderer.invoke(IPC.exportFinish, jobId) as Promise<void>,
-    cancel: (jobId: string) => ipcRenderer.invoke(IPC.exportCancel, jobId) as Promise<void>,
+    finish: (jobId: string, summary?: { incomplete: boolean }) => ipcRenderer.invoke(IPC.exportFinish, jobId, summary) as Promise<void>,
+    cancel: (jobId, reason) => ipcRenderer.invoke(IPC.exportCancel, jobId, reason) as Promise<void>,
     chooseOutputPath: (defaultName: string, format: ExportFormat) =>
       ipcRenderer.invoke(IPC.exportChoosePath, defaultName, format) as Promise<string | null>,
     reveal: (outputPath: string) => ipcRenderer.invoke(IPC.exportReveal, outputPath) as Promise<boolean>,
@@ -275,8 +295,6 @@ const api: BayApi = {
     cancelSignIn: () => ipcRenderer.invoke(IPC.accessCancelSignIn),
     signOut: () => ipcRenderer.invoke(IPC.accessSignOut),
     recheck: () => ipcRenderer.invoke(IPC.accessRecheck),
-    requestAccess: () => ipcRenderer.invoke(IPC.accessRequestAccess),
-    refer: (email: string) => ipcRenderer.invoke(IPC.accessRefer, email),
     onChange: (listener: (status: AccessStatus) => void) => {
       const handler = (_event: unknown, payload: AccessStatus): void => listener(payload)
       ipcRenderer.on(IPC.accessChanged, handler)
@@ -296,6 +314,13 @@ const api: BayApi = {
     }
   },
 
+  telemetry: {
+    status: () => ipcRenderer.invoke(IPC.telemetryStatus) as ReturnType<BayApi['telemetry']['status']>,
+    set: (which, on) => ipcRenderer.invoke(IPC.telemetrySet, which, on) as ReturnType<BayApi['telemetry']['set']>,
+    dismissNotice: () => ipcRenderer.invoke(IPC.telemetryDismissNotice) as ReturnType<BayApi['telemetry']['dismissNotice']>,
+    track: (name, props) => ipcRenderer.send(IPC.telemetryTrack, name, props),
+    reportError: (report) => ipcRenderer.send(IPC.telemetryReportError, report)
+  },
   window: {
     minimise: () => ipcRenderer.invoke(IPC.windowMinimise) as Promise<void>,
     toggleMaximise: () => ipcRenderer.invoke(IPC.windowToggleMaximise) as Promise<void>,

@@ -24,6 +24,7 @@ import {
   transitionProgress
 } from './project'
 import { animatedVolumeAt, volumeMayBeAudible } from './keyframes'
+import { retimeSound } from './retime-sound'
 
 function clamp01(value: number): number {
   if (!Number.isFinite(value)) return 0
@@ -349,6 +350,9 @@ export function itemAudioGainAt(
   // A picture whose sound was detached onto an audio item plays none of its own: that item is the
   // one place the sound comes from, in preview and in export alike.
   if (item.audioDetached) return 0
+  // A clip on a speed ramp is silent, in the preview and the export alike (`retimeSound`): this is
+  // the one function both read, so neither can play what the other does not.
+  if (retimeSound(item).mutedEverywhere) return 0
   const level = animatedVolumeAt(item, frame)
   const volume = Number.isFinite(level) ? Math.max(0, Math.min(2, level)) : 1
   if (volume === 0) return 0

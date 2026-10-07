@@ -24,7 +24,6 @@ export const OPEN_WHILE_LOCKED: ReadonlySet<string> = new Set([
   'accessCancelSignIn',
   'accessSignOut',
   'accessRecheck',
-  'accessRequestAccess',
   // Losing access mid-session must not cost the user their work: the renderer writes the open
   // project to its autosave sidecar at the moment it locks. The sidecar is crash recovery — it
   // never overwrites a project file and opens no dialog — so allowing it opens nothing else.
@@ -35,7 +34,13 @@ export const OPEN_WHILE_LOCKED: ReadonlySet<string> = new Set([
   'updateStatus',
   'updateCheck',
   'updateDownload',
-  'updateInstall'
+  'updateInstall',
+  // Telemetry's switches and its notice: bay sends usage counts and crash reports from launch,
+  // before anyone signs in, so the notice on the sign-in screen must be able to say so and turn
+  // either off. These read and write two switches in main's database and nothing else.
+  'telemetryStatus',
+  'telemetrySet',
+  'telemetryDismissNotice'
 ])
 
 /** Refusal text for a call on `channel` now, or null when the call may run. */

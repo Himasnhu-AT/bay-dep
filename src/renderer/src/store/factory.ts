@@ -18,8 +18,11 @@ import {
 let idCounter = 0
 export function newId(prefix: string): string {
   idCounter += 1
-  const random = Math.random().toString(36).slice(2, 8)
-  return `${prefix}_${Date.now().toString(36)}${idCounter.toString(36)}${random}`
+  const random = Math.random().toString(36).slice(2, 8).padEnd(6, '0')
+  // The random part comes first. Tools accept an id's first 10 characters, and with the time
+  // first every id made in the same second began alike — a placed video and the sound clip made
+  // with it shared their first 12, so the prefix the tools promise matched both.
+  return `${prefix}_${random}${Date.now().toString(36)}${idCounter.toString(36)}`
 }
 
 export function makeTrack(kind: TrackKind, index: number): Track {

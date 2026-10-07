@@ -9,6 +9,7 @@ import { DebugHud } from './DebugHud'
 import { centreOfScroll, scrollForCentre, viewerSize } from './viewer/geometry'
 import { Guides } from './viewer/Guides'
 import { TransformOverlay } from './viewer/TransformOverlay'
+import { MaskOverlay } from './viewer/MaskOverlay'
 
 /**
  * The programme monitor.
@@ -109,6 +110,8 @@ export function Preview(): ReactNode {
         <canvas ref={canvasRef} role="img" aria-label="Programme preview" className="block size-full" />
         <Guides safeAreas={safeAreas} grid={grid} />
         {!empty && <TransformOverlay scale={scale} canvas={canvas} />}
+        {/* Above the transform handles: while a mask is being edited, the pointer is the mask's. */}
+        {!empty && <MaskOverlay scale={scale} />}
         {empty && (
           <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 text-center">
             <Film aria-hidden="true" className="size-6 text-ink-2" />

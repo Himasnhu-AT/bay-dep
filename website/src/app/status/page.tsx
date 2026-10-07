@@ -38,6 +38,10 @@ const built = [
     body: "Claude Code in a panel, with the editor's tools and nothing else. It edits directly, and every turn that changes the project ends with a list of what changed and a Revert button. Turn on Ask before editing and it proposes a plan instead, you approve it on a card, and exactly that runs. Either way it renders the frames it changed and looks at them before it reports back.",
   },
   {
+    title: "Usage and crash reports, with a switch each",
+    body: "The app sends this site anonymous usage events and crash reports, on by default. Each has its own switch in Preferences › Privacy. They carry a random install ID, the app and macOS versions and the chip, never a project, media, a render, a file path, a prompt or your email address, and the site strips home-folder paths out of a crash's text before storing it.",
+  },
+  {
     title: "The agent endpoint",
     body: "Every editing operation over the Model Context Protocol, to Claude Code or any other client on this Mac, with a three-tool mode for clients that do not search their tools. Frames come back as images. Any edit can be checked with a dry run first.",
   },
@@ -143,18 +147,12 @@ export default function StatusPage() {
             >
               download
             </a>{" "}
-            is a notarized disk image for Macs with Apple silicon; there is no
-            Intel, Windows or Linux build. Anyone can download it, but{" "}
-            {product.name} is by invitation and you need access to sign in: you
-            can{" "}
-            <a
-              href="/waitlist"
-              className="font-medium text-accent-ink underline decoration-accent-ink/40 underline-offset-4 transition-colors hover:text-ink"
-            >
-              ask for access
-            </a>
-            . It is {product.status.toLowerCase()}, so expect the rough edges
-            listed above.
+            is a notarized disk image for macOS on Apple silicon; there is no
+            Intel, Windows or Linux build. Anyone can download it. The first
+            time it opens it asks you to sign in with Google, and any account
+            with a verified address gets in. It is{" "}
+            {product.status.toLowerCase()}, so expect the rough edges listed
+            above.
           </p>
         </Reveal>
       </Wrap>

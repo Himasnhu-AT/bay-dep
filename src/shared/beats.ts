@@ -9,7 +9,7 @@
  * the frame a drag snaps to.
  */
 
-import { effectiveSpeed, itemEnd, type Frames, type Item, type Micros, type Project, type Timeline, US_PER_SECOND } from './project'
+import { effectiveSpeed, itemEnd, itemFrameAtSource, plainTime, type Frames, type Item, type Micros, type Project, type Timeline, US_PER_SECOND } from './project'
 
 /**
  * Bumped whenever the analysis changes what it would answer, so a grid stored by an older
@@ -61,6 +61,10 @@ export function hasSteadyBeat(grid: BeatGrid | undefined | null): grid is BeatGr
  * `sourceTimeAt`, speed included.
  */
 export function timelineFrameAt(item: Item, us: Micros, fps: number): Frames | null {
+  if (!plainTime(item)) {
+    const frame = frameOf(item, us, fps)
+    return Number.isFinite(frame) && frame >= item.from && frame < itemEnd(item) ? frame : null
+  }
   if (us < item.sourceStartUs) return null
   const frame = frameOf(item, us, fps)
   return frame < itemEnd(item) ? frame : null
@@ -68,6 +72,12 @@ export function timelineFrameAt(item: Item, us: Micros, fps: number): Frames | n
 
 /** Where source time `us` falls on the timeline for `item`, whether or not the item plays it. */
 function frameOf(item: Item, us: Micros, fps: number): Frames {
+  if (!plainTime(item)) {
+    // Through the one mapping's inverse. A reversed clip's frame `f` shows the stretch that ends
+    // on boundary `f + 1`, so the frame holding a moment is the boundary rounded up, less one.
+    const boundary = itemFrameAtSource(item, us, fps)
+    return item.from + (item.reverse ? Math.ceil(boundary) - 1 : Math.round(boundary))
+  }
   const elapsedUs = (us - item.sourceStartUs) / effectiveSpeed(item.speed)
   return item.from + Math.round((elapsedUs / US_PER_SECOND) * fps)
 }
@@ -92,8 +102,11 @@ export function beatFramesForItem(grid: BeatGrid, item: Item, fps: number): Item
   }
   const dropouts: ItemBeats['dropouts'] = []
   for (const d of grid.dropouts) {
-    const startFrame = Math.max(item.from, frameOf(item, d.startUs, fps))
-    const endFrame = Math.min(itemEnd(item), frameOf(item, d.endUs, fps))
+    const a = frameOf(item, d.startUs, fps)
+    const b = frameOf(item, d.endUs, fps)
+    // Earliest first on the timeline, whichever way the clip plays the drop-out.
+    const startFrame = Math.max(item.from, Math.min(a, b))
+    const endFrame = Math.min(itemEnd(item), Math.max(a, b))
     if (endFrame > startFrame) dropouts.push({ startFrame, endFrame, kind: d.kind })
   }
   return { beats: map(grid.beatsUs), downbeats: map(grid.downbeatsUs), dropouts }

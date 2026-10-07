@@ -13,6 +13,7 @@ import { activeTimeline, type Project, type Timeline } from '@shared/project'
 import { normaliseLinks } from '@shared/links'
 import { clone, newId } from './factory'
 import { agentActingDepth, agentFileWriterNow, clientActingDepth } from './agent-turns'
+import { noteStep } from './history-notes'
 import type { EditorState, EditorStore } from './types'
 
 export const HISTORY_LIMIT = 100
@@ -39,6 +40,8 @@ export interface History {
   txDepth: number
   txBefore: Project | null
   txRecorded: boolean
+  /** The name the open transaction's step will carry: the first one an edit inside it gave. */
+  txLabel?: string
   /**
    * How much of `txDepth` is pointer gestures (`beginGesture`) rather than `transact`. A gesture
    * spans many events — a wheel's stays open 400 ms after its last notch — so other things can
@@ -52,7 +55,11 @@ export interface StoreKit {
   set: Set
   get: Get
   history: History
-  edit(mutator: (project: Project) => void, options?: { silent?: boolean }): void
+  /**
+   * `label` names the undo step this edit makes, for the history list (`@shared/history`).
+   * Optional: a step with no name is described from what changed.
+   */
+  edit(mutator: (project: Project) => void, options?: { silent?: boolean; label?: string }): void
   editTimeline(mutator: (timeline: Timeline, project: Project) => void): void
   currentTimeline(): Timeline | undefined
   turnMarks(state: EditorState): Partial<EditorState>
@@ -80,6 +87,7 @@ export function createKit(set: Set, get: Get): StoreKit {
     const recorded = history.txRecorded
     set((state) => {
       if (!recorded || !before || before === state.project) return state
+      noteStep(before, history.txLabel)
       const past = [...state.past, before]
       if (past.length > HISTORY_LIMIT) past.shift()
       return { past, future: [], dirty: true }
@@ -92,6 +100,7 @@ export function createKit(set: Set, get: Get): StoreKit {
     if (history.gestureDepth === 0) return
     history.txBefore = get().project
     history.txRecorded = false
+    history.txLabel = undefined
   }
 
   /** An edit on someone else's behalf — the agent's or an MCP client's tool call. */
@@ -126,7 +135,7 @@ export function createKit(set: Set, get: Get): StoreKit {
    * undo, stamps `updatedAt`, clears the redo stack and marks the document dirty — so no
    * caller has to remember to do any of that, and none of them can forget.
    */
-  function edit(mutator: (project: Project) => void, options?: { silent?: boolean }): void {
+  function edit(mutator: (project: Project) => void, options?: { silent?: boolean; label?: string }): void {
     if (!options?.silent && intrudes()) return aside(() => edit(mutator, options))
     set((state) => {
       const before = state.project
@@ -160,8 +169,10 @@ export function createKit(set: Set, get: Get): StoreKit {
         // group gets one, pushed on close. Without this, a tool that needs two store calls
         // makes two undo steps and `undo` reverses half of what it did.
         history.txRecorded = true
+        history.txLabel ??= options?.label
         return { project: next, dirty: true, ...turn }
       }
+      noteStep(before, options?.label)
       const past = [...state.past, before]
       if (past.length > HISTORY_LIMIT) past.shift()
       return { project: next, past, future: [], dirty: true, ...turn }

@@ -26,7 +26,7 @@ fake DOM whose fidelity is itself the thing under test.
 
 ## Launch the app with the throttling flags
 
-**And with `BAY_ACCESS=dev`.** bay is invite-only: without it a build shows the sign-in screen and
+**And with `BAY_ACCESS=dev`.** signing in is mandatory: without it a build shows the sign-in screen and
 refuses every MCP tool call with "bay is locked" (`src/main/auth/`). `./run.sh` sets it; a hand
 launch must too. It is honoured only by an unpackaged build — see `docs/testing.md`.
 
@@ -456,6 +456,7 @@ measure. Its green exit says the numbers exist, not that they are good — read 
 | `export-readback-cost.mjs` | `willReadFrequently` cost with a real decoded frame — **report, no verdict** | live app |
 | `export-readback-synthetic.mjs` | the same cost with a CPU-side source, the lower bound — **report, no verdict** | live app |
 | `export-vs-preview.mjs` | a real MP4 export matches `preview_frame` frame by frame across cuts | live app; runs a real export |
+| `film.mjs` | `check_film` on the four compositions in `fixtures/film/`: a carried film passes every leg, a slideshow fails continuity, one with a fault per leg has each found, one with no `__film` is refused with the contract; stillness seen both ways; nothing in the project changes | live app |
 | `filter-support.mjs` | `ctx.filter` and blend modes apply on the **export** context, and what they cost | live app |
 | `frame-rate.mjs` | the frame-rate control exists, retimes the timeline, and says what it nudged | live app |
 | `geometry.mjs` | the compositor puts a clip where the layout says (`VERIFY_PROBE=1` sabotages `drawImage` and must still exit 0) | live app, flags on |

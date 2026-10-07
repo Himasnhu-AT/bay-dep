@@ -13,6 +13,7 @@
     "start": "electron-vite preview",
     "build": "pnpm typecheck && electron-vite build",
     "gen:tools": "node script/gen-tools.mjs",
+    "gen:motion": "node --import ./src/test-hooks.mjs script/gen-motion.mjs",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "node --import ./src/test-hooks.mjs --test --test-timeout=30000 \"src/**/*.test.ts\"",
     "bundle": "pnpm build && electron-builder --dir",

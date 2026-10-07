@@ -3,17 +3,22 @@
  */
 
 import { brfAssetFields, brfCodeAssetFields } from '@shared/brf'
-import { activeTimeline, assetTrackKind, placementLayout, normaliseCrop, isCropped, NO_CROP, defaultLayout, defaultTextStyle, findAsset, findItem, findTrack, framesToUs, itemEnd, itemsOverlap, usToFrames, type Item, type Timeline, type TrackKind } from '@shared/project'
+import { activeTimeline, assetTrackKind, placementLayout, normaliseCrop, isCropped, NO_CROP, defaultLayout, defaultTextStyle, findAsset, findItem, findTrack, footageBeyond, itemEnd, itemsOverlap, plainTime, sourceEdgeAt, usToFrames, type Item, type Timeline, type TrackKind } from '@shared/project'
 import { rippleDelete, type RippleDeleteResult } from '@shared/ripple'
 import { splitItemAt } from '@shared/split'
+import { joinItems, noCutReason, type JoinResult } from '@shared/heal'
+import { planTrackMove } from '@shared/track-order'
+import { createBin, moveAssetsToBin, removeBin, renameBin } from '@shared/bins'
 import { applyRelinks } from '@shared/relink'
 import { shiftKeyframes, withKeyframe } from '@shared/keyframes'
 import { applyTrimPlan, planTrim, type TrimPlan } from '@shared/trim'
 import { detachAudio, linkedPartners, reattachAudio, unlinkItems, withLinked } from '@shared/links'
 import { CUTOUT_PICTURE_FIELDS, cutoutPartner, planBehindSubject, type BehindSubjectResult } from '@shared/behind-subject'
+import { checkMasks } from '@shared/matte'
+import { planAdjustmentLayer, type AdjustmentLayerResult } from '@shared/adjustment-layer'
 import { describeDuplicate, duplicateClips, type DuplicateResult } from '@shared/clipboard'
 import { formatTimecode } from '@shared/timecode'
-import { applySpeedPlan, planSpeed, retimedLength, type SpeedPlan } from '@shared/speed'
+import { applySpeedPlan, footageLength, planRetime, planSpeed, type SpeedPlan } from '@shared/speed'
 import { clone, makeTrack, newId, nextTrackName, placementTrack } from '../factory'
 import type { EditorActions } from '../types'
 import type { StoreKit } from '../kit'
@@ -39,15 +44,25 @@ type Actions = Pick<
   | 'duplicateSelected'
   | 'patchItem'
   | 'setClipSpeed'
+  | 'retimeClip'
   | 'detachAudio'
   | 'reattachAudio'
   | 'unlinkItems'
   | 'putBehindSubject'
   | 'patchLayout'
   | 'setKeyframe'
+  | 'setShapeMasks'
+  | 'addAdjustmentLayer'
   | 'addTrack'
+  | 'createBin'
+  | 'renameBin'
+  | 'removeBin'
+  | 'moveAssetsToBin'
   | 'removeTrack'
+  | 'moveTrack'
+  | 'joinItems'
   | 'patchTrack'
+  | 'setAudioEffects'
 >
 
 /**
@@ -60,7 +75,7 @@ function pictureTarget(timeline: Timeline, itemId: string): string {
   return (found && cutoutPartner(timeline, found.item)?.id) ?? itemId
 }
 
-export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions {
+export function itemsSlice({ set, get, edit, editTimeline, currentTimeline }: StoreKit): Actions {
   return {
     // -- assets -------------------------------------------------------------
     addAssets(assets) {
@@ -278,8 +293,18 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
           const project = get().project
           for (const member of group) {
             const asset = findAsset(project, member.assetId)
-            const { available } = retimedLength(member, asset?.durationUs ?? 0, member.speed, timeline.fps)
+            const available = footageLength(member, asset?.durationUs ?? 0, timeline.fps)
             delta = Math.min(delta, Math.max(0, available - member.durationInFrames))
+          }
+        }
+        // A reversed or ramped clip's head has an end of footage too — a reversed one runs into the
+        // end of its file going earlier — so its head stops there as its tail does.
+        if (edge === 'start' && delta < 0) {
+          const project = get().project
+          for (const member of group) {
+            if (plainTime(member)) continue
+            const room = footageBeyond(findAsset(project, member.assetId), member, timeline.fps).before
+            delta = Math.max(delta, -Math.floor(room + 1e-3))
           }
         }
         if (delta === 0) return
@@ -293,7 +318,8 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
             if (nextFrom < 0 || nextFrom > itemEnd(member) - 1) return
             // Trimming the head must move the read point into the source by the same
             // amount, or the clip slides its content instead of revealing less of it.
-            const nextSourceStart = member.sourceStartUs + framesToUs(delta, timeline.fps) * member.speed
+            // Through the one mapping, so a reversed clip's read point moves the other way.
+            const nextSourceStart = sourceEdgeAt(member, delta, timeline.fps)
             if (nextSourceStart < 0) return
             next = {
               from: nextFrom,
@@ -583,6 +609,8 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
         }
         const before = { ...found.item }
         Object.assign(found.item, patch)
+        // Removed presets leave no key behind, so "has an animation" stays a plain `in` check.
+        if (found.item.animation === undefined) delete found.item.animation
         if (found.item.durationInFrames < 1) found.item.durationInFrames = 1
         if (found.item.from < 0) found.item.from = 0
         if (options?.linked === false) return
@@ -611,6 +639,19 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
         const found = findItem(timeline, itemId)
         if (!found || found.track.locked) return
         const plan = planSpeed(project, timeline, itemId, speed, options)
+        if (!plan) return
+        applySpeedPlan(timeline, plan)
+        holder.value = plan
+      })
+      return holder.value
+    },
+
+    retimeClip(itemId, change, options) {
+      const holder: { value: SpeedPlan | null } = { value: null }
+      editTimeline((timeline, project) => {
+        const found = findItem(timeline, itemId)
+        if (!found || found.track.locked) return
+        const plan = planRetime(project, timeline, itemId, change, options)
         if (!plan) return
         applySpeedPlan(timeline, plan)
         holder.value = plan
@@ -691,6 +732,8 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
     },
 
     setKeyframe(itemId, property, frame, value) {
+      // A speed key changes the clip's length: it goes through `retimeClip`, which plans it.
+      if (property === 'speed') return
       editTimeline((timeline) => {
         const found = findItem(timeline, pictureTarget(timeline, itemId))
         if (!found || found.track.locked) return
@@ -698,6 +741,87 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
         if (next) found.item.keyframes = next
         else delete found.item.keyframes
       })
+    },
+
+    // -- bins --------------------------------------------------------------
+    // Each plans against the project as it is (so a refusal is an answer, not a silent no-op)
+    // and then runs the same function on the clone inside `edit()`.
+    createBin(name) {
+      const id = newId('bin')
+      const planned = createBin(clone(get().project), name, id)
+      if ('error' in planned) return planned
+      edit((project) => void createBin(project, name, id), { label: `New bin “${planned.bin.name}”` })
+      return planned
+    },
+
+    renameBin(binId, name) {
+      const planned = renameBin(clone(get().project), binId, name)
+      if ('error' in planned) return planned
+      edit((project) => void renameBin(project, binId, name), { label: `Rename bin “${planned.was}” to “${planned.bin.name}”` })
+      return planned
+    },
+
+    removeBin(binId) {
+      const planned = removeBin(clone(get().project), binId)
+      if ('error' in planned) return planned
+      edit((project) => void removeBin(project, binId), { label: `Remove bin “${planned.removed.name}”` })
+      return planned
+    },
+
+    moveAssetsToBin(assetIds, binId) {
+      const planned = moveAssetsToBin(clone(get().project), assetIds, binId)
+      if ('error' in planned) return planned
+      const count = planned.moved.length
+      edit((project) => void moveAssetsToBin(project, assetIds, binId), {
+        label: planned.bin
+          ? `Move ${count} asset${count === 1 ? '' : 's'} to “${planned.bin.name}”`
+          : `Take ${count} asset${count === 1 ? '' : 's'} out of ${count === 1 ? 'its bin' : 'their bins'}`
+      })
+      return planned
+    },
+
+    setShapeMasks(itemId, masks) {
+      editTimeline((timeline) => {
+        const found = findItem(timeline, pictureTarget(timeline, itemId))
+        if (!found || found.track.locked) return
+        // The subject mask, if the clip has one, stays first; the shapes after it are replaced.
+        const subject = found.item.masks?.filter((mask) => mask.kind === 'subject') ?? []
+        const checked = checkMasks([...subject, ...masks.filter((mask) => (mask as { kind: string }).kind !== 'subject')])
+        // A list the compositor could not draw is never stored: the clip would be a grey card.
+        if (!checked.ok) return
+        if (checked.masks.length === 0) delete found.item.masks
+        else found.item.masks = checked.masks
+      })
+    },
+
+    addAdjustmentLayer(spec) {
+      const state = get()
+      const active = activeTimeline(state.project)
+      if (!active) return { ok: false, error: 'No timeline is open.' }
+      // With clips selected and no span given, the layer covers them; otherwise it starts at the
+      // playhead and runs for a still's default length (Preferences › Editing).
+      const chosen = spec?.from === undefined && spec?.durationInFrames === undefined
+        ? state.selection.map((id) => findItem(active, id)?.item).filter((item): item is Item => item !== undefined)
+        : []
+      const start = chosen.length > 0 ? Math.min(...chosen.map((item) => item.from)) : (spec?.from ?? state.playhead)
+      const length = chosen.length > 0
+        ? Math.max(...chosen.map((item) => itemEnd(item))) - start
+        : (spec?.durationInFrames ?? stillDurationFrames(active.fps))
+      const holder: { value: AdjustmentLayerResult } = { value: { ok: false, error: 'No timeline is open.' } }
+      editTimeline((tl, project) => {
+        holder.value = planAdjustmentLayer(project, tl, { from: start, durationInFrames: length, ...(spec?.trackId ? { trackId: spec.trackId } : {}) }, {
+          makeId: newId,
+          now: Date.now,
+          makeVideoTrack: (timeline) => {
+            const track = makeTrack('video', 1)
+            track.name = nextTrackName(timeline, 'video')
+            return track
+          }
+        })
+      })
+      const result = holder.value
+      if (result.ok) set({ selection: [result.itemId] })
+      return result
     },
 
     // -- tracks -------------------------------------------------------------
@@ -725,6 +849,51 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
       })
     },
 
+    moveTrack(trackId, position) {
+      const timeline = currentTimeline()
+      if (!timeline) return { error: 'There is no timeline open.' }
+      const plan = planTrackMove(timeline, trackId, Math.round(position))
+      if ('error' in plan) return plan
+      const { from, to, kind } = plan.moved
+      const letter = kind === 'video' ? 'V' : 'A'
+      edit(
+        (project) => {
+          const target = activeTimeline(project)
+          if (!target) return
+          // Planned against the clone, not carried over from the plan above: the tracks in a
+          // plan are the store's own objects, and a mutator may only put its own in the project.
+          const again = planTrackMove(target, trackId, to)
+          if ('tracks' in again) target.tracks = again.tracks
+        },
+        { label: `Move track ${letter}${from} to ${letter}${to}` }
+      )
+      return plan.moved
+    },
+
+    joinItems(ids, options) {
+      const state = get()
+      const timeline = currentTimeline()
+      if (!timeline) return { error: 'There is no timeline open.' }
+      const named = ids ?? state.selection
+      const outcome: { value: JoinResult } = { value: { joined: [], refused: [] } }
+      edit(
+        (project) => {
+          const target = activeTimeline(project)
+          if (target) outcome.value = joinItems(target, project.assets, named, options)
+        },
+        { label: 'Join clips' }
+      )
+      const result = outcome.value
+      if (result.joined.length === 0) {
+        const first = result.refused[0]
+        return first ? { error: first.reason, ...(first.hint ? { hint: first.hint } : {}) } : { error: noCutReason(timeline, named) }
+      }
+      // What is left of the selection: the clips that remain, never an id that is gone.
+      const gone = new Set(result.joined.map((join) => join.removedId))
+      set({ selection: get().selection.filter((id) => !gone.has(id)) })
+      return result
+    },
+
     patchTrack(trackId, patch) {
       editTimeline((timeline) => {
         const track = findTrack(timeline, trackId)
@@ -744,6 +913,22 @@ export function itemsSlice({ set, get, edit, editTimeline }: StoreKit): Actions 
           if (pan === 0) delete track.pan
           else track.pan = pan
         }
+      })
+    },
+
+    setAudioEffects(target, effects) {
+      editTimeline((timeline) => {
+        const holder =
+          'itemId' in target
+            ? (() => {
+                const found = findItem(timeline, target.itemId)
+                return found && !found.track.locked ? found.item : undefined
+              })()
+            : findTrack(timeline, target.trackId)
+        if (!holder) return
+        // No effects is stored as absence, so a chain added and removed saves as one never added.
+        if (effects.length === 0) delete holder.audioEffects
+        else holder.audioEffects = effects.map((e) => ({ ...e, params: { ...e.params } }))
       })
     }
   }

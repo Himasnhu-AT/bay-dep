@@ -275,12 +275,34 @@ const TOOL_CASES: Record<string, ToolCase[]> = {
   ],
   edit_item: [
     // A track change and a patch: `moveItem` then `patchItem`, two store calls.
-    { delta: 1, args: (f) => ({ itemId: f.a, trackId: f.v3, from: 10, volume: 0.5, fadeInFrames: 5 }) }
+    { delta: 1, args: (f) => ({ itemId: f.a, trackId: f.v3, from: 10, volume: 0.5, fadeInFrames: 5 }) },
+    // Reverse, a ramp and a ripple with a patch beside them: `patchItem` then `retimeClip`.
+    { delta: 1, args: (f) => ({ itemId: f.a, reverse: true, speedRamp: 'ramp-down', ripple: true, volume: 0.5 }) }
   ],
   split_at: [
     { delta: 1, args: () => ({ frame: 30 }) },
     { delta: 1, args: (f) => ({ frame: 30, itemIds: [f.a, f.c, f.d] }) }
   ],
+  // Three cuts at once — V1, V2 and A1, each split at 30 by the setup — healed in one call.
+  join_items: [
+    {
+      delta: 1,
+      before: () => { state().clearSelection(); state().splitAt(30) },
+      args: (f) => ({ itemIds: [f.a] })
+    },
+    {
+      delta: 1,
+      before: () => { state().clearSelection(); state().splitAt(30) },
+      args: () => ({ itemIds: state().project.timelines[0]!.tracks.flatMap((t) => t.items).filter((i) => i.from < 60).map((i) => i.id) })
+    }
+  ],
+  // A bin made by naming it, and an asset filed in it: two store calls, one step.
+  organize_assets: [
+    { delta: 1, args: () => ({ assetIds: [ASSET.id], bin: 'Footage' }) },
+    { delta: 1, args: () => ({ bin: 'Music' }) }
+  ],
+  // A track that renames two others as it passes them: one step, names included.
+  move_track: [{ delta: 1, args: (f) => ({ trackId: f.v1, position: 3 }) }],
   delete_items: [
     { delta: 1, args: (f) => ({ itemIds: [f.a, f.c, f.d] }) },
     // Delete plus one `moveItem` per survivor after it: the shape of the original bug.
@@ -291,6 +313,31 @@ const TOOL_CASES: Record<string, ToolCase[]> = {
   // Two pauses removed, each a ripple across every track: one step.
   remove_silences: [{ delta: 1, args: (f) => ({ itemId: f.d }) }],
   set_item_enabled: [{ delta: 1, args: (f) => ({ itemIds: [f.a, f.c, f.d], enabled: false }) }],
+  // Three titles restyled, one `patchItem` each: one step.
+  apply_text_look: [
+    {
+      delta: 1,
+      before: () => {
+        state().addAssets([{ ...ASSET, id: 'ast_title', kind: 'text', name: 'Title', path: null, text: 'Title', hasAudio: false, hasVideo: false, durationUs: 0 }])
+        for (const at of [300, 400, 500]) assert.ok(state().placeAsset('ast_title', at))
+      },
+      args: () => ({ look: 'neon', all: true })
+    }
+  ],
+  // Three effects added and one of them changed and moved, in one batch: one step.
+  edit_effects: [
+    {
+      delta: 1,
+      args: (f) => ({
+        itemId: f.a,
+        operations: [
+          { op: 'add', kind: 'glow' },
+          { op: 'add', kind: 'flip' },
+          { op: 'add', kind: 'pixelate', params: { size: 24 }, index: 0 }
+        ]
+      })
+    }
+  ],
   // Detaching both angles' sound, then razoring and disabling both: one step.
   switch_speakers: [
     { delta: 1, args: (f) => ({ angles: [{ videoItemId: f.a }, { videoItemId: f.c }], thresholdDb: -40, minShotSec: 0.2 }) }
@@ -326,7 +373,14 @@ const TOOL_CASES: Record<string, ToolCase[]> = {
     { delta: 1, before: (f) => { state().detachAudio([f.a, f.c]) }, args: (f) => ({ itemIds: [f.a, f.c], action: 'unlink' }) },
     { delta: 1, before: (f) => { state().detachAudio([f.a, f.c]) }, args: (f) => ({ itemIds: [f.a, f.c], action: 'reattach' }) }
   ],
+  audio_effects: [
+    // A preset is six effects written at once; on a track as on a clip, one step.
+    { delta: 1, args: (f) => ({ itemId: f.a, action: 'preset', preset: 'podcast-voice' }) },
+    { delta: 1, args: (f) => ({ trackId: f.v2, action: 'add', kind: 'compressor', params: { ratio: 4 } }) }
+  ],
   add_track: [{ delta: 1, args: () => ({ kind: 'audio' }) }],
+  // A new asset, a new track above everything and the layer's clip on it: three changes, one step.
+  add_adjustment_layer: [{ delta: 1, args: () => ({ from: 0, durationInFrames: 90 }) }],
   add_transition: [
     { delta: 1, args: (f) => ({ fromItemId: f.a, toItemId: f.b, kind: 'cross-dissolve' }) }
   ],
@@ -418,6 +472,8 @@ const TOOL_EXEMPT: Record<string, string> = {
     'replaces the document and starts fresh history by design — it is not an edit to undo',
   export_timeline:
     'renders a file from the project and never edits it; its frame exporter needs a DOM canvas',
+  render_brf:
+    'renders a file from a throwaway timeline and never edits the project; its frame exporter needs a DOM canvas',
   generate_image: 'starts a job in main and never edits the project; generation.test.ts asserts past is untouched',
   generate_video: 'starts a job in main and never edits the project; generation.test.ts asserts past is untouched',
   generate_speech: 'starts a job in main and never edits the project; generation-speech.test.ts asserts past is untouched',
@@ -426,7 +482,8 @@ const TOOL_EXEMPT: Record<string, string> = {
   track_generation:
     'reads a job from main before it imports; generation.test.ts asserts import and place are one undo step',
   apply_dub: 'starts jobs in main and never edits the project; dub.test.ts asserts past is untouched',
-  track_dub: 'reads jobs from main before it imports; dub.test.ts asserts placement and ducking are one undo step'
+  track_dub: 'reads jobs from main before it imports; dub.test.ts asserts placement and ducking are one undo step',
+  score_sfx: 'renders a file through the bridge before it imports; sfx.test.ts asserts create-and-place is one undo step that takes both back'
 }
 
 test('every write tool in the catalog has an undo-step case or a stated exemption', () => {
@@ -635,6 +692,8 @@ const STORE_CASES: Record<string, StoreCase> = {
   patchItem: { delta: 1, run: (f) => state().patchItem(f.a, { volume: 0.5, fadeInFrames: 4 }) },
   // A clip, its linked sound and the rippled clips after it: one step.
   setClipSpeed: { delta: 1, run: (f) => { state().setClipSpeed(f.a, 0.5, { ripple: true }) } },
+  // Reverse and a ramp at once, with a ripple: direction, keys, length and the clip after it.
+  retimeClip: { delta: 1, run: (f) => { state().retimeClip(f.a, { reverse: true, ramp: [{ frame: 0, value: 0.5 }] }, { ripple: true }) } },
   detachAudio: { delta: 1, run: (f) => { state().detachAudio([f.a, f.b, f.c]) } },
   reattachAudio: {
     delta: 1,
@@ -664,6 +723,14 @@ const STORE_CASES: Record<string, StoreCase> = {
   patchLayout: { delta: 1, run: (f) => state().patchLayout(f.a, { left: 10, opacity: 0.5 }) },
   setCrop: { delta: 1, run: (f) => state().setCrop(f.a, 'left', 0.1) },
   setKeyframe: { delta: 1, run: (f) => state().setKeyframe(f.a, 'scale', 10, 1.1) },
+  setShapeMasks: { delta: 1, run: (f) => state().setShapeMasks(f.a, [{ kind: 'ellipse', x: 0.5, y: 0.5, width: 0.5, height: 0.5 }]) },
+  addAdjustmentLayer: {
+    delta: 1,
+    run: () => {
+      const result = state().addAdjustmentLayer({ from: 0, durationInFrames: 90 })
+      assert.ok(result.ok, JSON.stringify(result))
+    }
+  },
   setCompositionVariable: {
     delta: 1,
     run: () => {
@@ -678,7 +745,64 @@ const STORE_CASES: Record<string, StoreCase> = {
     }
   },
   addTrack: { delta: 1, run: () => { state().addTrack('video') } },
+  moveTrack: { delta: 1, run: (f) => { state().moveTrack(f.v1, 3) } },
+  createBin: { delta: 1, run: () => { state().createBin('Interviews') } },
+  renameBin: {
+    delta: 1,
+    run: () => {
+      const made = state().createBin('Interviews')
+      assert.ok('bin' in made)
+      const before = past()
+      state().renameBin(made.bin.id, 'Talking heads')
+      // Measured here rather than by the caller: making the bin is an edit too.
+      assert.equal(past() - before, 1)
+    }
+  },
+  moveAssetsToBin: {
+    delta: 1,
+    run: () => {
+      const made = state().createBin('Interviews')
+      assert.ok('bin' in made)
+      const before = past()
+      state().moveAssetsToBin([ASSET.id], made.bin.id)
+      assert.equal(past() - before, 1)
+    }
+  },
+  removeBin: {
+    delta: 1,
+    run: () => {
+      const made = state().createBin('Interviews')
+      assert.ok('bin' in made)
+      state().moveAssetsToBin([ASSET.id], made.bin.id)
+      // A second bin that stays: removing the only one puts the project back as it began.
+      state().createBin('Music')
+      const before = past()
+      state().removeBin(made.bin.id)
+      assert.equal(past() - before, 1)
+    }
+  },
+  joinItems: {
+    delta: 1,
+    run: (f) => {
+      state().clearSelection()
+      state().splitAt(30)
+      // A second cut that stays: splitting and joining at 30 alone puts the project back exactly
+      // as it was, and the caller's "this changed something" would read that as nothing done.
+      state().splitAt(90)
+      const before = past()
+      // Measured here rather than by the caller: the splits that make the cuts are edits too.
+      const result = state().joinItems([f.a, f.c, f.d].flatMap((id) => {
+        const track = state().project.timelines[0]!.tracks.find((t) => t.items.some((i) => i.id === id))!
+        return [id, track.items.find((i) => i.from === 30)!.id]
+      }))
+      assert.ok('joined' in result && result.joined.length === 3, JSON.stringify(result))
+      assert.equal(past() - before, 1)
+    }
+  },
+  // Over the project it belongs to, restoring recovered work is one step ⌘Z takes back.
+  restoreRecovered: { delta: 1, run: () => state().restoreRecovered({ ...state().project, name: 'Recovered' }) },
   patchTrack: { delta: 1, run: (f) => state().patchTrack(f.v2, { muted: true, name: 'Under' }) },
+  setAudioEffects: { delta: 1, run: (f) => state().setAudioEffects({ itemId: f.a }, [{ id: 'afx_x', kind: 'highpass', params: { frequency: 80, q: 0.7 } }]) },
   addTransition: {
     delta: 1,
     run: (f) => {
@@ -838,6 +962,49 @@ const STORE_CASES: Record<string, StoreCase> = {
   openSpan: { delta: 1, run: () => { state().openSpan(15, 10, 'insert') } },
   // The still and the insert across every track, one step (`@shared/freeze-frame`).
   setItemsEnabled: { delta: 1, run: (f) => { state().setItemsEnabled([f.a, f.c, f.d], false) } },
+  // The effect stack (`slices/effects.ts`). Each needs an effect to act on, so each measures its
+  // own step after adding one.
+  addEffect: { delta: 1, run: (f) => { state().addEffect(f.a, 'glow') } },
+  setEffects: { delta: 1, run: (f) => { state().setEffects(f.a, [{ id: 'fx_set', kind: 'flip', params: { horizontal: true, vertical: false } }]) } },
+  patchEffect: {
+    delta: 1,
+    run: (f) => {
+      const id = state().addEffect(f.a, 'glow') ?? ''
+      const before = past()
+      state().patchEffect(f.a, id, { params: { amount: 1.2 } })
+      assert.equal(past() - before, 1)
+    }
+  },
+  moveEffect: {
+    delta: 1,
+    run: (f) => {
+      const id = state().addEffect(f.a, 'glow') ?? ''
+      state().addEffect(f.a, 'flip')
+      const before = past()
+      state().moveEffect(f.a, id, 1)
+      assert.equal(past() - before, 1)
+    }
+  },
+  removeEffect: {
+    delta: 1,
+    run: (f) => {
+      // A second effect stays, so the project is not back to what it was before the run.
+      state().addEffect(f.a, 'flip')
+      const id = state().addEffect(f.a, 'glow') ?? ''
+      const before = past()
+      state().removeEffect(f.a, id)
+      assert.equal(past() - before, 1)
+    }
+  },
+  toggleEffect: {
+    delta: 1,
+    run: (f) => {
+      const id = state().addEffect(f.a, 'glow') ?? ''
+      const before = past()
+      state().toggleEffect(f.a, id)
+      assert.equal(past() - before, 1)
+    }
+  },
   // Two angles razored and disabled: one step.
   applyAngleSwitch: {
     delta: 1,
@@ -876,6 +1043,7 @@ const STORE_EXEMPT: Record<string, string> = {
   placeSubtitles: 'needs a source clip and a composition asset; add-subtitles.test.ts covers it as one step',
   placeDub: 'needs generated line assets and a source clip; dub.test.ts covers it as one step',
   undo: 'moves an entry from past to future',
+  jumpToHistory: 'a run of undos or redos: moves entries between past and future; history.test.ts and structure.test.ts cover it',
   redo: 'moves an entry from future to past',
   transact: 'is the grouping mechanism itself; editor.test.ts covers it',
   beginGesture: 'opens a pointer-gesture group (transact across events); editor.test.ts covers it',
@@ -923,7 +1091,15 @@ for (const [action, spec] of Object.entries(STORE_CASES)) {
       'removeComment',
       'reattachAudio',
       'unlinkItems',
-      'closeGapAt'
+      'closeGapAt',
+      'joinItems',
+      'renameBin',
+      'moveAssetsToBin',
+      'removeBin',
+      'patchEffect',
+      'moveEffect',
+      'removeEffect',
+      'toggleEffect'
     ]
     if (!selfMeasured.includes(action)) {
       assert.equal(

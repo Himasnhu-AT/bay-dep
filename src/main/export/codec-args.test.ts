@@ -148,3 +148,16 @@ test('tailOf keeps the end of stderr, where ffmpeg names the fault, and bounds i
   // Positive control: short text comes back whole.
   assert.equal(tailOf('short\n'), 'short')
 })
+
+test('an alpha mov is ProRes 4444 with an alpha pixel format; without alpha, and in any other container, nothing changes', () => {
+  const frame = { width: 1920, height: 1080, fps: 30 }
+  const alpha = videoCodecArgs('mov', 'best', frame, undefined, true)
+  assert.equal(alpha[alpha.indexOf('-c:v') + 1], 'prores_ks')
+  assert.equal(alpha[alpha.indexOf('-profile:v') + 1], '4444')
+  // The `a` is the point: yuv444p10le is the same codec and profile with the transparency thrown away.
+  assert.equal(alpha[alpha.indexOf('-pix_fmt') + 1], 'yuva444p10le')
+  // The nearest legal calls that must stay what they were.
+  assert.deepEqual(videoCodecArgs('mov', 'best', frame, undefined, false), videoCodecArgs('mov', 'best', frame))
+  assert.ok(!videoCodecArgs('mov', 'best', frame).includes('prores_ks'))
+  assert.deepEqual(videoCodecArgs('mp4', 'best', frame, undefined, true), videoCodecArgs('mp4', 'best', frame))
+})

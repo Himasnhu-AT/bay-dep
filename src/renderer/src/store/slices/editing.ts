@@ -9,7 +9,8 @@ import { activeTimeline, findItem, itemEnd, timelineDuration, type Item } from '
 import { attributePatch, copyClips, pasteClips } from '@shared/clipboard'
 import { applyMoves, clipsUnderPlayhead, planCloseGap, planNudge, planPullBack } from '@shared/editing'
 import { withLinked } from '@shared/links'
-import { applySpeedPlan, planSpeed } from '@shared/speed'
+import { applySpeedPlan, planRetime } from '@shared/speed'
+import { speedKeysOf } from '@shared/speed-curve'
 import { insertTime, liftRange, type OpenSpanResult } from '@shared/insert-edit'
 import { applyFreezeFrame, freezeRefusal, type FreezeResult } from '@shared/freeze-frame'
 import { applyTrackMoves, checkTrackMoves } from '@shared/track-move'
@@ -119,7 +120,15 @@ export function editingSlice({ set, get, edit, editTimeline, currentTimeline }: 
           // Speed goes through the same plan as Speed… and `edit_item({ speed })`: the clip keeps
           // its footage, so its length changes (stopping at the next clip), and a linked sound
           // follows. Planned before the patch, which would otherwise hide the old rate.
-          const speedPlan = chosen.has('speed') ? planSpeed(project, timeline, id, source.speed) : null
+          // "Speed" is how the source plays: its rate, its ramp and its direction together.
+          const sourceRamp = speedKeysOf(source)
+          const speedPlan = chosen.has('speed')
+            ? planRetime(project, timeline, id, {
+                speed: source.speed,
+                ramp: sourceRamp ? sourceRamp.map((key) => ({ ...key })) : null,
+                reverse: Boolean(source.reverse)
+              })
+            : null
           assignPatch(found.item, attributePatch(source, found.item, chosen))
           if (speedPlan) applySpeedPlan(timeline, speedPlan)
           changed += 1

@@ -10,6 +10,7 @@ import {
   Play,
   RefreshCw,
   ScanSearch,
+  ShieldCheck,
   Scissors,
   Sparkles,
   SunMoon,
@@ -23,6 +24,7 @@ import { AccountSection } from './AccountSection'
 import { TranscriptionSection } from './TranscriptionSection'
 import { VisualSearchSection } from './VisualSearchSection'
 import { ProvidersSection } from './ProvidersSection'
+import { PrivacySection } from './PrivacySection'
 import {
   AboutSection,
   AgentSection,
@@ -63,6 +65,7 @@ export type PreferencesPage =
   | 'visual-search'
   | 'providers'
   | 'account'
+  | 'privacy'
   | 'updates'
   | 'about'
   | 'interface'
@@ -91,6 +94,7 @@ const GROUPS: { title: 'System' | 'User'; pages: PageSpec[] }[] = [
       { id: 'visual-search', label: 'Visual search', icon: icon(ScanSearch), render: () => <VisualSearchSection /> },
       { id: 'providers', label: 'AI providers', icon: icon(Sparkles), render: () => <ProvidersSection /> },
       { id: 'account', label: 'Account', icon: icon(UserRound), render: () => <AccountSection /> },
+      { id: 'privacy', label: 'Privacy', icon: icon(ShieldCheck), render: () => <PrivacySection /> },
       { id: 'updates', label: 'Updates', icon: icon(RefreshCw), render: () => <UpdatesSection /> },
       { id: 'about', label: 'About', icon: icon(Info), render: () => <AboutSection /> }
     ]

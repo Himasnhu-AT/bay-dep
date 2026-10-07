@@ -20,6 +20,7 @@
  * fields that matter.
  */
 
+import { describeChain } from './audioEffects'
 import {
   allItems,
   findAsset,
@@ -32,9 +33,14 @@ import {
 import { fail, project, resolveItem, store, timeline, usToFramesAtTimeline, type Handlers } from './helpers'
 import { audioFinishReport } from './audioFinish'
 import { resolveGrade } from '@shared/grade'
+import { describeEffects } from './effects'
 import { describeKeyframes } from '@shared/keyframes'
+import { describeAnimation, transitionEnds } from '@shared/animation'
 import { linkedPartners } from '@shared/links'
+import { binOf, binsOf } from '@shared/bins'
+import type { Bin } from '@shared/project'
 import { describeFont, importedFonts } from '@shared/fonts'
+import { retimeReport } from './retime'
 
 function describeItem(item: Item): Record<string, unknown> {
   return {
@@ -108,6 +114,8 @@ export function readProject(): Record<string, unknown> {
       muted: track.muted,
       hidden: track.hidden,
       ...(track.solo ? { solo: true } : {}),
+      // The track's effect chain, when it has one (audio_effects with trackId changes it).
+      ...(track.audioEffects?.length ? { audioEffects: describeChain(track.audioEffects) } : {}),
       items: track.items.map(describeItem)
     })),
     // Always present, empty or not: an agent that has to test for the key before reading it
@@ -132,8 +140,19 @@ export function browseAssets(): Record<string, unknown> {
       note: 'The media pool is empty. Use import_media with absolute paths before placing anything.'
     }
   }
+  const bins = binsOf(p)
+  const binSummary = (bin: Bin | null): { id: string; name: string } | null => (bin ? { id: bin.id, name: bin.name } : null)
   return {
     timeUnit: 'frames',
+    ...(bins.length > 0
+      ? {
+          bins: bins.map((bin) => ({
+            id: bin.id,
+            name: bin.name,
+            assetCount: p.assets.filter((asset) => binOf(p, asset)?.id === bin.id).length
+          }))
+        }
+      : {}),
     assets: p.assets.map((asset) => ({
       id: asset.id,
       name: asset.name,
@@ -149,6 +168,8 @@ export function browseAssets(): Record<string, unknown> {
       hasAudio: asset.hasAudio,
       // Only when import recorded it (1 mono, 2 stereo); older assets simply do not say.
       ...(asset.channels ? { channels: asset.channels } : {}),
+      // Only in a pool that has bins, and then on every asset: null is the top of the pool.
+      ...(bins.length > 0 ? { bin: binSummary(binOf(p, asset)) } : {}),
       ...(asset.error
         ? { error: asset.error, placeable: false }
         : asset.kind === 'font'
@@ -181,12 +202,15 @@ export function inspectItem(args: Record<string, unknown>): Record<string, unkno
       sourceStartSeconds: item.sourceStartUs / 1_000_000,
       speed: item.speed,
       // What is left of the source from here, so a caller can size a trim or a transition's
-      // handles without deriving it from two other numbers in different units.
+      // handles without deriving it from two other numbers in different units. A reversed clip
+      // reads down from its start point, so what is left is what lies before it.
       ...(asset && asset.durationUs > 0
         ? {
-            sourceRemainingSeconds: Math.max(0, asset.durationUs - item.sourceStartUs) / 1_000_000
+            sourceRemainingSeconds:
+              (item.reverse ? Math.max(0, item.sourceStartUs) : Math.max(0, asset.durationUs - item.sourceStartUs)) / 1_000_000
           }
-        : {})
+        : {}),
+      ...retimeReport(item, tl.fps)
     },
     layout: { ...item.layout },
     canvas: { width: tl.width, height: tl.height },
@@ -200,6 +224,11 @@ export function inspectItem(args: Record<string, unknown>): Record<string, unkno
     // Same absent-means-unset convention: a grade that exists is reported whole, with whether the
     // compositor will actually run it, since an all-neutral grade is stored and changes nothing.
     ...(item.grade ? { grade: item.grade, gradeActive: resolveGrade(item.grade) !== null } : {}),
+    // Masks as stored: a subject cut-out's `{ kind: 'subject' }`, then any shapes, in the order they combine.
+    ...(item.masks ? { masks: item.masks } : {}),
+    // The effect stack in draw order, each with its id (what edit_effects addresses) and whether
+    // it will run a pass. Absent means the clip has none.
+    ...(item.effects && item.effects.length > 0 ? { effects: describeEffects(item) } : {}),
     // `edit_item` accepts `crop` and `variables`, and this reported neither — so an agent could
     // set them and had no way to read them back. That breaks three things at once: it cannot
     // verify its own edit, it cannot make a relative change ("crop a little more"), and it
@@ -214,6 +243,8 @@ export function inspectItem(args: Record<string, unknown>): Record<string, unkno
     ...(item.keyframes
       ? { keyframes: item.keyframes, animation: describeKeyframes(item) }
       : {}),
+    // Animation presets as stored, and the timeline frames each end occupies on this clip.
+    ...(item.animation ? { presets: { ...item.animation, plays: describeAnimation(item, transitionEnds(tl, item.id)) } } : {}),
     // What this clip moves, trims, splits and deletes with (see detach_audio).
     ...(partners.length > 0 ? { link: { linkedItemIds: partners.map((p) => p.id) } } : {}),
     audio: item.audioDetached
@@ -234,6 +265,8 @@ export function inspectItem(args: Record<string, unknown>): Record<string, unkno
       // J/L offsets as they resolve now and the duck, with any clamp said in words — the same
       // report edit_item returns, so a read and a write cannot describe one clip differently.
       ...(soundFinish.report ?? {}),
+      // The clip's own effect chain, in order, with the ids audio_effects edits by.
+      ...(item.audioEffects?.length ? { effects: describeChain(item.audioEffects) } : {}),
       ...(soundFinish.warnings.length > 0 ? { notes: soundFinish.warnings } : {})
         },
     asset: asset

@@ -26,13 +26,19 @@ import {
   isCropped,
   cropSourceRect,
   cropDestRect,
-  playableTimeline
+  playableTimeline,
+  TRANSPARENT_BACKGROUND,
+  sameSourceTiming
 } from '@shared/project'
-import { animatedItemAt } from '@shared/keyframes'
-import { matteRecordAt, MAX_MASK_FEATHER, subjectMaskOf } from '@shared/matte'
+import { animatedItemAt, keyedItemAt } from '@shared/keyframes'
+import { animationForDraw, animationRevealAt, textUnitsAt } from '@shared/animation'
+import { paintOverflow, paintText, planText } from './textPaint'
+import { matteRecordAt, MAX_MASK_FEATHER, shapeMasksOf, subjectMaskOf } from '@shared/matte'
 import { cutoutAsDrawn, cutoutPartner } from '@shared/behind-subject'
 import { subjectMattes, type MatteImage } from './subjectMatte'
 import { MaskScratch, maskedPicture, matteRect } from './subjectMask'
+import { copiedPicture, ShapeMaskCache, shapedPicture, shapeView } from './shapeMask'
+import { adjustmentChangesPicture, AdjustmentScratch, planAdjustment } from './adjustmentLayer'
 import { MediaPool, isDrawable, type MediaEntry } from './mediaPool'
 import type { CompositionPool } from './compositionPool'
 import { planTransition } from './transitions'
@@ -44,6 +50,7 @@ import type { BrfDocument } from '@shared/brf'
 import { resolveVariables } from '@shared/composition'
 import { adjustmentFilter, blendOperation, isPlainLook, NO_FILTER } from './looks'
 import { gradeSource, resolvedGradeOf } from './grade'
+import { drawEffects, resolvedEffectsOf } from './effects'
 import { grainSeed } from '@shared/grade'
 import {
   anchorFor,
@@ -63,8 +70,8 @@ import {
   clamp,
   clamp01,
   finite,
-  playbackRateFor,
-  sourceSecondsAt
+  sourceSecondsAt,
+  transportFor
 } from './sync'
 
 export type RenderTarget = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D
@@ -141,6 +148,8 @@ export interface DrawStats {
    * Clips whose grade could not be applied, and why — drawn ungraded rather than not at all.
    * Absent when there is nothing to say. A grade that silently fails looks like a grade that was
    * never set, which is the one outcome an agent reading `preview_frame` cannot tell from success.
+   * A clip's effect stack reports here too (`effects.ts`): the same slot, the same kind of fault —
+   * a pass that did not run — and the same readers (`preview_frame`, the exporter).
    */
   gradeIssues?: string[]
 }
@@ -241,6 +250,10 @@ export class Compositor {
   readonly #compositions: CompositionPool | null
   /** Scratch surfaces for a subject-masked draw (`subjectMask.ts`), reused per size. */
   readonly #maskScratch = new MaskScratch()
+  /** Coverage canvases for shape-masked draws (`shapeMask.ts`), kept by what they were made from. */
+  readonly #shapeMasks = new ShapeMaskCache()
+  /** Where an adjustment layer copies the frame so far (`adjustmentLayer.ts`). Untouched without one. */
+  readonly #adjustmentScratch = new AdjustmentScratch()
   /** The project of the frame being drawn — where a graded clip's LUT asset is looked up. */
   #project: Project | null = null
   /** The timeline of the frame being drawn — where a subject cut-out finds the clip it draws its picture from. */
@@ -291,8 +304,13 @@ export class Compositor {
     ctx.save()
     ctx.globalAlpha = 1
     ctx.globalCompositeOperation = 'source-over'
-    ctx.fillStyle = timeline.background || '#000000'
-    ctx.fillRect(0, 0, width, height)
+    // `'transparent'` is a render of a graphic alone (`render_brf`): the frame must leave here
+    // with real alpha, and a fill in a transparent colour would leave the last frame under it.
+    if (timeline.background === TRANSPARENT_BACKGROUND) ctx.clearRect(0, 0, width, height)
+    else {
+      ctx.fillStyle = timeline.background || '#000000'
+      ctx.fillRect(0, 0, width, height)
+    }
 
     // The one definition of what this frame draws, shared with `awaitSources` so the element
     // waited on is the element drawn. See `itemsToDraw`.
@@ -387,6 +405,8 @@ export class Compositor {
     this.#seekLatency.clear()
     this.#brf.reset()
     this.#maskScratch.release()
+    this.#shapeMasks.release()
+    this.#adjustmentScratch.release()
     releaseGlassBuffers()
   }
 
@@ -417,6 +437,11 @@ export class Compositor {
     const transform = ctx.getTransform()
     const scaleX = Math.hypot(transform.a, transform.b) || 1
     const scaleY = Math.hypot(transform.c, transform.d) || 1
+
+    // Shape masks (`@shared/shape-mask`), applied in the mask slot below. Null for a clip with none.
+    const shapes = shapeMasksOf(item)
+    // Why a shape-masked picture could not be drawn; reported once the transform is put back.
+    let shapeFault: string | null = null
 
     ctx.save()
     ctx.globalAlpha = alpha
@@ -450,22 +475,48 @@ export class Compositor {
       // What a mask is applied to: the graded picture when there is one, else the element's crop rect.
       let picture: { source: unknown; sx: number; sy: number; sw: number; sh: number } = { source: element, ...src }
       const grade = resolvedGradeOf(item.grade)
-      if (grade && src.sw > 0 && src.sh > 0) {
-        const lutAsset = grade.lut && this.#project ? findAsset(this.#project, grade.lut.assetId) : undefined
-        const graded = gradeSource(grade, {
-          source: element,
-          ...src,
-          width: deviceWidth,
-          height: deviceHeight,
-          boxWidth: Math.abs(dest.dw),
-          boxHeight: Math.abs(dest.dh),
-          frame,
-          seed: grainSeed(item.id),
-          lut: lutAsset?.kind === 'lut' ? lutAsset.lut : undefined
-        })
+      const lutAsset = grade?.lut && this.#project ? findAsset(this.#project, grade.lut.assetId) : undefined
+      const pass = {
+        source: element,
+        ...src,
+        width: deviceWidth,
+        height: deviceHeight,
+        boxWidth: Math.abs(dest.dw),
+        boxHeight: Math.abs(dest.dh),
+        frame,
+        seed: grainSeed(item.id),
+        lut: lutAsset?.kind === 'lut' ? lutAsset.lut : undefined
+      }
+      // The effect stack (`effects.ts`): after the grade, which it runs itself as its first step,
+      // and before the mask. A stack with nothing to draw resolves to null and costs nothing. One
+      // that cannot run — or names an effect this build lacks — is reported beside failed grades,
+      // so `preview_frame` and an export both say the picture is not the one the timeline describes.
+      const effects = resolvedEffectsOf(item.effects)
+      let effected = false
+      if (effects) {
+        for (const issue of effects.issues) noteGradeIssue(stats, `clip ${item.id}: ${issue}`)
+        if (effects.active.length > 0 && src.sw > 0 && src.sh > 0) {
+          const drawn = drawEffects(effects.active, { ...pass, grade })
+          if (drawn.ok) {
+            for (const warning of drawn.warnings) noteGradeIssue(stats, `clip ${item.id}: ${warning}`)
+            // Shape masks need the mask slot below as much as a subject matte does: drawn here,
+            // an effected clip would come out unmasked.
+            if (!mask && !shapes) {
+              ctx.drawImage(drawn.canvas, 0, 0, drawn.width, drawn.height, dest.dx, dest.dy, dest.dw, dest.dh)
+              return
+            }
+            picture = { source: drawn.canvas, sx: 0, sy: 0, sw: drawn.width, sh: drawn.height }
+            effected = true
+          } else {
+            noteGradeIssue(stats, `clip ${item.id} was drawn without its effects: ${drawn.error}`)
+          }
+        }
+      }
+      if (!effected && grade && src.sw > 0 && src.sh > 0) {
+        const graded = gradeSource(grade, pass)
         if (graded.ok) {
           if (graded.warning) noteGradeIssue(stats, `clip ${item.id}: ${graded.warning}`)
-          if (!mask) {
+          if (!mask && !shapes) {
             ctx.drawImage(graded.canvas, 0, 0, graded.width, graded.height, dest.dx, dest.dy, dest.dw, dest.dh)
             return
           }
@@ -479,19 +530,34 @@ export class Compositor {
       // preview, `preview_frame` and export mask through this one line. The matte covers the whole
       // source frame, so the crop rect maps onto it by scale (`matteRect`) — which is also what
       // stretches Vision's 4:3 mask back over a 16:9 frame.
-      if (mask && src.sw > 0 && src.sh > 0) {
-        const masked = maskedPicture(
-          {
-            ...picture,
-            width: deviceWidth,
-            height: deviceHeight,
-            matte: mask.matte,
-            ...matteRect(src, sourceWidth, sourceHeight, mask.matte),
-            invert: mask.invert,
-            featherPx: mask.feather * scaleX * zoomOf(item)
-          },
-          this.#maskScratch
-        )
+      //
+      // Shape masks follow on the same surface: the picture (matted or not) has its alpha
+      // multiplied by `rasterMasks`' coverage of the part of the clip's frame it shows. The frame
+      // is the item's box, so layout, crop, keys, zoom and rotation carry the shapes with the clip.
+      if ((mask || shapes) && src.sw > 0 && src.sh > 0) {
+        let masked = mask
+          ? maskedPicture(
+              {
+                ...picture,
+                width: deviceWidth,
+                height: deviceHeight,
+                matte: mask.matte,
+                ...matteRect(src, sourceWidth, sourceHeight, mask.matte),
+                invert: mask.invert,
+                featherPx: mask.feather * scaleX * zoomOf(item)
+              },
+              this.#maskScratch
+            )
+          : copiedPicture({ ...picture, width: deviceWidth, height: deviceHeight }, this.#maskScratch)
+        if (shapes) {
+          if ('error' in shapes) {
+            masked = null
+            shapeFault = shapes.error
+          } else if (masked) {
+            masked = shapedPicture(masked, shapes, shapeView(box, dest, deviceWidth, deviceHeight), this.#shapeMasks)
+            if (!masked) shapeFault = `its ${shapes.length === 1 ? 'mask' : `${shapes.length} masks`} could not be drawn at ${deviceWidth}×${deviceHeight}`
+          }
+        }
         if (masked) ctx.drawImage(masked as unknown as CanvasImageSource, 0, 0, deviceWidth, deviceHeight, dest.dx, dest.dy, dest.dw, dest.dh)
         return
       }
@@ -506,6 +572,10 @@ export class Compositor {
       // went away). One missing item must not abandon the rest of the frame.
     } finally {
       ctx.restore()
+      // A shape mask that could not be applied: the clip was not drawn (never unmasked — the part
+      // the mask was hiding would be in the picture, looking deliberate), and the frame says so.
+      // Here, after the transform is put back, because the mask slot leaves by `return`.
+      if (shapeFault && stats) this.#placeholder(ctx, item, stats, 'Mask could not be drawn', `clip ${item.id} (${shapeFault})`)
     }
   }
 
@@ -628,7 +698,7 @@ export class Compositor {
     now: number,
     slot: number,
     stats: DrawStats,
-    opts: { alphaMul?: number }
+    opts: { alphaMul?: number; revealed?: boolean }
   ): void {
     // Keyframes resolve here, once, into the layout every draw below reads — so a transition's
     // two sides, text, .brf, compositions and placeholders all animate through one sampler, and
@@ -637,10 +707,45 @@ export class Compositor {
     // punch-in or crop of the clip moves the cut-out with it (`cutoutAsDrawn`). Before keys resolve,
     // so the clip's keyframes animate the cut-out through the same sampler.
     if (this.#timeline && item.masks) item = cutoutAsDrawn(item, cutoutPartner(this.#timeline, item))
+    // Animation presets ride the same sampler. A transition across an end sets that end's preset
+    // aside first (`animationForDraw`), and a preset that reveals through a mask — a Wipe, a Rise —
+    // clips to the clip's own keyed box, turned and zoomed as the clip is, before anything is drawn.
+    if (item.animation) {
+      item = animationForDraw(this.#timeline, item)
+      const reveal = opts.revealed ? null : animationRevealAt(item, frame)
+      const keyed = reveal ? keyedItemAt(item, frame) : null
+      const mask = keyed ? layoutBox(keyed) : null
+      if (reveal && keyed && mask) {
+        ctx.save()
+        const device = ctx.getTransform()
+        applyRotation(ctx, keyed, mask)
+        ctx.beginPath()
+        ctx.rect(
+          mask.left + reveal.left * mask.width,
+          mask.top + reveal.top * mask.height,
+          Math.max(0, mask.width * (1 - reveal.left - reveal.right)),
+          Math.max(0, mask.height * (1 - reveal.top - reveal.bottom))
+        )
+        ctx.clip()
+        ctx.setTransform(device)
+        try {
+          this.#paintItem(ctx, project, item, frame, fps, mode, now, slot, stats, { ...opts, revealed: true })
+        } finally {
+          ctx.restore()
+        }
+        return
+      }
+    }
     item = animatedItemAt(item, frame)
     const asset = findAsset(project, item.assetId)
     if (!asset || asset.error) {
       this.#placeholder(ctx, item, stats, asset?.name ?? 'Missing media', asset ? `${asset.name} (${asset.error ?? 'unreadable'})` : 'a missing asset')
+      return
+    }
+
+    // An adjustment layer has no source of its own: its picture is the frame drawn so far.
+    if (asset.kind === 'adjustment') {
+      this.#paintAdjustment(ctx, item, frame, stats, opts.alphaMul)
       return
     }
 
@@ -766,6 +871,61 @@ export class Compositor {
   }
 
   /**
+   * An adjustment layer: everything drawn so far, redrawn through this item's grade, adjustments
+   * and masks (`adjustmentLayer.ts` has the arithmetic). The copy of the frame goes through
+   * `#drawSource` like any clip's picture, so a layer is graded, masked and filtered by the code
+   * that does it for clips — in the preview, `preview_frame` and export alike.
+   *
+   * A layer that would change nothing is skipped before anything is copied. One that cannot be
+   * applied leaves the picture under it as it was and says so on the frame (`gradeIssues`, which
+   * the export's `incompleteFrames` and `preview_frame`'s `gradeWarnings` carry): a grey card over
+   * the whole frame would hide the edit to report a missing look.
+   */
+  #paintAdjustment(ctx: RenderTarget, item: Item, frame: number, stats: DrawStats, alphaMul = 1): void {
+    if (!adjustmentChangesPicture(item)) return
+    const alpha = clamp01(finite(item.layout.opacity, 1) * fadeGainAt(item, frame) * clamp01(alphaMul))
+    if (alpha <= 0) return
+    const size = { width: Math.max(1, finite(this.#timeline?.width ?? 1, 1)), height: Math.max(1, finite(this.#timeline?.height ?? 1, 1)) }
+    const shapes = shapeMasksOf(item)
+    if (shapes && 'error' in shapes) {
+      noteGradeIssue(stats, `adjustment layer ${item.id} was not applied: ${shapes.error}`)
+      return
+    }
+    const plan = planAdjustment(item, size, ctx.getTransform())
+    const snapshot = plan ? this.#adjustmentScratch.copy(ctx.canvas, plan) : null
+    if (!plan || !snapshot) {
+      noteGradeIssue(stats, `adjustment layer ${item.id} was not applied: the frame under it could not be copied`)
+      return
+    }
+    // The hole: what is there, less the layer's share of it — its mask coverage times its alpha.
+    let cover: unknown = null
+    if (shapes) {
+      const box = { left: 0, top: 0, ...size }
+      try {
+        cover = this.#shapeMasks.get(shapes, size, shapeView(box, { dx: 0, dy: 0, dw: size.width, dh: size.height }, plan.width, plan.height).view)
+      } catch {
+        cover = null
+      }
+      if (!cover) {
+        noteGradeIssue(stats, `adjustment layer ${item.id} was not applied: its masks could not be drawn at ${plan.width}×${plan.height}`)
+        return
+      }
+    }
+    ctx.save()
+    ctx.globalAlpha = alpha
+    ctx.globalCompositeOperation = 'destination-out'
+    if (cover) ctx.drawImage(cover as CanvasImageSource, 0, 0, plan.width, plan.height, 0, 0, size.width, size.height)
+    else {
+      ctx.fillStyle = '#000000'
+      ctx.fillRect(0, 0, size.width, size.height)
+    }
+    ctx.restore()
+    // …and the adjusted copy, added back at that same share.
+    this.#drawSource(ctx, snapshot, plan.item, frame, alphaMul, stats)
+    stats.drawn += 1
+  }
+
+  /**
    * The matte an item's subject mask draws with this frame; `null` when it has no mask; `'skip'`
    * when it cannot be drawn correctly and has already been recorded — pending while a matte frame
    * loads (export and `preview_frame` wait for it), a named placeholder when there is no matte for
@@ -828,9 +988,9 @@ export class Compositor {
    * tested against an injected measure. What is here is the part that genuinely needs a
    * canvas: assembling the font string, asking for widths, and painting in the right order.
    *
-   * **Order is load-bearing**: background plate, then shadow+stroke, then fill. Painting the
-   * plate after the glyphs hides them; painting the shadow with the fill leaves the stroke
-   * casting its own shadow over the letterform it is meant to outline.
+   * What is painted, and in which order, is `paintText` in `textPaint.ts` — the one painter, so
+   * a title's fills, outlines, shadows, plate and per-word animation are the same picture in the
+   * preview, `preview_frame` and the export.
    */
   #drawText(ctx: RenderTarget, item: Item, asset: Asset, frame: number, alphaMul = 1): TextFit | null {
     const box = layoutBox(item)
@@ -873,67 +1033,31 @@ export class Compositor {
         fontAvailable
       }
 
+      // The plan — plates, runs of glyphs, how far the paint reaches — is arithmetic in
+      // `textPaint.ts`; it needs the font the lines were laid out in to measure against.
+      ctx.font = fontString(laid.fontSize, style.fontFamily)
+      const anchor = anchorFor(box as TextBox, laid, style.align, style.verticalAlign)
+      const units = textUnitsAt(item, frame)
+      const plan = planText(laid, anchor, style, (candidate) => ctx.measureText(candidate).width, units?.by ?? null)
+      const overflow = paintOverflow(plan.painted, box as TextBox)
+      // Not when the letters themselves are cut off: that is the bigger fault and is already said.
+      if (overflow && !laid.clipped) fit.paintOverflow = overflow
+
       // Report even when nothing is painted. A fully faded title that does not fit is still a
       // layout problem the next frame will show, and reporting only visible text would make
       // the warning blink.
       if (alpha <= 0) return fit
 
+      // Read before the rotation is applied: canvas shadows are in device pixels and ignore the
+      // transform, so the painter scales them by the device scale and the clip's own zoom.
+      const device = ctx.getTransform()
+      const shadowScale = (Math.hypot(device.a, device.b) || 1) * zoomOf(item)
+
       ctx.globalAlpha = alpha
       applyLook(ctx, item)
       applyRotation(ctx, item, box)
-      ctx.font = fontString(laid.fontSize, style.fontFamily)
-
-      const anchor = anchorFor(box as TextBox, laid, style.align, style.verticalAlign)
-      ctx.textAlign = anchor.textAlign
       ctx.textBaseline = 'alphabetic'
-
-      if (style.background) {
-        const pad = Math.max(0, finite(style.background.padding, 0))
-        const plateWidth = laid.maxLineWidth + pad * 2
-        const left =
-          anchor.textAlign === 'left'
-            ? anchor.x - pad
-            : anchor.textAlign === 'right'
-              ? anchor.x - plateWidth + pad
-              : anchor.x - plateWidth / 2
-        const top = anchor.firstBaseline - laid.lineHeight - pad
-        const height = laid.blockHeight + pad * 2
-        ctx.fillStyle = style.background.color
-        const radius = Math.max(0, Math.min(finite(style.background.radius, 0), Math.min(plateWidth, height) / 2))
-        ctx.beginPath()
-        // `roundRect` is in Chromium; the fallback keeps this drawable if it ever is not.
-        if (typeof (ctx as CanvasRenderingContext2D).roundRect === 'function') {
-          ;(ctx as CanvasRenderingContext2D).roundRect(left, top, plateWidth, height, radius)
-        } else {
-          ctx.rect(left, top, plateWidth, height)
-        }
-        ctx.fill()
-      }
-
-      for (let i = 0; i < laid.lines.length; i += 1) {
-        const line = laid.lines[i] ?? ''
-        const y = anchor.firstBaseline + i * laid.lineHeight
-
-        if (style.shadow) {
-          ctx.shadowColor = style.shadow.color
-          ctx.shadowBlur = Math.max(0, finite(style.shadow.blur, 0))
-          ctx.shadowOffsetX = finite(style.shadow.offsetX, 0)
-          ctx.shadowOffsetY = finite(style.shadow.offsetY, 0)
-        }
-        if (style.stroke && style.stroke.width > 0) {
-          ctx.lineWidth = style.stroke.width
-          ctx.strokeStyle = style.stroke.color
-          ctx.lineJoin = 'round'
-          ctx.strokeText(line, anchor.x, y)
-        }
-        // The fill must not cast a second shadow over the stroke it sits inside.
-        ctx.shadowColor = 'transparent'
-        ctx.shadowBlur = 0
-        ctx.shadowOffsetX = 0
-        ctx.shadowOffsetY = 0
-        ctx.fillStyle = style.color
-        ctx.fillText(line, anchor.x, y)
-      }
+      paintText(ctx, plan, shadowScale, units)
 
       return fit
     } finally {
@@ -1017,10 +1141,14 @@ export class Compositor {
     const target = sourceSecondsAt(item, asset, frame, fps)
     // Half a frame while scrubbing: closer than that is the same picture, and a seek that
     // lands on the same picture costs a decode for nothing.
-    const tolerance = mode === 'playback' ? DRIFT_TOLERANCE_SECONDS : 0.5 / fps
+    // A reversed clip, or a held frame of a ramp, cannot be played: it is stepped — paused and
+    // seeked to each frame like a scrub (`transportFor`).
+    const transport = mode === 'playback' ? transportFor(item, frame) : null
+    const running = transport !== null && transport.mode === 'play'
+    const tolerance = running ? DRIFT_TOLERANCE_SECONDS : 0.5 / fps
 
-    if (mode === 'playback') {
-      element.playbackRate = playbackRateFor(item.speed)
+    if (transport !== null && transport.mode === 'play') {
+      element.playbackRate = transport.rate
       if (element.paused) {
         // Rejected autoplay is not fatal — the picture still advances by seeking, and the
         // audio engine resumes the context on the next user gesture.
@@ -1245,7 +1373,7 @@ export function elementSlots(drawing: Item[]): Map<string, number> {
  * Trims and moves of a linked pair keep all four equal on both.
  */
 export function sameSourceMoment(a: Item, b: Item): boolean {
-  return a.assetId === b.assetId && a.from === b.from && a.sourceStartUs === b.sourceStartUs && a.speed === b.speed
+  return a.assetId === b.assetId && a.from === b.from && sameSourceTiming(a, b)
 }
 
 export interface Box {

@@ -28,6 +28,8 @@ import { editingPrefs } from '@/store/editing-prefs'
 import { ASSET_DRAG_TYPE } from './MediaPanel'
 import { decodeTransitionDrag, dropJunction, TRANSITION_DRAG_TYPE } from '@/lib/transitionDrag'
 import { applyTransitionAt } from './library/transitions'
+import { addEffectTo } from './library/VideoEffects'
+import { decodeEffectDrag, EFFECT_DRAG_TYPE, effectDropTarget } from '@/lib/effectDrag'
 import { junctionsForTrack, type Junction } from '@/lib/junctions'
 import { snapFrame, snapTargets } from '@/lib/snap'
 import { Clip } from './Clip'
@@ -36,6 +38,7 @@ import { TransitionDialog } from './TransitionDialog'
 import { hideCoveredRulerLabels, TimelineRuler } from './TimelineRuler'
 import { TimelineToolbar } from './TimelineToolbar'
 import { TrackHeader } from './TrackHeader'
+import { trackNumbers } from '@shared/track-order'
 import { ClipDialogs, clipMenuEntries, rippleDeleteEntries, type ClipMenuPage } from './ClipCommands'
 import { detachToEntries, rippleDeleteThisTrack, trimModeEntries } from './clipMenuExtras'
 import { canDetachAudio, canReattachAudio, isLinked, runAudioLink } from './timeline/audioLink'
@@ -44,6 +47,7 @@ import { TRIM_TOOL_MODES, useTimelineTool } from '@/lib/timelineTool'
 import { pointerHint } from '@/lib/pointerHint'
 import { planTrackShift, type TrackMove } from '@shared/track-move'
 import { applyRippleTrim, rippleHeadRoom } from './timeline/rippleTrim'
+import { addAdjustmentLayerHere } from './AdjustmentLayerButton'
 
 const CLIP_MENU_PAGE_NAME: Record<ClipMenuPage, string> = { main: '', trim: 'Trim', audio: 'Audio', ripple: 'Ripple Delete' }
 
@@ -244,12 +248,7 @@ export function Timeline(): ReactNode {
   // Listed top to bottom as the picture stacks: the front video layer first, audio below.
   const ordered = useMemo(() => displayOrder(tracks), [tracks])
   // Resolve's track numbers: V1 is the first video track in the stack (drawn lowest), A1 the first audio.
-  const badges = useMemo(() => {
-    const out = new Map<string, string>()
-    const count = { video: 0, audio: 0 }
-    for (const track of tracks) out.set(track.id, `${track.kind === 'video' ? 'V' : 'A'}${++count[track.kind]}`)
-    return out
-  }, [tracks])
+  const badges = useMemo(() => trackNumbers(tracks), [tracks])
   const heightOf = useCallback(
     (track: Track): number => trackHeightFor(track.kind, trackSizes[track.id]),
     [trackSizes]
@@ -542,7 +541,7 @@ export function Timeline(): ReactNode {
         const bounds = trimBounds(item, footageUs, timeline.fps)
         if (current.edge === 'start') {
           // A ripple head keeps the clip's start, so frame 0 does not limit it; the footage does.
-          const earliest = current.ripple ? item.from - rippleHeadRoom(item, timeline.fps, footageUs > 0) : bounds.earliestFrom
+          const earliest = current.ripple ? item.from - rippleHeadRoom(item, timeline.fps, footageUs > 0, footageUs) : bounds.earliestFrom
           const from = Math.max(earliest, Math.min(frame, itemEnd(item) - 1))
           return { ...current, from, durationInFrames: itemEnd(item) - from }
         }
@@ -905,6 +904,11 @@ export function Timeline(): ReactNode {
             onSelect: () => addTextAt(laneMenu.frame, laneMenuTrack.id)
           },
           {
+            // Always above everything, whichever lane was clicked: a layer changes the tracks below it.
+            label: 'Add adjustment layer at this frame',
+            onSelect: () => addAdjustmentLayerHere(laneMenu.frame)
+          },
+          {
             label: 'Add marker here',
             shortcut: shortcutOf('mark.add'),
             onSelect: () => useEditor.getState().addMarker(laneMenu.frame)
@@ -1080,6 +1084,13 @@ export function Timeline(): ReactNode {
                       if (dropCut?.trackId !== track.id || dropCut.cutFrame !== cut.cutFrame) setDropCut({ trackId: track.id, cutFrame: cut.cutFrame })
                       return
                     }
+                    if (event.dataTransfer.types.includes(EFFECT_DRAG_TYPE)) {
+                      // A video effect lands on the clip under the pointer; over a gap it is not a drop.
+                      if (!timeline || !effectDropTarget(project, timeline, track.id, frameAtClientX(event.clientX))) return
+                      event.preventDefault()
+                      event.dataTransfer.dropEffect = 'copy'
+                      return
+                    }
                     if (!event.dataTransfer.types.includes(ASSET_DRAG_TYPE)) return
                     event.preventDefault()
                     event.dataTransfer.dropEffect = 'copy'
@@ -1098,6 +1109,20 @@ export function Timeline(): ReactNode {
                       }
                       const cut = timeline ? dropJunction(project, timeline, track.id, frameAtClientX(event.clientX), pixelsPerFrame) : null
                       if (cut) applyTransitionAt(cut, transition.kind, transition.label)
+                      return
+                    }
+                    const effect = decodeEffectDrag(event.dataTransfer.getData(EFFECT_DRAG_TYPE))
+                    if (effect) {
+                      event.preventDefault()
+                      const target = timeline ? effectDropTarget(project, timeline, track.id, frameAtClientX(event.clientX)) : null
+                      if (!target) return
+                      if (!target.ok) {
+                        useEditor.getState().notify(target.reason)
+                        return
+                      }
+                      // Selected, so the inspector shows the clip the effect went to.
+                      useEditor.getState().select([target.item.id])
+                      addEffectTo([target.item], effect.kind, effect.label)
                       return
                     }
                     const assetId = event.dataTransfer.getData(ASSET_DRAG_TYPE)

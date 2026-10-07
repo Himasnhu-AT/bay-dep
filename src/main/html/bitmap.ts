@@ -59,3 +59,23 @@ export function describeSizeMismatch(
     `size when the frame was taken.`
   )
 }
+
+/**
+ * How different two captures are: the mean absolute luma difference, 0–255.
+ *
+ * This is the film oracle's picture energy (`@shared/film-oracle`): 0 is the same picture, a
+ * hard cut between unrelated scenes is tens. Both buffers are `toBitmap()` output — BGRA,
+ * premultiplied — so a transparent pixel is already black here and a composition with no
+ * background of its own is measured as it would sit over black. Null when the two are not the
+ * same size, which is a capture taken mid-resize and not a difference.
+ */
+export function lumaDelta(a: Uint8Array, b: Uint8Array): number | null {
+  if (a.length !== b.length || a.length === 0) return null
+  let sum = 0
+  for (let i = 0; i < a.length; i += CHANNELS) {
+    const ya = 0.114 * a[i]! + 0.587 * a[i + 1]! + 0.299 * a[i + 2]!
+    const yb = 0.114 * b[i]! + 0.587 * b[i + 1]! + 0.299 * b[i + 2]!
+    sum += Math.abs(ya - yb)
+  }
+  return sum / (a.length / CHANNELS)
+}

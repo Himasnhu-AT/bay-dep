@@ -5,14 +5,15 @@
  * The rules, from the owner's decision:
  * - bay works offline. A check that cannot reach Google changes nothing before 14 days.
  * - 14 consecutive days without a successful verification → locked; sign in again.
- * - A definitive "no" locks at once: no grant (the access doc is 404), an unverified email, or a
- *   refresh token Google refuses (`USER_DISABLED`, `TOKEN_EXPIRED`, `INVALID_REFRESH_TOKEN`,
+ * - Any account Google still signs in with a verified email is entitled; there is no grant to look up.
+ * - A definitive "no" locks at once: an unverified email, or a refresh token Google refuses
+ *   (`USER_DISABLED` — how the owner revokes an account — `TOKEN_EXPIRED`, `INVALID_REFRESH_TOKEN`,
  *   `USER_NOT_FOUND`).
  * - Setting the clock back does not buy more offline time: ages are measured from the latest time
  *   bay has ever seen (`highWaterAt`), not from whatever the clock says now.
  */
 
-import { OFFLINE_GRACE_MS, REFERRAL_LIMIT, type AccessStatus } from '@shared/access'
+import { OFFLINE_GRACE_MS, type AccessStatus } from '@shared/access'
 
 export interface AccessRecord {
   email: string
@@ -22,14 +23,20 @@ export interface AccessRecord {
   highWaterAt: number
   /** The most recent attempt failed without a definitive answer (offline, 5xx). */
   lastAttemptFailed: boolean
-  referralsUsed: number | null
-  /** A definitive refusal. Cleared by a fresh sign-in, or — for `no-access` only — a later check that finds a grant. */
-  lock: { kind: 'no-access'; reason: 'no-grant' | 'unverified-email' } | { kind: 'revoked'; code: string } | null
+  /**
+   * A definitive refusal. Cleared by a fresh sign-in, or — for `no-access` only — a later check
+   * that finds the account entitled.
+   *
+   * `no-grant` is legacy: builds from when bay was invite-only wrote it for a verified account with
+   * no grant. Nothing produces it now. A record read with it re-verifies at once (it is a
+   * `no-access` lock), and until that succeeds it reads as `signed-out` — not `no-access`, whose
+   * sentence would be false, and not `checking`, which offers no way forward while offline.
+   */
+  lock: { kind: 'no-access'; reason: 'unverified-email' | 'no-grant' } | { kind: 'revoked'; code: string } | null
 }
 
 export type VerifyOutcome =
-  | { kind: 'granted'; email: string; uid: string; referralsUsed: number | null }
-  | { kind: 'no-grant'; email: string; uid: string }
+  | { kind: 'granted'; email: string; uid: string }
   | { kind: 'unverified-email'; email: string; uid: string }
   | { kind: 'revoked'; code: string }
   /** Could not reach Google, or it answered 5xx / 429. Not an answer about access. */
@@ -52,8 +59,8 @@ export function pastGrace(record: AccessRecord, now: number): boolean {
 /**
  * Whether a re-verification with the stored token may change this record.
  *
- * - No grant yet (`no-access`): yes — someone may refer this account while bay waits, and the
- *   next check should let them in without another trip through the browser.
+ * - `no-access`: yes — the user may verify their email while bay waits (or the lock is a legacy
+ *   `no-grant`), and the next check should let them in without another trip through the browser.
  * - Revoked: no — Google has said the token is dead.
  * - Past 14 days offline: no — the rule is "sign in again", so a background success must not
  *   quietly undo the lock.
@@ -93,10 +100,8 @@ export function applyVerification(
         lastVerifiedAt: now,
         highWaterAt,
         lastAttemptFailed: false,
-        referralsUsed: outcome.referralsUsed ?? prior?.referralsUsed ?? null,
         lock: null
       }
-    case 'no-grant':
     case 'unverified-email':
       return {
         email: outcome.email,
@@ -104,8 +109,7 @@ export function applyVerification(
         lastVerifiedAt: prior?.lastVerifiedAt ?? 0,
         highWaterAt,
         lastAttemptFailed: false,
-        referralsUsed: prior?.referralsUsed ?? null,
-        lock: { kind: 'no-access', reason: outcome.kind === 'no-grant' ? 'no-grant' : 'unverified-email' }
+        lock: { kind: 'no-access', reason: 'unverified-email' }
       }
     case 'revoked':
       if (!prior) return null
@@ -120,7 +124,11 @@ export function applyVerification(
 /** What the gate reports for a stored record at `now`. */
 export function statusOf(record: AccessRecord | null, now: number, persisted: boolean): AccessStatus {
   if (!record) return { state: 'signed-out' }
-  if (record.lock?.kind === 'no-access') return { state: 'no-access', email: record.email, reason: record.lock.reason }
+  if (record.lock?.kind === 'no-access') {
+    return record.lock.reason === 'no-grant'
+      ? { state: 'signed-out' }
+      : { state: 'no-access', email: record.email, reason: record.lock.reason }
+  }
   if (record.lock?.kind === 'revoked') return { state: 'revoked', email: record.email, code: record.lock.code }
   if (pastGrace(record, now)) return { state: 'locked-offline', email: record.email, lastVerifiedAt: record.lastVerifiedAt }
   return {
@@ -130,12 +138,15 @@ export function statusOf(record: AccessRecord | null, now: number, persisted: bo
     lockAt: record.lastVerifiedAt + OFFLINE_GRACE_MS,
     offline: record.lastAttemptFailed,
     persisted,
-    referralsLeft: record.referralsUsed === null ? null : Math.max(0, REFERRAL_LIMIT - record.referralsUsed),
     bypass: false
   }
 }
 
-/** A record read off disk, checked field by field; anything malformed is no record at all. */
+/**
+ * A record read off disk, checked field by field; anything malformed is no record at all. Keys an
+ * older build wrote and this one no longer keeps (`referralsUsed`, from the referral days) are
+ * ignored, not refused.
+ */
 export function parseRecord(value: unknown): AccessRecord | null {
   if (!value || typeof value !== 'object') return null
   const v = value as Record<string, unknown>
@@ -155,7 +166,6 @@ export function parseRecord(value: unknown): AccessRecord | null {
     lastVerifiedAt: v['lastVerifiedAt'],
     highWaterAt: v['highWaterAt'],
     lastAttemptFailed: v['lastAttemptFailed'] === true,
-    referralsUsed: num(v['referralsUsed']) ? v['referralsUsed'] : null,
     lock: lock ?? null
   }
 }

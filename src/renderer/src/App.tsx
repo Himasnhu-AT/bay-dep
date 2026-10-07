@@ -7,13 +7,18 @@ import { useCommands } from '@/lib/commands'
 import { registerMcpExecutor } from '@/mcp'
 import { useEditor } from '@/store/editor'
 import { ExportDialog } from '@/editor/ExportDialog'
+import { RecoveryDialog } from '@/editor/RecoveryDialog'
+import { discardUnsavedWork, startAutosave } from '@/lib/autosave'
 import { ShortcutsDialog } from '@/editor/ShortcutsDialog'
+import { NewProjectDialog } from '@/editor/NewProjectDialog'
 import { ProjectsHome } from '@/home/ProjectsHome'
 import { Workspace } from '@/editor/workspace/Workspace'
 import { SettingsDialog } from '@/settings/SettingsDialog'
 import { ProjectSettingsDialog } from '@/settings/ProjectSettingsDialog'
+import { usePageViews } from '@/settings/TelemetryNotice'
 import { Button, Modal } from '@/components'
 import type { Project } from '@shared/project'
+import type { ProjectHost } from '@shared/host'
 import { IMPORT_FILES_EVENT } from '@/lib/agentAttachments'
 
 
@@ -73,7 +78,9 @@ export function App(): ReactNode {
   //
   // Every way out of a project goes through `guardLeave`: Home, File › New Project, File ›
   // Open… and a document handed over by Finder. Each of them replaces the project and clears
-  // its undo history, and nothing autosaves, so an unguarded one is a keystroke that loses work.
+  // its undo history, so an unguarded one is a keystroke that loses work. Autosave
+  // (`@/lib/autosave`) is for the exits nobody chose — a crash, a force quit — and "Don't save"
+  // here removes its sidecar: work the user chose to leave is not offered back to them.
   const [leaving, setLeaving] = useState<{ to: string; go: () => void } | null>(null)
   const guardLeave = useCallback((to: string, go: () => void): void => {
     const { dirty, screen } = useEditor.getState()
@@ -85,6 +92,10 @@ export function App(): ReactNode {
     setLeaving(null)
     go?.()
   }, [leaving])
+  const leaveWithoutSaving = useCallback((): void => {
+    void discardUnsavedWork(useEditor.getState().project)
+    leave()
+  }, [leave])
   const leaveToHome = useCallback((): void => {
     void bay()?.agent.dispose()
     showHome()
@@ -152,16 +163,30 @@ export function App(): ReactNode {
    * A new project is opened the way a chosen one is: straight in from the projects screen, and
    * through `switchProject` from the editor, which ends the agent's session about the old one.
    */
-  const onNewProject = useCallback((): void => {
-    // Asked before creating, not after: `create` writes the new `.bay` at once.
-    guardLeave('starting a new project', () => {
-      void call('Create project', (client) => client.project.create()).then((project) => {
-        if (!project) return
-        if (useEditor.getState().screen === 'home') enterProject(project)
-        else switchProject(project)
+  const [choosingHost, setChoosingHost] = useState(false)
+  // The command only asks the one question — which editor (`NewProjectDialog`). Nothing is
+  // created, and nothing about the open project is asked, until that is answered: Escape there
+  // costs nothing.
+  const onNewProject = useCallback((): void => setChoosingHost(true), [])
+  const createProject = useCallback(
+    (host: ProjectHost): void => {
+      setChoosingHost(false)
+      // The unsaved-changes question comes after the choice and before creating, not after:
+      // `create` writes the new `.bay` at once, and this is the moment the open project is
+      // actually about to be replaced.
+      guardLeave('starting a new project', () => {
+        void call('Create project', (client) => client.project.create({ host })).then((project) => {
+          if (!project) return
+          if (useEditor.getState().screen === 'home') enterProject(project)
+          else switchProject(project)
+        })
       })
-    })
-  }, [guardLeave, enterProject, switchProject])
+    },
+    [guardLeave, enterProject, switchProject]
+  )
+  const newProjectDialog = (
+    <NewProjectDialog open={choosingHost} onClose={() => setChoosingHost(false)} onCreate={createProject} />
+  )
 
   /**
    * macOS handing bay a document while it runs. Every *menu item* arrives as a registry
@@ -189,6 +214,9 @@ export function App(): ReactNode {
    * outlives every panel.
    */
   useEffect(() => registerMcpExecutor(), [])
+
+  // Autosave and the crash-recovery question, for the life of the window (`@/lib/autosave`).
+  useEffect(() => startAutosave(), [])
 
   /**
    * The agent's events, subscribed here for the same reason.
@@ -307,6 +335,9 @@ export function App(): ReactNode {
     }
   }, [importPaths, notify])
 
+  // Which workspace page is showing, only while a project is open (`page_view`, usage telemetry).
+  usePageViews(screen === 'editor')
+
   // After every hook, so switching screens never changes the order React sees them in.
   if (screen === 'home') {
     return (
@@ -314,6 +345,7 @@ export function App(): ReactNode {
         <ProjectsHome />
         <SettingsDialog />
         <ShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
+        {newProjectDialog}
       </>
     )
   }
@@ -324,8 +356,10 @@ export function App(): ReactNode {
 
       <ExportDialog open={exportOpen} onClose={() => setExportOpen(false)} />
       <ProjectSettingsDialog />
+      <RecoveryDialog />
       <SettingsDialog />
       <ShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
+      {newProjectDialog}
 
       <Modal
         open={leaving !== null}
@@ -336,7 +370,7 @@ export function App(): ReactNode {
           // macOS order: the destructive choice apart on the left, Cancel beside the default.
           // "Don't save" throws work away, so it reads as the one that does.
           <>
-            <Button variant="danger" onClick={leave} className="mr-auto">
+            <Button variant="danger" onClick={leaveWithoutSaving} className="mr-auto">
               Don't save
             </Button>
             <Button variant="subtle" onClick={() => setLeaving(null)}>

@@ -3,8 +3,9 @@
  * angle at every cut, share this so a switched angle's pieces play exactly what the whole did.
  */
 
-import { framesToUs, itemEnd, type Frames, type Item, type Transition } from './project'
+import { itemEnd, sourceEdgeAt, type Frames, type Item, type Transition } from './project'
 import { sliceKeyframes } from './keyframes'
+import { splitAnimation } from './animation'
 
 /**
  * Cuts `item` at timeline frame `at`, shortening it to the left half (mutated) and returning the
@@ -24,7 +25,9 @@ export function splitItemAt(item: Item, at: Frames, fps: number, id: string, tra
     id,
     from: at,
     durationInFrames: rightDuration,
-    sourceStartUs: item.sourceStartUs + Math.round(framesToUs(leftDuration, fps) * item.speed),
+    // Where the left half stops reading — through the one mapping, so a reversed or ramped clip
+    // splits into two that play exactly what the whole did.
+    sourceStartUs: sourceEdgeAt(item, leftDuration, fps),
     layout: { ...item.layout },
     fadeInFrames: 0,
     // Each half keeps the keys that shape it, so the pair draws exactly what the whole did.
@@ -32,6 +35,14 @@ export function splitItemAt(item: Item, at: Frames, fps: number, id: string, tra
   }
   if (!right.keyframes) delete right.keyframes
   if (item.keyframes) item.keyframes = sliceKeyframes(item.keyframes, 0, leftDuration)
+  // The left half still arrives and the right half still leaves; neither does both.
+  if (item.animation) {
+    const [leftAnimation, rightAnimation] = splitAnimation(item.animation)
+    if (leftAnimation) item.animation = leftAnimation
+    else delete item.animation
+    if (rightAnimation) right.animation = rightAnimation
+    else delete right.animation
+  }
   item.durationInFrames = leftDuration
   item.fadeOutFrames = Math.min(item.fadeOutFrames, leftDuration)
   right.fadeOutFrames = Math.min(right.fadeOutFrames, rightDuration)

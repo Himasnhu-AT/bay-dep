@@ -17,27 +17,20 @@ import type { ReactNode } from 'react'
 import { ChevronLeft, ChevronRight, Diamond } from 'lucide-react'
 import { KEYFRAME_PROPERTIES, type Item, type KeyframeProperty } from '@shared/project'
 import { keyframeValueAt } from '@shared/keyframes'
+import { KEYFRAME_REGISTRY } from '@shared/keyframe-registry'
 import { IconButton } from '@/components'
 import { cn } from '@/lib/cn'
 import { useEditor } from '@/store/editor'
 
-/** The label a person reads for each property, in the diamond's tooltip. */
-const NAMES: Record<KeyframeProperty, string> = {
-  opacity: 'opacity',
-  left: 'X',
-  top: 'Y',
-  width: 'width',
-  height: 'height',
-  rotation: 'rotation',
-  scale: 'scale',
-  volume: 'volume'
+/** The label a person reads for each property, in the diamond's tooltip: the registry's, in lower case. */
+const nameOf = (property: KeyframeProperty): string => {
+  const label = KEYFRAME_REGISTRY[property].label
+  return label === 'X' || label === 'Y' ? label : label.toLowerCase()
 }
 
 /** The stored value a property holds when it has no keys. */
 export function staticValue(item: Item, property: KeyframeProperty): number {
-  if (property === 'volume') return item.volume
-  if (property === 'scale') return item.layout.scale ?? 1
-  return item.layout[property]
+  return KEYFRAME_REGISTRY[property].read(item)
 }
 
 /** Item-relative playhead, or null when the playhead is not over the clip (no key can go there). */
@@ -66,7 +59,7 @@ export function KeyDiamond({
   const animated = Boolean(keys && keys.length > 0)
   const frame = relativeFrame(item, playhead)
   const onKey = animated && frame !== null && keys!.some((key) => key.frame === frame)
-  const name = NAMES[property]
+  const name = nameOf(property)
 
   const label = onKey
     ? `Remove the ${name} key at the playhead`

@@ -50,7 +50,7 @@ utilities it generates. Do not write a hex value into a component.
 | Token | Value | Use |
 |---|---|---|
 | `paper` | `#f3f2ee` | The reading ground. A warm neutral, not cream: it sits beside the app's neutral greys. |
-| `paper-raised` | `#fbfaf8` | The inside of a field. Nothing else. |
+| `paper-raised` | `#fbfaf8` | The inside of a field, and a crash's stack on `/admin`. Nothing else. |
 | `ink` | `#151513` | Headlines and anything read first, on paper. |
 | `ink-soft` | `#45443f` | Body copy on paper. Most words on the site. |
 | `muted` | `#6a6962` | Captions, the quiet clause of a headline, a field's edge. |
@@ -290,9 +290,8 @@ marketing pages have five client components and no more: `Reveal`, which needs a
 observer, the nav, which needs the current path, `ScrollSequence`, which needs scroll
 position, `BeforeAfter`, which needs a pointer and two videos, and `DepthFallback`, which
 does nothing where CSS scroll timelines work. The
-access pages (`/waitlist`, `/desktop/sign-in`, `/admin`) are server
-pages around one client component each, in `src/components/access/`, because signing in
-is interactive by nature.
+sign-in pages (`/desktop/sign-in`, `/admin`) are server pages around one client
+component each, in `src/components/access/`, because signing in is interactive by nature.
 
 ```tsx
 <main className="flex-1 pb-28">
@@ -341,9 +340,9 @@ is interactive by nature.
 - **`ActionLink`** is the site's button: a 48px pill in `accent` with night text on it
   (6.2:1), an arrow that nudges 4px, `scale(0.98)` while pressed. The same on both grounds.
   One per screen. **`ActionButton`** is the same for an action that is not a navigation
-  (join, approve); `quiet` makes it an underlined word for the secondary action beside a
-  primary one (Sign in with Google under the waitlist's join form, Sign out, Revoke), so
-  a screen still asks for one thing. Disabled is `line` fill and `muted`
+  (sign in, continue); `quiet` makes it an underlined word for the secondary action beside a
+  primary one (Sign out, Reload, the dashboard's window switch), so a screen still asks
+  for one thing. Disabled is `line` fill and `muted`
   text.
 - **`TextLink`** is a link in running copy or beside a button: underlined, `accent-ink`
   on paper and `accent` on night, `arrow` for the secondary action next to an
@@ -363,6 +362,18 @@ is interactive by nature.
 - **`StepList`** is what ran, in order: one `text-sm` line per step, a tool's name in the app's
   monospace and `accent-ink` (the "feature's tool name" mark above), the rest in `ink-soft`.
   `/compare`.
+- **`Stat`** is one number and what it counts, for the owner's dashboard on `/admin`: the
+  figure at `text-headline` 600 in `ink`, `tabular-nums`, over a `text-sm` `muted` label.
+  No box, no rule; set several in a grid (two columns on a phone, four from `sm`).
+- **`BarList`** is counts as horizontal bars, `/admin` only: a label in `ink-soft`
+  (truncated), a 6px track in `line` holding a bar in `ink-soft` scaled to the largest
+  value, and the number in `ink`, tabular, with an optional `muted` note. Neutral on
+  purpose: a bar is data, not an action, so it never takes the accent. No axis, no
+  gridlines, no chart library. The dashboard's crash rows are a ruled list of native
+  `<details>`: the count, the newest message and a `text-xs` `muted` line of process,
+  installs, first and last seen and versions; opened, the stack in the app's monospace
+  on `paper-raised` with a 1px `line` edge and 12px corners (paper, not night: it is
+  data being read, not a line to type).
 - **`PullQuote`** is the closing statement, set at `text-quote` in `ink`, at most one per
   page.
 - **`AppPlate` / `AgentPanel` / `ScrollSequence`** are the figure, its agent panel and the

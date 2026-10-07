@@ -8,12 +8,13 @@
  * last, because until then every stream is still in its own local time.
  */
 
-import type { Item, Project, Timeline } from '@shared/project'
-import { US_PER_SECOND, effectiveSpeed, findAsset, playableTimeline, sourceTimeAt, trackAudible } from '@shared/project'
+import type { Item, Project, Timeline, Track } from '@shared/project'
+import { US_PER_SECOND, effectiveSpeed, findAsset, playableTimeline, sourceSpanOf, sourceTimeAt, trackAudible } from '@shared/project'
 import type { CompositionSound } from '@shared/composition'
 import { audibleSpan, itemAudioGainAt, panGains, routedPanGains } from '@shared/audio-gain'
 import { volumeMayBeAudible } from '@shared/keyframes'
 import { scheduleCompositionSounds, type ScheduledSound } from '@shared/composition-audio'
+import { ffmpegBands, itemEffectPlan, trackBusBands, type AudioEffect } from '@shared/audio-effects'
 
 export interface AudioGraph {
   /** One `-i` per entry, in order; the filter labels index into this. */
@@ -84,6 +85,7 @@ function seconds(value: number): string {
 
 interface Candidate {
   item: Item
+  track: Track
   path: string
   /**
    * Frames in which the item is *heard* inside the export range — its own span widened into
@@ -125,7 +127,7 @@ function candidates(
       const startFrame = Math.max(span.firstFrame, fromFrame)
       const endFrame = Math.min(span.endFrame, toFrameExclusive)
       if (endFrame <= startFrame) continue
-      out.push({ item, path: asset.path, startFrame, endFrame })
+      out.push({ item, track, path: asset.path, startFrame, endFrame })
     }
   }
   return out
@@ -271,6 +273,28 @@ function soundCandidates(
   return out
 }
 
+/** One processed file an export needs before its graph can be built: a clip and the stages baked into its sound. */
+export interface BakeNeed {
+  itemId: string
+  /** The clip's source file. */
+  path: string
+  effects: readonly AudioEffect[]
+}
+
+/**
+ * Every bake the graph for this range will read — the same clips `buildAudioGraph` walks, so the
+ * list cannot name a clip the graph skips or miss one it plays. The caller renders each
+ * (`main/audio-fx`) and hands the paths back as `bakes`, keyed by item id.
+ */
+export function bakesNeeded(project: Project, timeline: Timeline, fromFrame: number, toFrameExclusive: number): BakeNeed[] {
+  const out: BakeNeed[] = []
+  for (const { item, track, path } of candidates(project, playableTimeline(timeline), fromFrame, toFrameExclusive)) {
+    const plan = itemEffectPlan(track, item)
+    if (plan.bake.length > 0) out.push({ itemId: item.id, path, effects: plan.bake })
+  }
+  return out
+}
+
 /**
  * Returns null when the timeline has no audible audio in the range — the caller then knows
  * there is nothing to mux, which is different from failing to build a graph.
@@ -288,7 +312,13 @@ export function buildAudioGraph(
    * Channel count per input path, from ffprobe (`sourceChannels` in encode.ts). A path missing
    * here is formatted as before, so a probe that failed costs 3 dB on a mono file, not the export.
    */
-  channels: ReadonlyMap<string, number> = new Map()
+  channels: ReadonlyMap<string, number> = new Map(),
+  /**
+   * The processed file for each clip whose chain has a baked stage (`bakesNeeded`), by item id.
+   * A clip that needs one and has none here **throws**: the alternative is a file with the
+   * unprocessed sound in it and nothing to say so.
+   */
+  bakes: ReadonlyMap<string, string> = new Map()
 ): AudioGraph | null {
   // A disabled clip is not heard in the file, as it is not heard in the preview (`AudioEngine.update`).
   timeline = playableTimeline(timeline)
@@ -300,6 +330,8 @@ export function buildAudioGraph(
   const inputs: string[] = []
   const chains: string[] = []
   const labels: string[] = []
+  /** The track each label's sound is on, for the tracks whose bus has effects. */
+  const trackOfLabel = new Map<string, string>()
 
   // A clip: read exactly the source it is heard over, bring it to speed, put it in place, then
   // apply the shared gain as an envelope in export seconds — the same function the preview's
@@ -315,13 +347,39 @@ export function buildAudioGraph(
     // did. Before `from` this reads the handle a transition was resolved against;
     // `resolveTransition` only grants a window the footage can cover, so this is non-negative by
     // construction, and clamped only so a malformed item cannot hand ffmpeg a negative start.
-    const sourceStart = Math.max(0, sourceTimeAt(item, candidate.startFrame, fps) / US_PER_SECOND)
+    // A reversed clip is heard over the same footage its picture shows, earliest moment first in
+    // the file: the stretch between the two boundaries of what is heard, which `areverse` then
+    // turns round. (`areverse` holds the whole stretch in memory — about 23 MB a minute.)
+    const reversed = item.reverse === true
+    const sourceStart = reversed
+      ? Math.max(0, sourceSpanOf(item, fps, candidate.startFrame - item.from, candidate.endFrame - item.from).startUs / US_PER_SECOND)
+      : Math.max(0, sourceTimeAt(item, candidate.startFrame, fps) / US_PER_SECOND)
     const heard = (candidate.endFrame - candidate.startFrame) / fps
 
-    const steps: string[] = formatSteps(candidate.path, channels)
+    // The clip's effects. A baked stage is not a filter here: the clip reads its processed file,
+    // which has the source's own timing, so everything below is unchanged. Live bands go after
+    // the speed change — the preview's nodes hear the element's output, which is already at
+    // speed — and before the gain, fades and pan: an insert, ahead of the fader.
+    const plan = itemEffectPlan(candidate.track, item)
+    let path = candidate.path
+    if (plan.bake.length > 0) {
+      const baked = bakes.get(item.id)
+      if (!baked) {
+        throw new Error(
+          `The processed sound for clip ${item.id} (${plan.bake.map((e) => e.kind).join(', ')}) was not rendered, ` +
+            'so the export would carry its unprocessed sound.'
+        )
+      }
+      path = baked
+    }
+
+    const steps: string[] = formatSteps(path, channels)
     steps.push(`atrim=start=${seconds(sourceStart)}:duration=${seconds(heard * speed)}`)
     steps.push('asetpts=N/SR/TB')
+    if (reversed) steps.push('areverse', 'asetpts=N/SR/TB')
     steps.push(...atempoChain(speed))
+    const clipBands = ffmpegBands(plan.clip)
+    if (clipBands) steps.push(clipBands)
     const delayMs = Math.round(((candidate.startFrame - fromFrame) / fps) * 1000)
     if (delayMs > 0) steps.push(`adelay=${delayMs}:all=1`)
 
@@ -346,9 +404,10 @@ export function buildAudioGraph(
     if (pan) steps.push(pan)
 
     const label = `a${index}`
-    inputs.push(candidate.path)
+    inputs.push(path)
     chains.push(`[${index}:a]${steps.join(',')}[${label}]`)
     labels.push(label)
+    trackOfLabel.set(label, candidate.track.id)
   })
 
   // A composition's declared sounds: the same trim → speed → delay shape as a clip, with the
@@ -380,6 +439,26 @@ export function buildAudioGraph(
     inputs.push(entry.sound.path)
     chains.push(`[${index}:a]${steps.join(',')}[${label}]`)
     labels.push(label)
+    trackOfLabel.set(label, candidate.item.trackId)
+  }
+
+  // A track whose bus has bands: its sounds are summed first, the bands run on the sum, and the
+  // sum takes their place in the mix — the track's own bus, as in the preview, where the bands
+  // sit between the track's gain node and its meter. A track with none adds no filter, so a
+  // timeline without track effects writes the graph it always wrote.
+  for (const [busIndex, track] of timeline.tracks.entries()) {
+    const busBands = ffmpegBands(trackBusBands(track))
+    if (!busBands) continue
+    const members = labels.filter((label) => trackOfLabel.get(label) === track.id)
+    if (members.length === 0) continue
+    const bus = `bus${busIndex}`
+    const sum =
+      members.length === 1
+        ? `[${members[0]!}]`
+        : `${members.map((l) => `[${l}]`).join('')}amix=inputs=${members.length}:normalize=0:duration=longest:dropout_transition=0,`
+    chains.push(`${sum}${busBands}[${bus}]`)
+    labels.splice(labels.indexOf(members[0]!), 1, bus)
+    for (const member of members.slice(1)) labels.splice(labels.indexOf(member), 1)
   }
 
   const mixLabel = 'aout'

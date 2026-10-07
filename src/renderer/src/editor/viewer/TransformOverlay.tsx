@@ -15,7 +15,9 @@
 
 import { useEffect, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode } from 'react'
 import { findAsset, findItem, normaliseCrop, type Item, type KeyframeProperty, type Layout } from '@shared/project'
-import { animatedItemAt } from '@shared/keyframes'
+// The keyed box, without animation presets: the handles sit where the clip *rests*, so dragging one
+// during an In sets the resting position instead of baking the preset's offset into the layout.
+import { keyedItemAt } from '@shared/keyframes'
 import { itemsToDraw } from '@/engine/compositor'
 import { requestTextFocus, useViewer } from '@/lib/viewer'
 import { selectTimeline, useEditor } from '@/store/editor'
@@ -60,7 +62,7 @@ function drawnEntries(frame: number): Entry[] {
   const timeline = selectTimeline(state)
   if (!timeline) return []
   return itemsToDraw(state.project, timeline, frame).items.map((stored) => {
-    const item = animatedItemAt(stored, frame)
+    const item = keyedItemAt(stored, frame)
     const track = findItem(timeline, stored.id)?.track
     return { item: stored, frame: itemFrame(item.layout, item.crop), locked: Boolean(track?.locked) }
   })
@@ -155,7 +157,7 @@ export function TransformOverlay({
   const cropMode = useViewer((state) => state.cropMode)
   // In crop mode, the whole uncropped box, dashed: what dragging an edge back out would reveal.
   const cropBox =
-    cropMode && single && !single.locked ? itemFrame(animatedItemAt(single.item, useEditor.getState().playhead).layout) : null
+    cropMode && single && !single.locked ? itemFrame(keyedItemAt(single.item, useEditor.getState().playhead).layout) : null
 
   // Escape leaves crop mode (the app's own Escape only closes its dialogs). Not while a modal is
   // open — Escape there is the modal's.
@@ -296,9 +298,9 @@ export function TransformOverlay({
     const starts = new Map<string, Layout>()
     for (const id of moving) {
       const found = findItem(timeline, id)
-      if (found && !found.track.locked) starts.set(id, animatedItemAt(found.item, state.playhead).layout)
+      if (found && !found.track.locked) starts.set(id, keyedItemAt(found.item, state.playhead).layout)
     }
-    const drawn = animatedItemAt(entry.item, state.playhead)
+    const drawn = keyedItemAt(entry.item, state.playhead)
     const others = target.live
       .filter((e) => e.frame && !starts.has(e.item.id))
       .map((e) => boundsOf(e.frame!))
@@ -367,7 +369,7 @@ export function TransformOverlay({
     let ok = true
     state.transact(() => {
       for (const entry of movable) {
-        const layout = animatedItemAt(entry.item, state.playhead).layout
+        const layout = keyedItemAt(entry.item, state.playhead).layout
         ok = applyPatch(entry.item.id, { left: layout.left + d.x, top: layout.top + d.y }) && ok
       }
     })

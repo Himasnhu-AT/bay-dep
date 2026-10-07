@@ -7,14 +7,39 @@
  * guide itself read as correct. So every ```html block here is read by bay's own composition
  * reader, every block that is a whole document is run against a DOM stand-in and seeked, and no
  * example may lean on a library bay does not ship.
+ *
+ * The one library bay does ship is its own: `<script src="bay-motion.js">`. The stand-in runs the
+ * real generated script for that tag, in document order, so an example written on `BM` is run on
+ * the moves an agent's copy of it would get — and a `BM.` call that does not exist throws here.
  */
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { Script, runInNewContext } from 'node:vm'
+import { Script, createContext, runInContext, type Context } from 'node:vm'
 import { fatalFaults, readComposition } from '../../../shared/composition'
+import * as MOTION from '../../../shared/motion/index'
+import { MOTION_FILE } from '../../../shared/motion-file'
+import {
+  ANCHOR_AREA_SHARE,
+  BEAT_CV_MIN,
+  BEAT_RATIO_MIN,
+  BURST_COUNT,
+  BURST_WINDOW_SECONDS,
+  CARRY_AFTER_SECONDS,
+  CARRY_FAIL_BELOW,
+  CARRY_MOVE_DIAGONALS,
+  CARRY_SCALE_RATIO,
+  CARRY_WARN_BELOW,
+  END_EXEMPT_SECONDS,
+  FAST_PX_PER_FRAME_AT_1080P,
+  FILM_CONTRACT,
+  REST_SECONDS_MIN,
+  STILL_SHARE_MIN
+} from '../../../shared/film-oracle'
+import { BAY_SKILLS } from '../../../shared/skills'
+import { MOTION_SCRIPT } from '../../html/motion-script.generated'
 
 const DIR = join(process.cwd(), 'src', 'main', 'mcp', 'docs', 'compositions')
 
@@ -151,17 +176,45 @@ function standIn(): { document: unknown; styles: () => string } {
   return { document, styles }
 }
 
-function seekable(b: Block): { id: string; timeline: { time: (t: number) => unknown; duration: () => number }; styles: () => string } {
+const SCRIPT_TAG = /<script\b([^>]*)>([\s\S]*?)<\/script>/gi
+
+/**
+ * What a composition window would run for this document, in document order: each inline script,
+ * and for `<script src="bay-motion.js">` the library main writes beside the file. Any other
+ * `src` names a file the example does not come with, so it is refused rather than skipped — a
+ * skipped script is an example "run" without the thing it calls.
+ */
+function pageScripts(b: Block): string[] {
+  return [...b.code.matchAll(SCRIPT_TAG)].map((tag) => {
+    const src = /\bsrc\s*=\s*["']?([^"'\s>]+)/i.exec(tag[1] ?? '')?.[1]
+    if (src === undefined) return tag[2] ?? ''
+    assert.ok(
+      src === MOTION_FILE || src === `./${MOTION_FILE}`,
+      `${where(b)}: loads ${src}. The only script bay puts beside a composition is ${MOTION_FILE}; an example must run with nothing else.`
+    )
+    return MOTION_SCRIPT
+  })
+}
+
+interface Seekable {
+  id: string
+  timeline: { time: (t: number) => unknown; duration: () => number }
+  styles: () => string
+  /** The page's globals, for reading what its scripts defined (`BM`, `window.__film`). */
+  context: Context
+}
+
+function seekable(b: Block): Seekable {
   const { info, faults } = readComposition(b.code)
   assert.ok(info, `${where(b)}: ${faults.map((f) => f.message).join(' ')}`)
   const { document, styles } = standIn()
   // bay's composition preload creates the registry before page scripts run.
   const window = { __timelines: {} as Record<string, unknown> }
-  const scripts = [...b.code.matchAll(INLINE_SCRIPT)].map((m) => m[1] ?? '')
-  const context = { window, document, Math, Number, String, JSON }
-  for (const script of scripts) {
+  // One context for the whole page, so the library's `var BM` is a global the next script sees.
+  const context = createContext({ window, document })
+  for (const script of pageScripts(b)) {
     try {
-      runInNewContext(script, context)
+      runInContext(script, context)
     } catch (error) {
       assert.fail(`${where(b)}: the example's script throws — ${(error as Error).message}`)
     }
@@ -175,7 +228,8 @@ function seekable(b: Block): { id: string; timeline: { time: (t: number) => unkn
   return {
     id: info.compositionId,
     timeline: timeline as { time: (t: number) => unknown; duration: () => number },
-    styles
+    styles,
+    context
   }
 }
 
@@ -215,4 +269,117 @@ test('the motion-design kit draws a different picture at two moments, and the sa
   assert.notEqual(early, later, 'the kit drew the same thing at 0.2 s and 1.8 s: nothing animates')
   timeline.time(0.2)
   assert.equal(styles(), early, 'seeking back to 0.2 s drew something else: time(t) depends on history')
+})
+
+// ---------------------------------------------------------------------------
+// The motion-design guide: its kit runs on the real library, and its numbers are the code's
+// ---------------------------------------------------------------------------
+
+const GUIDE = readFileSync(join(DIR, 'motion-design.md'), 'utf8')
+const KIT = DOCUMENTS.find((b) => b.file === 'motion-design.md')
+/** The guide without its kit: the prose and tables an agent reads as reference. */
+const GUIDE_PROSE = GUIDE.replace(/^```html\n[\s\S]*?^```/m, '')
+
+/** `block` with one piece of its code swapped — and proof the swap landed, or the control tests nothing. */
+function mutated(block: Block, from: string, to: string): Block {
+  assert.ok(block.code.includes(from), `specimen: the kit must contain ${JSON.stringify(from)} for this control to mean anything`)
+  const code = block.code.replace(from, to)
+  assert.notEqual(code, block.code)
+  return { ...block, code }
+}
+
+test('the kit loads bay-motion.js, and the BM it runs on is the library itself', () => {
+  assert.ok(KIT, 'motion-design.md has a whole-document example')
+  assert.match(KIT.code, /<script src="bay-motion\.js"><\/script>/)
+  const { context } = seekable(KIT)
+  const names = runInContext('Object.keys(BM).sort().join(" ")', context) as string
+  assert.equal(names, Object.keys(MOTION).sort().join(' '))
+  // A value, not only names: the page's curve table is the measured one.
+  assert.equal(runInContext('BM.EASE_T80.expoOut', context), MOTION.EASE_T80.expoOut)
+})
+
+test('the kit draws every frame of its ten seconds without throwing, and its hold is one draw', () => {
+  assert.ok(KIT)
+  const { timeline, styles } = seekable(KIT)
+  const frames = Math.round(timeline.duration() * 30)
+  styles()
+  const subFrames: number[] = []
+  for (let frame = 0; frame <= frames; frame += 1) {
+    timeline.time(frame / 30)
+    // The blur averages sub-frames onto the view with drawImage; a frame drawn once has none.
+    subFrames.push(styles().split('drawImage(').length - 1)
+  }
+  assert.ok(Math.max(...subFrames) >= 8, `the fastest frame drew ${Math.max(...subFrames)} sub-frames: the blur is not sized from travel`)
+  // The last three seconds are the hold: nothing travels, so nothing is blurred.
+  assert.deepEqual([...new Set(subFrames.slice(-90))], [0])
+})
+
+test('a BM call that does not exist fails the kit — at load, and at the time that reaches it', () => {
+  assert.ok(KIT)
+  // Reached while the script loads (time(0) draws the panel).
+  assert.throws(() => seekable(mutated(KIT, 'BM.rectMorph(', 'BM.rectMorf(')), /the example's script throws — BM\.rectMorf is not a function/)
+  // Reached only once the last beat is on screen: loading passes, and so does an early seek.
+  const late = seekable(mutated(KIT, 'BM.lineReveal(', 'BM.lineRevel('))
+  late.timeline.time(1)
+  assert.throws(() => late.timeline.time(8), /BM\.lineRevel is not a function/)
+  // And without the tag there is no BM at all: the stand-in supplies the library only when asked.
+  assert.throws(() => seekable(mutated(KIT, '<script src="bay-motion.js"></script>', '')), /BM is not defined/)
+})
+
+test('the guide\'s curve table is EASE_T80, every curve and every number', () => {
+  const rows = [...GUIDE_PROSE.matchAll(/^\s*\| `(\w+)` \| (\d\.\d\d) \|/gm)].map((m) => [m[1]!, m[2]!] as const)
+  assert.deepEqual(
+    Object.fromEntries(rows),
+    Object.fromEntries(Object.entries(MOTION.EASE_T80).map(([name, t80]) => [name, t80.toFixed(2)]))
+  )
+  assert.equal(rows.length, Object.keys(MOTION.EASE_T80).length, 'a curve is listed twice')
+})
+
+test('the guide names every export of the move library, so the catalogue cannot fall behind it', () => {
+  const missing = Object.keys(MOTION).filter((name) => !new RegExp(`\\b${name}\\b`).test(GUIDE_PROSE))
+  assert.deepEqual(missing, [])
+})
+
+test('every BM.name in the guides and the skills is a real export', () => {
+  const sources: [string, string][] = [
+    ...readdirSync(DIR).filter((name) => name.endsWith('.md')).map((name): [string, string] => [name, readFileSync(join(DIR, name), 'utf8')]),
+    ['brf.md', readFileSync(join(DIR, '..', 'brf.md'), 'utf8')],
+    ...BAY_SKILLS.map((skill): [string, string] => [`skill ${skill.slug}`, skill.body])
+  ]
+  const named = (text: string): string[] => [...text.matchAll(/\bBM\.([A-Za-z_]\w*)/g)].map((m) => m[1]!)
+  let seen = 0
+  for (const [where_, text] of sources) {
+    seen += named(text).length
+    assert.deepEqual(named(text).filter((name) => !(name in MOTION)), [], `${where_} names a move the library does not have`)
+  }
+  assert.ok(seen >= 60, `only ${seen} BM names found — is the pattern still matching?`)
+  // The proof it can fail: the same reader on a spoiled name.
+  assert.deepEqual(named('BM.wordLand(t, 0) and BM.wordLanding(t, 0)').filter((name) => !(name in MOTION)), ['wordLanding'])
+})
+
+test('the thresholds the guide quotes are the oracle\'s own', () => {
+  // The guide has to state numbers — an agent plans against them — and a number in prose does
+  // not move when the constant does. Each phrase is built from the constant it quotes.
+  const percent = (share: number): number => Math.round(share * 100)
+  const phrases = [
+    `carry score under ${CARRY_FAIL_BELOW}`,
+    `warns under ${CARRY_WARN_BELOW}`,
+    `moves ${percent(CARRY_MOVE_DIAGONALS)} % of the frame diagonal`,
+    `scales ${percent(CARRY_SCALE_RATIO - 1)} %`,
+    `covering ${percent(ANCHOR_AREA_SHARE)} % of the frame`,
+    `${BURST_COUNT} bare boundaries within ${BURST_WINDOW_SECONDS} s`,
+    `in the last ${END_EXEMPT_SECONDS} s`,
+    `over ${FAST_PX_PER_FRAME_AT_1080P} px/frame at 1080p`,
+    `coefficient of variation under ${BEAT_CV_MIN}`,
+    `under ${BEAT_RATIO_MIN}× the shortest`,
+    `under ${percent(STILL_SHARE_MIN)} % of the film dead still`,
+    `no rest of ${REST_SECONDS_MIN} s`,
+    `slower than ${CARRY_AFTER_SECONDS} s`
+  ]
+  assert.deepEqual(phrases.filter((phrase) => !GUIDE_PROSE.includes(phrase)), [])
+  // Every field of the contract the oracle prints is in the guide's own copy of it.
+  const fields = [...FILM_CONTRACT.matchAll(/^ {2}(\w+)[:(]/gm)].map((m) => m[1]!)
+  assert.deepEqual(fields, ['beats', 'cuts', 'inFrame', 'blur', 'track', 'events'])
+  const contract = /```js\nwindow\.__film = \{[\s\S]*?^```/m.exec(GUIDE_PROSE)?.[0] ?? ''
+  assert.deepEqual(fields.filter((field) => !new RegExp(`^ {2}${field}[:(]`, 'm').test(contract)), [])
 })

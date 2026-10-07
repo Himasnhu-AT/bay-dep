@@ -3,8 +3,8 @@ import { Admin } from "@/components/access/Admin";
 import { PageHeader, Wrap } from "@/components/layout";
 
 export const metadata: Metadata = {
-  title: "Access",
-  description: "The waitlist and the grants.",
+  title: "Reports",
+  description: "Usage and crash reports from the app, for the owner.",
   robots: { index: false, follow: false },
 };
 
@@ -14,7 +14,7 @@ export default function AdminPage() {
     <main className="flex-1 pb-28">
       <PageHeader
         eyebrow="Owner"
-        title="Who gets in."
+        title="What the app reported."
       />
       <Wrap>
         <div className="mt-16">

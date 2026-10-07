@@ -1,0 +1,71 @@
+<!doctype html>
+<!--
+  check_film fixture: a film that PASSES every leg.
+
+  Four beats of 1, 4, 2.5 and 4.5 s. Each beat has its own card, swapped at the boundary, and one
+  hero that crosses every boundary: it travels 300 px through each, on a different curve each time
+  (ease-out, linear, smoothstep), and is dead still everywhere else. Expected from check_film:
+  verdict pass; carry 1.00 over 3 boundaries, each carried by `hero`; framing pass (hero, whole).
+  src/main/html/film-fixtures.test.ts holds the track half of that still under plain Node.
+-->
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { margin: 0 }
+  .card { position: absolute; left: 500px; top: 300px; width: 900px; height: 500px; border-radius: 24px }
+  #hero { position: absolute; left: 0; top: 0; width: 200px; height: 200px; border-radius: 50%; background: #ffb020 }
+</style>
+</head>
+<body>
+<div data-composition-id="film-carried" data-duration="12" style="width:1920px;height:1080px;position:relative;overflow:hidden;background:#101014">
+  <div class="card" id="card0" style="background:#2b59c3"></div>
+  <div class="card" id="card1" style="background:#c32b59"></div>
+  <div class="card" id="card2" style="background:#2bc38a"></div>
+  <div class="card" id="card3" style="background:#8a2bc3"></div>
+  <div id="hero"></div>
+</div>
+<script>
+(function () {
+  var BEATS = [0, 1, 5, 7.5]
+  var EASES = [
+    function (u) { return 1 - Math.pow(1 - u, 3) },
+    function (u) { return u },
+    function (u) { return u * u * (3 - 2 * u) }
+  ]
+  function clamp(u) { return Math.min(1, Math.max(0, u)) }
+  function beatAt(t) {
+    var beat = 0
+    for (var i = 1; i < BEATS.length; i += 1) if (t >= BEATS[i]) beat = i
+    return beat
+  }
+  // The hero starts each crossing a tenth of a second before the boundary and lands 0.3 s after.
+  function heroX(t) {
+    var x = 100
+    for (var i = 1; i < BEATS.length; i += 1) x += 300 * EASES[i - 1](clamp((t - (BEATS[i] - 0.1)) / 0.4))
+    return x
+  }
+  function time(t) {
+    var beat = beatAt(t)
+    for (var i = 0; i < BEATS.length; i += 1) document.getElementById('card' + i).style.opacity = i === beat ? '1' : '0'
+    document.getElementById('hero').style.transform = 'translate(' + heroX(t) + 'px, 60px)'
+  }
+  window.__timelines['film-carried'] = { time: time, duration: function () { return 12 } }
+  window.__film = {
+    beats: BEATS,
+    inFrame: { hero: [0, 12, 'whole'] },
+    track: function (t) {
+      var boxes = { hero: { x: heroX(t), y: 60, w: 200, h: 200, op: 1 } }
+      boxes['card' + beatAt(t)] = { x: 500, y: 300, w: 900, h: 500, op: 1 }
+      return boxes
+    },
+    // One sound per crossing: check_film hands this list back as `events`, for score_sfx.
+    events: function () {
+      return BEATS.slice(1).map(function (beat) { return { t: beat, material: 'knock', gain: 0.5 } })
+    }
+  }
+  time(0)
+})()
+</script>
+</body>
+</html>

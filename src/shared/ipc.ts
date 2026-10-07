@@ -9,11 +9,13 @@
  */
 
 import type { Asset, Project } from './project'
+import type { AutosaveTarget, OpenedProject, RecoveryOffer } from './autosave'
 import type { AgentEntry, AgentEvent, AgentProvider, AgentProviderStatus, AgentTuning } from './agent'
 import type { AgentAttachmentInput } from './agent-attachments'
 import type { TranscriptSegment } from './transcribe'
 import type { BeatGrid } from './beats'
 import type { SubjectMatteIndex, SubjectMatteRequest, SubjectMatteResult } from './matte'
+import type { AudioBakeRequest, AudioBakeResult } from './audio-bake'
 import type { WhisperDownload, WhisperStatus } from './whisper'
 import type {
   GenerationJob,
@@ -25,10 +27,14 @@ import type {
   StartRefused
 } from './generation'
 import type { CompositionFault, CompositionInfo } from './composition'
+import type { MotionFileResult } from './motion-file'
+import type { FilmMeta, FilmSamples } from './film-oracle'
 import type { McpToolCall, McpToolResult } from './mcp'
 import type { LoudnessMeasurement, LoudnessReport, LoudnessTarget } from './loudness'
-import type { AccessStatus, ReferralResult } from './access'
+import type { AccessStatus } from './access'
+import type { ProjectHost, ResolveStatus } from './host'
 import type { UpdateStatus } from './update'
+import type { RendererErrorReport, TelemetryProps, TelemetryStatus, TelemetrySwitch } from './telemetry'
 import type { Finding } from './findings'
 import type { UrlImportResult } from './url-import'
 import type { EditingStyle } from './styles/types'
@@ -113,6 +119,36 @@ export interface FreezeFrameRequest {
   name: string
 }
 
+/**
+ * What `media.scoreSfx` answers. Written sentence-first:
+ * - ok, measured: "9 hits, 12.0 s, peak −9.4 dBFS, −27.3 LUFS, true peak −9.1 dBTP."
+ * - ok, no loudness (`integratedLufs: null`): `loudnessNote` says why — too short or quiet for
+ *   R128's gate, or the meter failed — and the file is still good.
+ * - ok, silent (`peakDb: null`): every event had gain 0.
+ * - refused: the score's own sentences, or why the file could not be written.
+ */
+export type SfxWriteResult =
+  | {
+      ok: true
+      path: string
+      /** Length of the file. Longer than the score only with `tail: "ring"`. */
+      seconds: number
+      /** Events that made sound. */
+      events: number
+      /** Largest sample, dBFS; null for a silent file. */
+      peakDb: number | null
+      /** The most the bus limiter turned anything down, dB. 0: it never acted. */
+      limitedDb: number
+      /** EBU R128 integrated loudness of the written file, or null — see `loudnessNote`. */
+      integratedLufs: number | null
+      /** True peak of the written file, dBTP, or null when the meter gave none. */
+      truePeakDb: number | null
+      loudnessNote?: string
+      /** Things that rendered but were probably not meant. */
+      warnings: string[]
+    }
+  | { ok: false; error: string }
+
 export interface FilmstripRequest {
   assetId: string
   path: string
@@ -176,6 +212,31 @@ export interface CompositionFrameRequest {
   }[]
 }
 
+/**
+ * Sample one composition for the film oracle (`@shared/film-oracle`, `check_film`).
+ *
+ * Main opens the composition in a window of its own — never the one the preview is seeking,
+ * because two callers seeking one page take each other's pictures — reads `window.__film`,
+ * seeks every frame of the film reading `track(t)`, and, when `pictures` is set, captures a
+ * small picture twelve times a second for the stillness leg.
+ */
+export interface FilmSampleRequest {
+  assetId: string
+  path: string
+  /** The film's frame rate: the timeline's. Speeds are per frame of this. */
+  fps: number
+  /** False skips the captures: carry, curves and framing in under a second, no stillness. */
+  pictures: boolean
+  variables?: CompositionFrameRequest['variables']
+  cssVariables?: CompositionFrameRequest['cssVariables']
+  fonts?: CompositionFrameRequest['fonts']
+}
+
+export type FilmSampleResult =
+  | { ok: true; meta: FilmMeta; samples: FilmSamples; elapsedMs: number }
+  /** `contract`: the composition's `__film` is missing or wrong, one sentence per problem. */
+  | { ok: false; reason: 'contract' | 'failed'; problems: string[] }
+
 export interface CompositionFrame {
   /** Raw RGBA, `width * height * 4` bytes. The renderer turns it into an ImageBitmap. */
   data: ArrayBuffer
@@ -218,6 +279,18 @@ export interface ExportRequest {
    * level the preview played, which is the default on purpose.
    */
   loudness?: LoudnessTarget
+  /**
+   * Keep the picture's transparency: `mov` only, written as ProRes 4444 with an alpha channel
+   * (`render_brf`). The frames pushed must then carry real alpha — a timeline whose background
+   * is `'transparent'`. Absent is the opaque delivery every other export is.
+   */
+  alpha?: boolean
+}
+
+/** Why the renderer is cancelling an export: its own failure, and the stage it failed in. */
+export interface ExportCancelReason {
+  failed: true
+  stage?: 'preparing' | 'rendering' | 'encoding'
 }
 
 export interface ExportProgress {
@@ -517,12 +590,27 @@ export interface BayApi {
      */
     freezeFrame(request: FreezeFrameRequest): Promise<{ ok: true; path: string } | { ok: false; error: string }>
     /**
+     * Render a sound-effect score (`@shared/sfx/score`) to a WAV where bay keeps what it
+     * generates (`<userData>/generated`), named by its content — the same score twice is one
+     * file, and so one asset — and measure it with bay's ffmpeg. Nothing is imported: the
+     * renderer passes the path to `importPaths`. The score is checked again in main; a bad one
+     * is refused in the sentences `checkScore` writes.
+     */
+    scoreSfx(name: string, score: unknown): Promise<SfxWriteResult>
+    /**
      * The subject matte (which pixels are the person) for one source range of a file, from the
      * cache or computed now by Apple Vision in main (`main/matte/`). Content-addressed by file
      * content, range and engine. Refused for a path `bay://` would not serve. Takes ~11 ms per
      * source frame the first time.
      */
     subjectMatte(request: SubjectMatteRequest): Promise<SubjectMatteResult>
+    /**
+     * A clip's sound rendered through the baked stages of an effect chain (dynamics, noise
+     * removal) by bay's ffmpeg, from the cache or now (`main/audio-fx/`). Content-addressed by the
+     * file and the chain; the result is a WAV the preview plays through `bay://` and export reads.
+     * Refused for a path `bay://` would not serve. Seconds for a long file the first time.
+     */
+    audioEffectBake(request: AudioBakeRequest): Promise<AudioBakeResult>
     /** Where a computed matte's frames are, for the compositor to read through `bay://` with Range. */
     subjectMatteIndex(key: string): Promise<{ ok: true; index: SubjectMatteIndex } | { ok: false; error: string }>
   }
@@ -653,6 +741,12 @@ export interface BayApi {
     start(options?: {
       provider?: AgentProvider
       tuning?: AgentTuning
+      /**
+       * The open project's host. With `'resolve'` the session also gets the Resolve MCP server
+       * and a prompt written for editing there; a start for another host than the running
+       * conversation's replaces that conversation, as a change of provider does.
+       */
+      host?: ProjectHost
     }): Promise<{ ok: true; id: string } | { ok: false; error: string }>
     /**
      * Preferences › Agent's effort, model or longest turn changed. The running conversation takes
@@ -707,8 +801,11 @@ export interface BayApi {
      * agent — everything else an agent does lands in the project document, which is undoable
      * and visible. A file on disk is neither, so this one refuses anything that is not a
      * composition path rather than becoming a general-purpose file writer.
+     *
+     * `motion` is present when the document loads or uses bay's move library, and says whether
+     * `bay-motion.js` is beside it (`@shared/motion-file`).
      */
-    write(path: string, html: string): Promise<{ ok: true } | { ok: false; error: string }>
+    write(path: string, html: string): Promise<{ ok: true; motion?: MotionFileResult } | { ok: false; error: string }>
     /**
      * Size one of bay's shipped templates to a canvas and write it to disk, ready to import.
      *
@@ -733,6 +830,8 @@ export interface BayApi {
     import(paths: string[]): Promise<ImportedAsset[]>
     /** One frame, at a time. Resolves null when the composition could not be opened. */
     frameAt(request: CompositionFrameRequest): Promise<CompositionFrame | null>
+    /** Sample a composition across its length for the film oracle. Changes nothing. */
+    film(request: FilmSampleRequest): Promise<FilmSampleResult>
     /**
      * Drop the offscreen window for this asset.
      *
@@ -755,16 +854,29 @@ export interface BayApi {
     /** Fire-and-forget autosave. Resolves once written. */
     autosave(project: Project): Promise<void>
     /**
+     * Crash recovery (`@shared/autosave`). `recovery` asks whether the project just opened has
+     * unsaved work in its sidecar; `unsaved` lists projects autosaved and never saved; `recover`
+     * loads a sidecar through the same migrations as a `.bay` (the sidecar stays until a save);
+     * `discardRecovery` deletes one; `revealRecovery` shows it in Finder; `setAsideRecovery`
+     * renames one that will not load so the next autosave cannot overwrite it, and says where.
+     */
+    recovery(opened: OpenedProject): Promise<RecoveryOffer | null>
+    unsaved(): Promise<RecoveryOffer[]>
+    recover(target: AutosaveTarget): Promise<Project>
+    discardRecovery(target: AutosaveTarget): Promise<void>
+    revealRecovery(target: AutosaveTarget): Promise<void>
+    setAsideRecovery(target: AutosaveTarget): Promise<string>
+    /**
      * The project the OS asked bay to open at launch — a `.bay` double-clicked in Finder — or
      * null. The projects screen is skipped for it: the user already said which one they wanted.
      */
     launchRequest(): Promise<Project | null>
     /**
      * A new, empty project, already written to disk in the projects folder under a name that
-     * does not collide, and already in the recents list. No dialog: creating a project should
-     * not start with a question.
+     * does not collide, and already in the recents list. Main shows no dialog; the renderer
+     * asks the one question — which editor — before calling. `host` omitted is bay's editor.
      */
-    create(): Promise<Project>
+    create(options?: { host?: ProjectHost }): Promise<Project>
     /** Take one project off the recents list. The file itself is not touched. */
     forget(filePath: string): Promise<void>
     /** Show the project file in Finder. */
@@ -781,13 +893,29 @@ export interface BayApi {
     trash(filePath: string): Promise<void>
   }
 
+  /** DaVinci Resolve as a project's editor (`@shared/host`, `src/main/resolve/`). */
+  resolve: {
+    /** Probed fresh on every call: installed, set up, running, connected. Never throws. */
+    status(): Promise<ResolveStatus>
+    /** Bring DaVinci Resolve to the front, launching it if it is closed. */
+    open(): Promise<{ ok: boolean; error?: string }>
+  }
   export: {
     start(request: ExportRequest): Promise<ExportJob>
     /** Renderer pushes one composited frame; resolves when the encoder has taken it. */
     pushFrame(frame: ExportFrame): Promise<void>
-    /** Tells the encoder no more frames are coming. */
-    finish(jobId: string): Promise<void>
-    cancel(jobId: string): Promise<void>
+    /**
+     * Tells the encoder no more frames are coming. `summary.incomplete`: some written frame was
+     * wrong (pending or placeholder) — only the renderer knows, and the export's usage event says so.
+     */
+    finish(jobId: string, summary?: { incomplete: boolean }): Promise<void>
+    /**
+     * Stops the job and discards what it wrote. `reason.failed`: the renderer is cancelling because
+     * *it* failed (a frame it could not draw or push), not because the user asked — main then
+     * counts the export as failed (`export_failed`) at `reason.stage`, or the last stage it saw. A
+     * user's cancel passes no reason and is counted as nothing.
+     */
+    cancel(jobId: string, reason?: ExportCancelReason): Promise<void>
     chooseOutputPath(defaultName: string, format: ExportFormat): Promise<string | null>
     /**
      * Show a finished export in Finder, or open it in the default app. Only a path an export in
@@ -833,10 +961,6 @@ export interface BayApi {
     signOut(): Promise<AccessStatus>
     /** Verify now, instead of waiting for the next scheduled check. */
     recheck(): Promise<AccessStatus>
-    /** Opens the website's waitlist in the browser. */
-    requestAccess(): Promise<void>
-    /** Grant `email` access as a referral from this account (entitled only). */
-    refer(email: string): Promise<ReferralResult>
     /** Every status change, pushed. Returns an unsubscribe function. */
     onChange(listener: (status: AccessStatus) => void): () => void
   }
@@ -859,6 +983,20 @@ export interface BayApi {
     install(): Promise<UpdateStatus>
     /** Every status change, pushed. Returns an unsubscribe function. */
     onChange(listener: (status: UpdateStatus) => void): () => void
+  }
+
+  /**
+   * Usage telemetry and crash reports (`@shared/telemetry`): Preferences › Privacy's switches and
+   * the first-launch notice. Main sends; the renderer only asks it to record a page view or its
+   * own uncaught error — fire-and-forget, so neither can fail a caller.
+   */
+  telemetry: {
+    status(): Promise<TelemetryStatus>
+    /** Turn one switch; remembered in main's database. Off deletes what of it was queued. */
+    set(which: TelemetrySwitch, on: boolean): Promise<TelemetryStatus>
+    dismissNotice(): Promise<TelemetryStatus>
+    track(name: 'page_view', props: TelemetryProps<'page_view'>): void
+    reportError(report: RendererErrorReport): void
   }
 
   window: {
@@ -946,8 +1084,10 @@ export const IPC = {
   mediaReadCaptions: 'media:read-captions',
   mediaSaveCaptions: 'media:save-captions',
   mediaFreezeFrame: 'media:freeze-frame',
+  mediaScoreSfx: 'media:score-sfx',
   mediaSubjectMatte: 'media:subject-matte',
   mediaSubjectMatteIndex: 'media:subject-matte-index',
+  mediaAudioEffectBake: 'media:audio-effect-bake',
 
   /**
    * renderer -> main: AI generation (the fourth network exception). Keys in, set/not-set out;
@@ -975,6 +1115,7 @@ export const IPC = {
   compositionWriteGenerated: 'composition:write-generated',
   compositionImport: 'composition:import',
   compositionFrameAt: 'composition:frame-at',
+  compositionFilm: 'composition:film',
   compositionRelease: 'composition:release',
 
   projectInitial: 'project:initial',
@@ -984,8 +1125,16 @@ export const IPC = {
   projectOpenPath: 'project:open-path',
   projectRecent: 'project:recent',
   projectAutosave: 'project:autosave',
+  projectRecovery: 'project:recovery',
+  projectUnsaved: 'project:unsaved',
+  projectRecover: 'project:recover',
+  projectDiscardRecovery: 'project:discard-recovery',
+  projectRevealRecovery: 'project:reveal-recovery',
+  projectSetAsideRecovery: 'project:set-aside-recovery',
   projectLaunchRequest: 'project:launch-request',
   projectCreate: 'project:create',
+  resolveStatus: 'resolve:status',
+  resolveOpen: 'resolve:open',
   projectForget: 'project:forget',
   projectReveal: 'project:reveal',
   projectRename: 'project:rename',
@@ -1006,8 +1155,6 @@ export const IPC = {
   accessCancelSignIn: 'access:cancel-sign-in',
   accessSignOut: 'access:sign-out',
   accessRecheck: 'access:recheck',
-  accessRequestAccess: 'access:request-access',
-  accessRefer: 'access:refer',
   /** main -> renderer: the new `AccessStatus`, whenever it changes. */
   accessChanged: 'access:changed',
 
@@ -1020,5 +1167,13 @@ export const IPC = {
 
   windowMinimise: 'window:minimise',
   windowToggleMaximise: 'window:toggle-maximise',
-  windowClose: 'window:close'
+  windowClose: 'window:close',
+
+  telemetryStatus: 'telemetry:status',
+  telemetrySet: 'telemetry:set',
+  telemetryDismissNotice: 'telemetry:dismiss-notice',
+  /** renderer -> main, sent (not invoked): one allow-listed event. */
+  telemetryTrack: 'telemetry:track',
+  /** renderer -> main, sent (not invoked): the renderer's own uncaught error, text only. */
+  telemetryReportError: 'telemetry:report-error'
 } as const

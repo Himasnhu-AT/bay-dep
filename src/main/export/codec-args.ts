@@ -88,6 +88,9 @@ const BT709 = [
   'tv'
 ]
 
+/** ProRes 4444 with alpha, by ffmpeg's own encoder (`prores_videotoolbox` writes no alpha here). */
+export const PRORES_4444 = ['-c:v', 'prores_ks', '-profile:v', '4444', '-pix_fmt', 'yuva444p10le', '-vendor', 'apl0']
+
 /**
  * `frame` sizes the bitrate on an Intel Mac (see `H264_BITS_PER_PIXEL`) and is unused on Apple
  * silicon; `rateControl` is a parameter so the tests reach both modes on either machine.
@@ -96,8 +99,14 @@ export function videoCodecArgs(
   format: ExportFormat,
   quality: ExportQuality,
   frame: FrameShape = HD,
-  rateControl: H264RateControl = H264_RATE_CONTROL
+  rateControl: H264RateControl = H264_RATE_CONTROL,
+  alpha = false
 ): string[] {
+  // A graphic to lay over footage in another editor: ProRes 4444, the one codec Resolve, Premiere
+  // and Final Cut all read with its alpha. The rawvideo pipe is straight (unpremultiplied) RGBA,
+  // which is what `yuva444p10le` keeps. No BT709 tags: 4444 is RGB-derived full chroma, and the
+  // tags would claim a limited-range YUV origin it does not have.
+  if (alpha && format === 'mov') return PRORES_4444
   switch (format) {
     case 'webm':
       return ['-c:v', 'libvpx-vp9', '-crf', String(VP9_CRF[quality]), '-b:v', '0', '-row-mt', '1', ...BT709]

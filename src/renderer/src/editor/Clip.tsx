@@ -10,9 +10,12 @@ import {
   Video,
   type LucideIcon,
   Palette,
-  Sparkles
+  Sparkles,
+  SlidersHorizontal
 } from 'lucide-react'
-import { US_PER_SECOND, type Asset, type AssetKind, type Item } from '@shared/project'
+import { plainTime, sourceEdgeAt, US_PER_SECOND, type Asset, type AssetKind, type Item } from '@shared/project'
+import { retimeSound } from '@shared/retime-sound'
+import { hasSpeedCurve, speedCurveLabel } from '@shared/speed-curve'
 import { cn } from '@/lib/cn'
 import { clampFade, formatDb, volumeAtY, yForVolume } from '@/lib/timelineLayout'
 import { useDrag } from '@/lib/useDrag'
@@ -123,7 +126,8 @@ const KIND_ICON: Record<AssetKind, LucideIcon> = {
   html: Code2,
   brf: Sparkles,
   lut: Palette,
-  font: TypeIcon
+  font: TypeIcon,
+  adjustment: SlidersHorizontal
 }
 
 /**
@@ -160,7 +164,9 @@ function Filmstrip({
     <div aria-hidden="true" className="absolute inset-0 flex overflow-hidden opacity-70">
       {Array.from({ length: columns }, (_, column) => {
         const localFrames = (column / columns) * item.durationInFrames
-        const sourceUs = item.sourceStartUs + (localFrames / fps) * US_PER_SECOND * item.speed
+        // Through the one mapping, so a reversed clip's strip runs backwards and a ramp's slow
+        // stretch shows the same picture across more columns.
+        const sourceUs = sourceEdgeAt(item, localFrames, fps)
         const url = frames[stripFrameIndex(frames.length, sourceUs, asset.durationUs)]
         return (
           <div
@@ -215,10 +221,15 @@ function Waveform({
   )
   const columns = 160
   const half = height / 2
+  const plain = plainTime(item)
   const top: string[] = []
   const bottom: string[] = []
   for (let column = 0; column <= columns; column += 1) {
-    const ratio = startRatio + (column / columns) * Math.max(0.0001, spanRatio)
+    // A reversed or ramped clip is not one straight slice of the peaks: each column asks the one
+    // mapping what it plays.
+    const ratio = plain
+      ? startRatio + (column / columns) * Math.max(0.0001, spanRatio)
+      : Math.min(1, Math.max(0, sourceEdgeAt(item, (column / columns) * item.durationInFrames, fps) / sourceSpanUs))
     const peak = peaks[Math.min(peaks.length - 1, Math.floor(ratio * peaks.length))] ?? 0
     const x = (column / columns) * 100
     const amplitude = Math.min(1, Math.max(0, peak)) * (half - 1)
@@ -236,6 +247,16 @@ function Waveform({
       <polygon points={[...top, ...bottom.reverse()].join(' ')} fill="var(--color-waveform)" fillOpacity="0.45" />
     </svg>
   )
+}
+
+/** The speed badge of a reversed or ramped clip: what it shows, and what it says on hover. */
+function retimeBadge(item: Item): { text: string; label: string; title: string } {
+  const ramped = hasSpeedCurve(item)
+  const pace = ramped ? speedCurveLabel(item) : item.speed !== 1 ? `${item.speed}×` : ''
+  const text = `${item.reverse ? '◀ ' : ''}${ramped ? `ramp ${pace}` : pace}`.trim() || '◀'
+  const label = [item.reverse ? 'Reversed' : null, ramped ? `speed ramp ${pace}` : pace ? `speed ${pace}` : null].filter(Boolean).join(', ')
+  const notice = retimeSound(item).notice
+  return { text, label, title: notice ? `${label}. ${notice}` : label }
 }
 
 function ClipImpl({
@@ -450,9 +471,22 @@ function ClipImpl({
             <title>Sound detached — this picture plays no sound of its own</title>
           </VolumeX>
         )}
-        {item.speed !== 1 && (
+        {plainTime(item) && item.speed !== 1 && (
           <span className="ml-auto shrink-0 rounded-xs bg-black/55 px-1 text-[10px] text-on-media tabular-nums">
             {item.speed}×
+          </span>
+        )}
+        {!plainTime(item) && (
+          // Reverse and ramp read on the clip itself: an arrow for backwards, the ramp's range
+          // of speeds, and in the tooltip what its sound does — the one place a silent clip is
+          // otherwise only heard to be silent.
+          <span
+            role="img"
+            aria-label={retimeBadge(item).label}
+            title={retimeBadge(item).title}
+            className="ml-auto shrink-0 rounded-xs bg-black/55 px-1 text-[10px] text-on-media tabular-nums"
+          >
+            {retimeBadge(item).text}
           </span>
         )}
       </div>

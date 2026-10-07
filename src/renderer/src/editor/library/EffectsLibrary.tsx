@@ -25,10 +25,12 @@ import { useSelectedItems } from '@/lib/useSelectedItems'
 import { selectTimeline, useEditor } from '@/store/editor'
 import { CodeEditorModal, createMotionGraphic } from '../CodeEditorModal'
 import { ClipPresets } from '../EffectsPanel'
+import { AdjustmentLayerButton } from '../AdjustmentLayerButton'
 import { TemplateList } from '../TemplatesPanel'
 import { QuickTitle } from '../TextPanel'
 import { LibraryHeader } from './LibraryHeader'
 import { requestLibrary, useMediaSelection } from './librarySignals'
+import { VideoEffects } from './VideoEffects'
 import {
   applyTransition,
   AUDIO_TRANSITIONS,
@@ -154,7 +156,14 @@ export function EffectsLibrary(): ReactNode {
             {category === 'audio-transitions' && <TransitionList trackKind="audio" />}
             {category === 'titles' && <Titles />}
             {category === 'generators' && <Generators />}
-            {category === 'effects' && <ClipPresets />}
+            {category === 'effects' && <AdjustmentLayerButton />}
+            {category === 'effects' && (
+              <>
+                {/* The shader effects first; the one-click presets over existing fields follow. */}
+                <VideoEffects />
+                <ClipPresets />
+              </>
+            )}
             {category === 'luts' && <Luts />}
           </ScrollArea>
         </div>

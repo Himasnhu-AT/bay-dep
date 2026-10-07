@@ -43,16 +43,22 @@ import { selectTimeline, useEditor } from '@/store/editor'
 import type { InspectorTab } from '@/store/types'
 import { AdjustmentsSection, BlendSection, adjustmentsTouched } from './AdjustmentsSection'
 import { GradeSection } from './GradeSection'
+import { MasksSection } from './MasksSection'
 import { isGradeableKind } from '@shared/grade'
 import { CompositionSection } from './CompositionSection'
 import { TextStyleSection } from './TextStyleSection'
 import { KeyDiamond, KeyNavigation, Keyed, relativeFrame } from './KeyframeControls'
 import { animatedLayoutAt, animatedVolumeAt, PICTURE_PROPERTIES } from '@shared/keyframes'
 import { canSound, commonValue, hasSourceTime, isVisualItem, timingRefusal } from '@shared/inspector'
-import { CLIP_SPEED_RANGE, retimedLength, speedNote, type SpeedPlan } from '@shared/speed'
+import { CLIP_SPEED_RANGE, footageLength, speedNote, type SpeedPlan } from '@shared/speed'
+import { hasSpeedCurve } from '@shared/speed-curve'
+import { RetimeControls } from './RetimeControls'
 import { AudioSection } from './AudioSection'
+import { ClipAudioEffects } from './audio/ClipAudioEffects'
 import { ClipSection, Readout } from './ClipSection'
 import { KeyframesSection } from './KeyframesSection'
+import { AnimationSection } from './AnimationSection'
+import { EffectStackSection, effectsTouched } from './EffectStackSection'
 import { chooseTab, inspectorTabs, tabForSection, type SelectionShape } from './inspector/tabs'
 import { TimelineTab } from './inspector/TimelineTab'
 import { TransitionTab, transitionCount } from './inspector/TransitionTab'
@@ -354,7 +360,9 @@ export function Inspector(): ReactNode {
     transact(() => {
       for (const item of timedItems) {
         const current = usToFrames(item.sourceStartUs, fps)
-        const deltaFrames = Math.round((sourceFrames - current) / effectiveSpeed(item.speed))
+        // A slip frame is a source frame at the clip's constant speed — or at 1× under a ramp,
+        // where no one speed describes a frame (`slipRoom` in `@shared/trim` uses the same unit).
+        const deltaFrames = Math.round((sourceFrames - current) / (hasSpeedCurve(item) ? 1 : effectiveSpeed(item.speed)))
         if (deltaFrames === 0) continue
         const result = trimEdit({ itemId: item.id, mode: 'slip', deltaFrames })
         if (!result.ok) refusals.push(result.userMessage ?? result.error)
@@ -386,7 +394,7 @@ export function Inspector(): ReactNode {
     return l.rotation !== 0 || (l.scale ?? 1) !== 1 || l.opacity !== 1
   })
 
-  const retimed = selected.some((item) => item.speed !== 1 || item.fadeInFrames > 0 || item.fadeOutFrames > 0)
+  const retimed = selected.some((item) => item.speed !== 1 || item.reverse || hasSpeedCurve(item) || item.fadeInFrames > 0 || item.fadeOutFrames > 0)
   const blended = visualItems.some((item) => (item.blendMode ?? 'normal') !== 'normal')
   const soundTouched =
     soundItems.some((item) => item.audioLeadFrames || item.audioTrailFrames || item.duck || item.pan) ||
@@ -397,7 +405,7 @@ export function Inspector(): ReactNode {
   const badges: Partial<Record<InspectorTab, number>> = {
     video: [transformTouched, cropped, blended, visualItems.length > 0 && retimed].filter(Boolean).length,
     audio: soundTouched ? 1 : 0,
-    effects: [visualItems.length > 0 && adjustmentsTouched(visualItems), animated].filter(Boolean).length,
+    effects: [visualItems.length > 0 && adjustmentsTouched(visualItems), animated, effectsTouched(sourceItems)].filter(Boolean).length,
     transition: transitionCount(project, timeline, visualItems),
     color: graded ? 1 : 0
   }
@@ -450,7 +458,7 @@ export function Inspector(): ReactNode {
             transact(() => {
               for (const item of selected) {
                 const asset = findAsset(project, item.assetId)
-                const { available } = retimedLength(item, asset?.durationUs ?? 0, item.speed, fps)
+                const available = footageLength(item, asset?.durationUs ?? 0, fps)
                 const length = Math.min(next, available)
                 if (length < next) shortfalls.push(`“${asset?.name ?? 'clip'}” has ${formatTimecode(available, fps)} of footage from its source in`)
                 trimItem(item.id, 'end', item.from + length)
@@ -493,7 +501,7 @@ export function Inspector(): ReactNode {
       collapsible
       hint={
         timedItems.length > 0
-          ? 'Speed keeps the footage and changes the clip’s length, stopping at the next clip (Speed… in the clip menu can push later clips). Fades take a timecode, 0.5s or 15f.'
+          ? 'Speed keeps the footage and changes the clip’s length, stopping at the next clip (Speed… in the clip menu can push later clips). Typing a Speed on a ramped clip replaces the ramp. A ramp’s keys are speeds at frames of the clip; 0% holds a frame. Fades take a timecode, 0.5s or 15f.'
           : 'Fades take a timecode, 0.5s or 15f.'
       }
       actions={
@@ -538,6 +546,7 @@ export function Inspector(): ReactNode {
             defaultValue={1}
           />
         )}
+        {timedItems.length > 0 && <RetimeControls items={timedItems} />}
         <TimecodeField
           row
           label="Fade in"
@@ -705,6 +714,9 @@ export function Inspector(): ReactNode {
         </Section>
       )}
 
+      {/* Shape masks reach what a crop reaches: a drawn source. */}
+      {sourceItems.length > 0 && <MasksSection items={sourceItems} />}
+
       <BlendSection items={visualItems} timeline={timeline} title="Composite" />
       {retime}
     </>
@@ -761,6 +773,7 @@ export function Inspector(): ReactNode {
           </p>
         </Section>
       ) : null}
+      <ClipAudioEffects items={soundItems} project={project} timeline={timeline} />
       {/* Sound on its own has no Video tab, so its speed and fades live here. */}
       {visualItems.length === 0 && retime}
     </>
@@ -773,7 +786,14 @@ export function Inspector(): ReactNode {
     <>
       {/* Adjustments apply to anything with a picture, text included (its glyphs are drawn
           through the same look). Audio-only items have nothing to filter. Blend is in Video. */}
+      {/* The shader stack, on what has a picture to run it over (a title draws its own glyphs). First,
+          because it is drawn before the adjustments below it. */}
+      {sourceItems.length > 0 && <EffectStackSection items={sourceItems} />}
       {visualItems.length > 0 && <AdjustmentsSection items={visualItems} timeline={timeline} blend={false} />}
+      {/* In / Out / Loop presets: anything with a picture; a title can also run them word by word. */}
+      {visualItems.length > 0 && (
+        <AnimationSection items={visualItems} titles={visualItems.filter((item) => textItems.includes(item)).length} timeline={timeline} />
+      )}
       <KeyframesSection items={selected} />
       {visualItems.length === 0 && !hasKeyframes && (
         <p className="px-3 py-6 text-center text-[11px] text-ink-2">

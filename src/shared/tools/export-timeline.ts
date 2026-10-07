@@ -29,6 +29,20 @@ export const tool: ToolSpec = {
           'Default true: wait until the export finishes and return its final result. false returns ' +
           'the jobId at once, for a caller that has other work to do meanwhile.'
       },
+      transparent: {
+        type: 'boolean',
+        description:
+          'Render only the tracks in trackIds over a transparent background, silent, as a ProRes 4444 ' +
+          '.mov with alpha (format must be "mov"). This is how graphics, titles and subtitles made in ' +
+          'bay reach a project edited in DaVinci Resolve: build them here over the same cut, export ' +
+          'them transparent, import the file there and put it on a track above the footage, starting ' +
+          'at the same frame. Frame numbers match the timeline, so one file covers the whole edit.'
+      },
+      trackIds: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'With transparent: the tracks to draw — the overlay tracks, never the footage’s.'
+      },
       fromFrame: frames('First frame. Defaults to 0.'),
       toFrame: frames('Last frame, inclusive. Defaults to the end of the timeline.'),
       quality: {

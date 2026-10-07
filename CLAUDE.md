@@ -74,7 +74,7 @@ Environment switches worth knowing: `BAY_AGENT_RUNTIME=sdk` hosts the in-app age
 SDK instead of the `claude` CLI (default), and `=codex` on OpenAI's `codex` CLI — either overrides
 the Preferences › Agent › Model choice; `BAY_MCP_MODE=gateway` makes the proxy list three tools
 (`get_active_project`, `get_guidelines`, `execute`) instead of the whole catalog. `BAY_ACCESS=dev` skips the
-invite-only access check — **unpackaged builds only** — and `./run.sh` sets it (`--gate` does not).
+sign-in check — **unpackaged builds only** — and `./run.sh` sets it (`--gate` does not).
 `BAY_MCP_CLIENTS=1` opens `bay-mcp.sock` for the run even though MCP clients are off by default
 (Preferences › Agent); `./run.sh` sets it too, because the socket probes need it. `BAY_GENERATION_BASE`
 points generation at a loopback stub (unpackaged only; see the generation paragraph).
@@ -117,12 +117,29 @@ A value read through a store snapshot taken *before* an action is the old value:
 ~28 edits in the open project; unwinding `past` restores it. The fixture on disk only changes if
 something saves, and nothing a probe does should.
 
+**Autosave writes a sidecar, and stands down while a probe drives** (`@shared/autosave`,
+`lib/autosave.ts`, `main/project/persistence.ts`; Preferences › Editing › Autosave). A dirty
+project goes to `<file>.bay.autosave` (or `<userData>/autosave/<id>.bay.autosave` when never
+saved) 3 s after the last edit and at least every 30 s; opening a project whose sidecar's
+`updatedAt` is later than the file's offers Restore / Discard, and until that is answered nothing
+is autosaved, because the sidecar is the only copy of what is on offer. `attach()` in
+`test/app/cdp.mjs` holds `window.__bayProbeSnapshot` for as long as a probe drives; while it is
+there autosave neither writes, nor deletes, nor asks about recovery — judged when the timer
+fires, not when it was set. So **a probe of autosave itself must not `attach()`**: drive it with
+`agent-browser --session bay eval` on a scratch project, and say that is what you did. A probe
+killed before its restore leaves the snapshot behind and autosave paused until the window
+reloads (Preferences says so). Save, "Don't save" and undoing back to the saved state each
+remove the sidecar; a crash, a force quit and a quit with unsaved changes leave it. **Measured:**
+the scheduler, the offer for each sidecar state from literal files, and the store's side, under
+Node. **Not measured:** any of it in a running bay — `test/app/parity-structure.mjs` is written
+and unrun.
+
 **The in-app agent's sandbox is `--tools`, not a deny list.** Measured, each one:
 - `--setting-sources ''` does not stop MCP servers loading; only `--mcp-config` plus
   `--strict-mcp-config` isolates the agent to bay's tools.
 - An allow-list governs what needs approval, not what exists: with one alone, `Bash` ran `id`.
 - `--tools ListMcpResourcesTool,ReadMcpResourceTool,Skill` makes every other built-in *absent* —
-  the session's tool list is bay's catalog (59 tools as of this writing — `src/shared/tools/index.ts` is the count) plus those three, and a request to run `id` had nothing to
+  the session's tool list is bay's catalog (69 tools as of this writing — `src/shared/tools/index.ts` is the count) plus those three, and a request to run `id` had nothing to
   run it with. MCP tools are not built-ins, so bay's are unaffected. `--allowedTools` narrows
   `Skill` to `Skill(<slug>)` for bay's own skills, never the bare name, which would permit every
   bundled skill (`cli.test.ts` pins both).
@@ -215,6 +232,22 @@ a `/name` anywhere in the message, several at once, is loaded by the model, and 
 ones the task matches, not only the ones the user names. A skill's description is therefore how the
 agent decides to use it. Codex cannot load skills itself, so it gets only the ones named and says
 which it would have wanted.
+
+**A project names its editor, and a Resolve project is a weaker sandbox** (`Project.host`,
+`@shared/host`, `src/main/resolve/`, `@shared/resolve-tools`). New Project asks: bay editor or
+DaVinci Resolve. Absent `host` is bay, and a bay project's prompt, MCP config and allow-list are
+byte-identical to before. For `'resolve'` the Claude runtimes also get samuelgursky/davinci-resolve-mcp
+(installed by `script/setup-resolve-mcp.sh` into gitignored `vendor/davinci-resolve-mcp`, never
+shipped or fetched by bay) as server `resolve`, 25 of its 36 tools by exact name — the 11 that run
+code, install plugins, browse the disk or reach the cloud are withheld — and a prompt written for
+editing there. Codex refuses a Resolve project. What does **not** hold for one: `policy.ts` never
+sees a Resolve call, so allowed tools can still write an export to any path and delete timelines;
+"Ask before editing", the Changes card, Revert and undo do not cover Resolve; the connector launches
+Resolve on a tool call; and `resolve_control` can still ask GitHub for the connector's latest release
+(the startup check is off by env). The free edition needs Workspace › Scripts › resolve_bridge once
+per Resolve launch. Measured: the dialog, a Resolve project's workspace and the `not-running` status
+in the app, and `tools/list` (36) through bay's entry. **Not measured:** `ready`/`bridge-needed`
+against an open Resolve, and any real agent turn using a Resolve tool.
 
 **The in-app agent reaches files only through `src/main/mcp/policy.ts`.** It has no filesystem
 tools, so a path argument is its only way to a file, and text it reads (a transcript, an asset
@@ -333,6 +366,43 @@ imports a `.brf` file as text and never runs it; `lib/brfImport.ts` probes it in
 Every example in `bay://guide/brf` and the worked-edits guide is compiled and run on every frame
 by `brf-code.test.ts`.
 
+**A motion film is one composition on a move library, measured by an oracle before anyone watches
+it, with its sound synthesised from its own events** (`src/shared/motion/`, `@shared/film-oracle`,
+`src/shared/sfx/`; `check_film`, `score_sfx`; the `motion-graphics` and `launch-film` skills;
+`bay://guide/motion-design`). The method is onetake's (github.com/feitangyuan/onetake): beats that
+carry into each other under one camera, judged by measurement. onetake is PolyForm Noncommercial
+and bay is commercial, so this is a reimplementation from its documents — no code and no prose of
+its is here, and where a threshold is its published number `film-oracle.ts` says so at the
+constant. The library is 60 functions and three tables, pure in `t`; a composition gets it as the
+global `BM` by writing `<script src="bay-motion.js">` (main writes the file beside it, generated
+from the TypeScript by `pnpm gen:motion`, never kept by hand) and a `.brf` as
+`import { BM } from 'bay'`. A film declares `window.__film = { beats, cuts, inFrame, blur,
+track(t), events() }`; the oracle follows the boxes `track(t)` returns, so everything it concludes
+is about what was declared, and every report carries `blind`. The film protocol is written once
+(`FILM_*` in `skills.ts`) and both skills number it; the guide's numbers are pinned to the code
+(`composition-guides.test.ts`: its curve table is `EASE_T80`, its thresholds are the oracle's
+constants, every `BM.` name it or a skill writes is an export, and every export is in its
+catalogue). **Measured:** the guide's kit — four beats, three boundaries carried by `rectMorph`,
+`pushInto` and `iris` — is run on the real generated script at every frame, and under Node
+(`film-fixtures.test.ts`) it gets faults, continuity (1.00 over 3), curves and framing `pass`, with
+`blur: false`, a two-id iris and an off-frame word each failing the leg that should catch it; its
+picture was looked at as contact sheets in a plain headless Chrome from a file. **Then measured
+in a running bay** (an isolated instance; `test/app/film.mjs`, 47 checks): `check_film` on the
+four fixtures gives each its expected verdict with pictures, 3.5 s for a 12 s film, no window left
+behind, a `time(t)` that never returns answered as "did not answer within 20 s", and a preview
+playing a composition undisturbed by it; the kit passes all five legs there (52 % still, its last
+3 s exactly 0.00, boundary at 5.1 s carried by `dot` alone, fastest visible move `thumb` at
+271 px/frame) and its `events` go to `score_sfx` unchanged; `bay-motion.js` is written, a missing
+tag and a foreign file are each warned about, and `BM` runs in the locked `.brf` worker;
+`score_sfx`'s 24-bit WAV plays in Chromium over `bay://` (metered: 0.000 before the first hit,
+0.211 on it) and is in the export within 0.3 ms of each scored time. A 30 s, 60-event score
+blocks main for about 250 ms (the renderer instead, with `validateOnly`). **The picture-energy
+unit is calibrated, and its thresholds are bay's, not onetake's:** it is share-of-frame-changed ×
+luma contrast with no noise floor (every hold step of every fixture read exactly 0.00), on which
+onetake's 0.5/2 called a 200 px subject crossing at 25 px/frame a rest; `STILL_ENERGY` 0.05 and
+`LOW_ENERGY` 0.5 carry the evidence at the constant. It is blind to hue. **Not measured:**
+whether a real agent turn follows the skills.
+
 **Beats are analysed in main, kept on the asset in source time, and mapped once**
 (`media/beat-analysis.ts`, `@shared/beats`, `detect_beats`). Spectral flux → autocorrelation picks
 a period family → the octave is chosen by what sits halfway between beats (broadband *and* kick
@@ -389,6 +459,39 @@ screened in RGB: in YUV it casts violet. A render target created while its textu
 for reading is a WebGL feedback loop — the first halation draw of every new size failed until
 `target()` unbound it; `test/app/grade.mjs` caught it as an export/preview mismatch.
 
+**Video effects are an ordered stack of shader passes in the grade's slot, and what the stack
+leaves out is as deliberate as what it has** (`item.effects`, `@shared/effects/`, `engine/effects.ts`,
+`engine/effectShaders.ts`, `edit_effects`). A clip draws grade → effects, first to last → mask →
+adjustments and blend, all inside `#drawSource`, so preview, `preview_frame` and export run one
+implementation. An effect is a file in `src/shared/effects/` declaring typed parameters (number,
+`#RRGGBB`, `[x, y]` point, boolean — nothing else, so each is addressable as
+`effects[<id>].<param>` for a keyframe pass that does not exist yet) plus passes of the same kind
+in `effectShaders.ts`; `catalog.test.ts` and `effectShaders.test.ts` fail when a file is missing
+from the index, a kind has no shader, or a plan sets a uniform its shader does not declare. Twelve
+ship: chroma-key, directional-blur, zoom-blur, sharpen, glow, chromatic-aberration, pixelate,
+glitch, duotone, tint, flip, mirror. **Not in the stack, because each already has one mapping:**
+an even blur is `adjustments.blur` (a CSS filter, drawn last), and vignette, grain and halation
+are the grade's — a second "gaussian blur" or "vignette" would be the duplicated-mapping fault
+again. Glow stays although halation is its cousin: halation is fixed in the grade's order and
+tinted like film, glow can follow a key and spreads past a transparent edge. `resolveEffects` is
+the one reading of a stack: switched off or at its identity is not in the list, and a stack of
+nothing resolves to `null` — no pass, no upload. The passes run in the grade's WebGL context with
+programs and a vertex array of their own; the rules for sharing it are at the top of
+`effects.ts` (units 0 and 1 only — the grade keeps its curve and LUT bound on 3 and 4 and re-binds
+them only when they change; make unit 0 active before `target()`; unbind both units and the VAO
+afterwards). With a grade, the grade draws into a target (`GradeRequest.into`) and the stack
+starts from it. Textures are premultiplied throughout, which is what makes a blur across a keyed
+edge and the key's own output composite without a fringe. Glitch is a function of the timeline
+frame and a seed through the grade's `grainHash`, never a clock. A stack that cannot run — a shader
+that will not compile, no WebGL2, an effect kind from a newer build — is reported through
+`DrawStats.gradeIssues`, so `preview_frame` says so under `gradeWarnings` and an export that wrote
+the frame is `complete: false`. `edit_effects` and the store's actions both go through
+`applyEffectOps`, which refuses an out-of-range value naming the range; the draw clamps what
+arrives some other way. **Measured: only under Node** — parameter checks, identity, order, the
+plans, the arithmetic the GLSL is written from (`@shared/effects/math`), and the reporting when
+no pass can run. **Not measured: any pixel.** No shader here has been compiled; `test/app/effects.mjs`
+compares preview, `preview_frame` and export per effect and is marked unrun.
+
 **Text behind the subject is a subject matte, a linked cut-out and one shared element**
 (`@shared/matte`, `@shared/behind-subject`, `main/matte/`, `engine/subjectMatte.ts`,
 `engine/subjectMask.ts`, `put_behind_subject`). Apple Vision person segmentation runs in one
@@ -407,6 +510,41 @@ grade and adjustments, read at draw time (`cutoutPartner`/`cutoutAsDrawn`), so a
 moves the cut-out; picture edits aimed at the cut-out go to the clip (store) or are refused naming it
 (`edit_item`). `test/app/mask.mjs` needs `MASK_CLIP` (a clip with a
 person; the repo has none). MODNet is a documented seam (`MatteEngine`), not built.
+
+**A shape mask is a coverage function, and the picture is drawn from that function**
+(`@shared/shape-mask`, `engine/shapeMask.ts`, `edit_item.masks`, Inspector › Video › Masks,
+`viewer/MaskOverlay.tsx`). `Item.masks` is a union now: at most one subject mask, first, stored
+exactly as before (`mask-format.test.ts` holds the old bytes), then up to eight `rect` / `ellipse` /
+`path` shapes combined add / subtract / intersect in list order. Geometry is fractions of the clip's
+own frame — its layout box — so layout, crop, keys, zoom and a cut-out's borrowed framing carry a
+mask without knowing it exists; rotation and feather are in that box's pixels. `masksCoverage` is
+exact signed distance through a smoothstep ramp whose width *is* the feather (an output pixel when
+there is none — the antialiasing); `rasterMasks` is that function per pixel, and the compositor's
+mask slot multiplies the picture's alpha by the grid. No blur filter, no shader twin: the unit
+tests' numbers are the numbers on screen. The grid is kept by (masks, frame, view), so a still mask
+costs one raster; a clip whose drawn size changes every frame (a keyframed zoom) rasterises every
+frame, in script. The ellipse distance is iterative because the obvious formula is tens of pixels
+out on an eccentric one — and "walk out along the long axis" is not a walk away from the edge
+inside such an ellipse, which the first feather test assumed. A mask this build cannot read is a
+named placeholder, never the clip unmasked. **`#drawSource`'s mask slot leaves by `return`**, so
+anything reported after it must be in the `finally` — the first fault report sat below the `try`
+and never ran, which the placeholder test caught. Text items are not masked (they do not pass
+through `#drawSource`); bezier handles are agent-only; mask parameters take no keyframes yet.
+
+**An adjustment layer is a clip whose picture is the frame so far** (`@shared/adjustment-layer`,
+`engine/adjustmentLayer.ts`, `add_adjustment_layer`, Effects Library › Effects, the lane menu). An
+ordinary item of a `kind: 'adjustment'` asset (one per project). `#paintItem` copies the canvas,
+erases the layer's share of it (`destination-out`, by mask coverage × opacity × fade) and adds the
+copy back through `#drawSource` with `lighter` — `original × (1 − m) + adjusted × m` exactly, alpha
+included, where a plain draw of the adjusted copy over the original thickens every soft edge of a
+transparent export. Going through `#drawSource` is the point: the grade, effects, adjustments and
+masks reach a layer by the code that applies them to clips. It always covers the whole frame —
+its `layout` box, crop and blend mode are not read, and `edit_item` refuses them by name — and a
+layer with no look is skipped before anything is copied. One that cannot be applied leaves the
+picture and records a `gradeIssues` line, not a grey card over the whole frame. **Measured under
+Node only**, on a software canvas (`softCanvas.testkit.ts`) with CSS adjustments: neither a real
+canvas, nor the WebGL grade through a layer, nor an export has been run — `test/app/shape-mask.mjs`
+is written for all three and is marked unrun.
 
 **An export that wrote a wrong frame says so; it never finishes as a plain `done`.** The exporter
 waits for pending items for a bounded time and then writes the frame anyway. That frame is a wrong
@@ -511,14 +649,15 @@ nothing is gated. `validateOnly: true` on a dry-runnable tool passes the gate, b
 nothing — and on a `selfValidating` one (the generate tools, whose handler receives the flag,
 checks and prices the call, and starts no paid job), for the same reason.
 
-**bay is invite-only, and main is the lock** (`src/main/auth/`, `src/shared/access.ts`). A Mac
-is `entitled` when a sign-in (system browser → the site's `/desktop/sign-in` → a one-shot POST to a
-127.0.0.1 loopback server that checks Origin and `state`) was verified against `access/{email}` in
-Firestore. Until then `ipc.ts` refuses every channel outside `OPEN_WHILE_LOCKED` and both sockets
-answer tool calls with the unlock instructions (`auth/gate.ts`); the access screen is only UI.
-Offline it keeps working for 14 days from the last successful check; a 404 on the access doc, an
-unverified email, or a refresh token Google refuses locks at once; ages run from the latest time
-bay has seen, so winding the clock back buys nothing. The refresh token is stored only through
+**Signing in is mandatory, and main is the lock** (`src/main/auth/`, `src/shared/access.ts`). A
+Mac is `entitled` when a sign-in (system browser → the site's `/desktop/sign-in` → a one-shot POST
+to a 127.0.0.1 loopback server that checks Origin and `state`) refreshes at Google's securetoken
+with a verified email. Any Google account qualifies: there is no grant, no waitlist and no referral,
+and nothing reads Firestore. Until then `ipc.ts` refuses every channel outside `OPEN_WHILE_LOCKED`
+and both sockets answer tool calls with the unlock instructions (`auth/gate.ts`); the access screen
+is only UI. Offline it keeps working for 14 days from the last successful check; an unverified
+email, or a refresh token Google refuses, locks at once; ages run from the latest time bay has
+seen, so winding the clock back buys nothing. The refresh token is stored only through
 `safeStorage` — without a keychain it stays in memory until quit, never in plaintext.
 
 **Releases are signed by `script/release-signed`, and every Mach-O is checked by content, not by
@@ -556,12 +695,14 @@ with no hook between. An update therefore installs only from Restart to update. 
 cover the verdict and the zip reading; the wiring in `updater.ts` imports Electron and is
 typecheck-only.
 
-**A grant comes from the owner or a referral.** The owner approves a waitlist entry or grants an
-email directly on the website's `/admin`; an entitled user refers one from inside bay
-(`accessRefer`, five each). The `no-access` screen therefore shows the email with a Copy button
-(the referrer must type it exactly), *Join the waitlist* (`accessRequestAccess` opens the site's
-`/waitlist`), *Use a different account* and *Check again*. There is no public download yet; the
-site says "Releasing soon" and points at the waitlist.
+**Revoking an account is disabling it in Firebase Auth.** The owner disables the user (project
+`bay-editor-app`, Authentication › Users); the next refresh answers `USER_DISABLED`, which is the
+`revoked` state and locks at once — within six hours on a running bay (the reverify timer), at the
+next launch otherwise, and never later than the 14-day grace offline. The only `no-access` reason
+left is an unverified email, so that screen offers *Use a different account* and *Check again*.
+An `access.json` from the invite-only builds still loads: its `referralsUsed` is ignored, and a
+legacy `no-grant` lock reads as signed-out and re-verifies into `entitled` with the stored token
+(`policy.test.ts`, `token-store.test.ts` hold both with literal old files).
 
 ## graft — read the graph before you grep
 
@@ -1005,6 +1146,32 @@ projects — indexing an array yields `T | undefined` and you must handle it.
   never `loudnorm` (silently goes dynamic) and never judged on PCM (AAC adds ~0.5–0.8 dB of true
   peak; `master.test.ts` proves its specimen ships over the ceiling without the loop). Off by
   default. The mastered track is muxed with `-c:a copy`, and the delivered file is re-measured.
+- **Audio effects are two kinds, because preview and export are two renderers** (`item.audioEffects`,
+  `track.audioEffects`, `@shared/audio-effects`, `main/audio-fx/`, `audio_effects`). **Equaliser
+  bands are live**: one canonical (type, frequency, linear Q, gain) per band, from which the
+  `BiquadFilterNode` settings (`webAudioBiquad`), the ffmpeg filter (`ffmpegBiquad`) and the analytic
+  response are all read. They do not take the same numbers — a Web Audio high/low-pass reads Q in
+  **decibels**, so the linear 0.707 handed to a node is 3.7 dB wrong at the corner. Measured through
+  the real ffmpeg: every band type within 0.003 dB of the biquad at ten tones, and the spec's node
+  arithmetic within 1e-4 of the exported samples. A preview context runs at the device's rate and
+  export at 48 kHz; the two designs differ by at most 0.84 dB below 16 kHz (a 12 kHz low-pass).
+  **Dynamics and noise removal are baked**: `DynamicsCompressorNode` and `acompressor` are different
+  detectors, and a detector has history a just-scrubbed preview lacks, so the chain up to its last
+  compressor/gate/de-esser/limiter/denoise stage is rendered once by ffmpeg into a content-addressed
+  24-bit WAV (`<cache>/audiofx-<scheme>`, whole source stream, 4 GB cap of its own, bakes used this
+  session never swept) that **both** paths play — the same samples by construction. Preview plays it
+  from a stand-in `<audio>` element positioned like a detached sound, with the picture element claimed
+  silently; while a bake is pending the preview plays the clip unprocessed and the inspector says so;
+  export renders what it needs first and **throws** rather than write a dry clip. Order: clip effects
+  → `itemAudioGainAt` (volume, fades, transition, duck, track fader) → pan → track bus → track bands →
+  mix → mastering. **A track's baked stages are applied to each of its clips** (a bus cannot be
+  baked), before that clip's fader; only the track's bands after its last baked stage run on the bus.
+  Three things ffmpeg does that the bake has to undo, each measured and pinned: `afftdn` delays its
+  output 1200 samples and does not say so; its `nf` must be the recording's own noise level or it
+  removes nothing (main measures the quiet tenth of 50 ms windows first; `tn=1` did nothing); and a
+  late-starting audio stream comes out early unless the resample pins `first_pts=0`. `detection=peak`
+  vs `rms` is a 0.2 dB choice no test distinguishes — recorded at the code as a choice. **Not
+  measured:** any of it in a running app (`test/app/audio-effects.mjs` is written and unrun).
 - **Keyframes have one sampler and item-relative frames** (`item.keyframes`, `@shared/keyframes`,
   `edit_item.keyframes`). The compositor paints `animatedItemAt` (in `#paintItem`, so every kind
   and a transition's two sides animate alike) and `itemAudioGainAt` reads `animatedVolumeAt`, so
@@ -1017,6 +1184,61 @@ projects — indexing an array yields `T | undefined` and you must handle it.
   beyond each end — exact); slip and speed leave them; `retimeTimeline` scales them. Anything that
   asks "can this clip sound" must use `volumeMayBeAudible`, not `item.volume > 0` — a clip keyed up
   from volume 0 was otherwise dropped from export.
+- **Reverse and speed ramps live in the one source-time mapping, `sourceEdgeAt`** (`@shared/project`,
+  `@shared/speed-curve`, `@shared/speed`, `@shared/retime-sound`; `edit_item.reverse`/`speedRamp`).
+  `sourceEdgeAt(item, rel, fps)` is the source time at a frame *boundary*; `sourceTimeAt` is the
+  boundary a frame starts on forwards and ends on reversed, so a frame always shows the earliest
+  moment of the footage it covers and a reversed clip shows the forward clip's frames in the
+  opposite order. `item.reverse` keeps `sourceStartUs` meaning "where it starts reading" — the
+  *late* edge of a reversed clip — which is why every head-moving edit (split, trim, roll, ripple,
+  insert) writes `sourceStartUs = sourceEdgeAt(item, d, fps)` and is right both ways. A ramp is
+  `item.keyframes.speed` (absolute rates, item-relative frames, 0 holds a frame), so shift and
+  slice carry it; its integral is a **sum over frames** (`consumedFrames`), the same arithmetic
+  as setting `playbackRate` once a frame. A clip with neither is `plainTime` and takes the
+  arithmetic it always had (`speed-curve.test.ts` holds a literal table). **Changing a ramp keeps
+  the footage and changes the clip's length** (`planRetime`), stopping at the next clip unless
+  `ripple` — the constant-speed rule. Anything that reads source time back onto the timeline uses
+  `itemFrameAtSource`; the tools that measure a file in a straight line (silences, levels, sync,
+  `apply_script` retimes) refuse a reversed or ramped clip by name. **Sound: a ramped clip is
+  silent in the preview and the export** (`itemAudioGainAt`, `volumeMayBeAudible`); **a reversed
+  clip is silent in the preview and backwards in the export** (`areverse`, measured through the real
+  ffmpeg in `reverse-audio-render.test.ts`); the inspector, the clip badge and the tool result all
+  say which. The preview *steps* a reversed clip or a held frame (`transportFor`: paused, a seek per
+  frame) — export and `preview_frame` wait for each seek and are frame-exact; what frame rate the
+  stepped preview reaches was **not measured** (`test/app/speed.mjs`, unrun).
+- **A title has one painter, and its paint is a stack over the single fields** (`@shared/text-style`,
+  `engine/textPaint.ts`, `apply_text_look`). `TextStyle.color/stroke/shadow/background` stay the
+  stored form of a title that uses only those — it saves byte for byte as it did (`text-style-format.test.ts`
+  holds a literal) — and `fills`, `strokes`, `shadows`, `glow` and `plate` are optional and *add* to
+  them; only `fills` replaces (`[]` is a hollow title). `textPaintOf` resolves what is drawn,
+  `planText` is the arithmetic (plates, runs, how far the paint reaches) and `paintText` the only
+  thing that touches the canvas, called from `#drawText` alone. Order is plates, shadows, outlines
+  widest first, fills bottom up. Three things the old inline painter did are deliberately different:
+  a shadow with no outline is now cast (it was set and then cleared before the fill), the shadow is
+  cast by the filled letter rather than the outline's ring, and shadows are scaled by the device
+  scale and the clip's zoom — canvas shadows ignore the transform, so a half-size preview drew them
+  twice as long as the export. The fit report says how far paint leaves the box (`paintOverflow`),
+  after the font and clipping faults. Looks are data (`TEXT_LOOKS`): paint and weight only, never a
+  typeface, with lengths scaled from 96 px type. **Not measured:** any of it in a running app —
+  `test/app/text-layers.mjs` is written and unrun.
+- **Animation presets are declared, glued to the ends, and evaluated by the keyframe sampler**
+  (`item.animation`, `@shared/animation`, `edit_item.animation`). `{ in?, out?, loop? }` is stored
+  as chosen, never baked into keys, so a trim leaves the In on the first frames and the Out on the
+  last; a split gives the left half the In and the right the Out (`splitAnimation`, in `split.ts`,
+  `ripple.ts` and `insert-edit.ts`). `animatedItemAt` is `applyAnimation(keyedItemAt(…))`: a preset
+  rides on the keyed or static value — opacity and scale multiply, position, rotation and blur add —
+  and replaces nothing. In + Out longer than the clip share it in proportion (`animationWindows`).
+  A transition across an end sets that end's preset aside at draw time (`animationForDraw`), because
+  the transition draws the clip before its first frame and an In still at "not here" would hide half
+  the dissolve. A Wipe or a Rise is a clip set in `#paintItem` over the clip's *keyed* box. On a
+  title `by: line|word|letter` hands the units to the painter (`textUnitsAt`), which draws each run
+  under its own transform and, between an In and an Out, draws whole lines exactly as before. The
+  curves are `src/shared/motion/core`'s. `edit_item`'s result reports presets under `presets`,
+  because `animation` there already meant the keyframe description.
+- **What can be keyed is a table** (`@shared/keyframe-registry`): the first eight, the crop edges,
+  the eight adjustments, and a title's `fontSize`/`letterSpacing`. The edit rules walk every key a
+  clip *has*, not the table, so a key this build cannot draw survives a trim. Effect and mask
+  parameters join through `DYNAMIC_KEYFRAME_PATHS` (a prefix, `describe`, `apply`) — empty today.
 - **The `.bay` format changes additively within a version, and any other change is a bump.** A new
   *optional* field needs nothing: older builds of the same version load the file, carry the key
   through (the loader whitelists nothing) and write it back. Renaming, removing or retyping a field
@@ -1047,13 +1269,12 @@ projects — indexing an array yields `T | undefined` and you must handle it.
 - **The renderer never touches the filesystem.** Media reaches it over the `bay://` protocol, which
   serves only allowlisted paths and must honour HTTP Range requests — `<video>` seeking is broken
   without them, and that is the most common way this goes wrong.
-- **Nothing reaches the network — with five exceptions, all main's.** No telemetry, no
+- **Nothing reaches the network — with six exceptions, all main's.** No third-party
   analytics, no remote fonts or images. The CSP in `src/renderer/index.html` permits no remote
   origin; loosening it is a product decision, not a fix. The first exception is **access**: main
-  (never the renderer) talks to `securetoken.googleapis.com` and `firestore.googleapis.com` only,
-  to refresh the sign-in and read/write the access documents (`src/main/auth/google.ts`, whose
-  `guardedFetch` refuses any other host). What it sends is a refresh token, an ID token and email
-  addresses — never project data, media, paths or usage. It uses Node's `fetch`, because
+  (never the renderer) talks to `securetoken.googleapis.com` only, to refresh the sign-in
+  (`src/main/auth/google.ts`, whose `guardedFetch` refuses any other host). What it sends is the
+  refresh token — never project data, media, paths or usage. It uses Node's `fetch`, because
   Electron's `net.fetch` rides the editor's session, which `offline.ts` (untouched) blocks. The
   second exception is whisper models, fetched
   by main from Hugging Face's `ggerganov/whisper.cpp` repo only when the user clicks Download in
@@ -1119,6 +1340,47 @@ projects — indexing an array yields `T | undefined` and you must handle it.
   already. `url-import.test.ts` runs the real yt-dlp against 127.0.0.1 when it is installed —
   through a test-only allowance (`allowPrivateHostsForTests`) no tool can reach — never the
   internet, including a chunked stream the cap must stop.
+  The sixth is **usage telemetry and crash reports**, to bay's own website only (see the paragraph
+  below).
+
+**bay sends usage counts and crash reports to its website, both on by default, each behind its
+own switch** (`@shared/telemetry` is the contract, written first; `src/main/telemetry/`;
+Preferences › Privacy). The owner's decision. Main only, Node's `fetch` through
+`guardedTelemetryFetch`, which refuses every origin but one and follows no redirect: `SITE_ORIGIN`
+in a packaged build, and in an unpackaged one only `BAY_TELEMETRY_BASE` when it names a literal
+loopback host — otherwise a checkout sends nothing, so development never reports to production.
+`POST /api/telemetry` carries batches (≤100) of events from a fixed list, each with an
+**allow-list of props** (`TELEMETRY_EVENTS`: counts, sizes, times, enums, a tool's *name*) — a prop
+not listed or of the wrong type is dropped before it is queued, and the renderer may ask only for
+`page_view`. `POST /api/crash` carries one crash: main's `uncaughtExceptionMonitor` (so Electron's
+own behaviour is unchanged) and `unhandledRejection` (still logged), `render-process-gone` /
+`child-process-gone` (not `clean-exit` or `killed`), and the renderer's `error` /
+`unhandledrejection` forwarded as text over a send outside the access gate, accepted only from the
+editor's own windows and cut to the caps at the boundary. A non-Error thrown or rejected is sent
+as its type only (`thrownText`: `rejection: object (Response)`), never serialised. Messages and
+stacks are cut to their caps *first* and then redacted line by line in main (`telemetry/redact.ts`,
+every pattern linear — a test holds the known ReDoS inputs under 50 ms): %xx decoded once, URL
+query/fragment → `?<query>` and user info → `<user>`, emails → `<email>`, tokens and keys and
+base64url runs ≥32 → `<secret>`, home → `~`, every directory of an absolute path wherever it
+starts → `…`, a non-code file name → `<file>.ext`, and quoted text (“…”, '…', "…") → `<text>`
+except on a stack frame line. An identical crash goes at most once per 10 minutes, and at most
+10 crashes a minute go in all. **Never sent:** email, account id, project names, paths, asset names, prompts,
+transcripts, tool arguments, media. The install id is a random v4 UUID in `userData/install-id`,
+derived from nothing. Unsent reports wait in `userData/telemetry-queue.json` (≤500 events, ≤50
+crashes, oldest dropped), written when a crash arrives, after a failed send and at quit; 400 is
+dropped, 429/5xx/no answer backs off 1 min → 1 h — crashes and events each on their own backoff,
+and a report the site answered "try later" 5 times running is dropped (an unreachable site is
+not a strike). Flushed every 60 s and at quit (≤2 s; not while
+Squirrel quits to install an update). **A switch turned off sends nothing and deletes what of it
+was queued**; a database that will not open reads as off. Electron's `crashReporter` runs with
+`uploadToServer: false`: minidumps stay in `crashDumps`, named in Preferences › Privacy. The
+one-time notice (`settings/TelemetryNotice.tsx`, dismissal kept in main's database) says what is
+sent and links there; it is mounted outside the access gate, because sending starts at launch, and
+while locked it carries the two switches itself (`telemetryStatus`/`Set`/`DismissNotice` are in
+`OPEN_WHILE_LOCKED`). `agent_turn.toolCalls` counts distinct call ids (the CLI announces each call
+twice), and a renderer-side export failure reaches `export_failed` through
+`export.cancel(jobId, { failed: true })`; a user's cancel counts nothing. Tests: `src/shared/telemetry.test.ts` and `src/main/telemetry/*.test.ts`,
+mutation-checked (12 guards, 12 caught).
 - **Subscribe narrowly to the store** (`useEditor((s) => s.playhead)`), never wholesale, or every
   component re-renders at the frame rate during playback.
 - **Playback is driven by wall-clock elapsed time, not by counting rAF callbacks**, and composites at

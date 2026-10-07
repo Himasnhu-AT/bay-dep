@@ -26,8 +26,18 @@ import { BrowserWindow, session } from 'electron'
 import type {
   CompositionFrame,
   CompositionFrameRequest,
+  FilmSampleRequest,
+  FilmSampleResult,
   ImportedAsset
 } from '@shared/ipc'
+import {
+  ENERGY_WIDTH,
+  planFilm,
+  readFilmMeta,
+  type DeclaredFilm,
+  type FilmSamples,
+  type RawTrackSample
+} from '@shared/film-oracle'
 import type { Asset } from '@shared/project'
 import {
   COMPOSITION_EXTENSIONS,
@@ -42,10 +52,12 @@ import {
 import { allowPath, isAllowed } from '../protocol'
 import { probe } from '../ffmpeg/probe'
 import { checkSounds, fileChecks } from './audio'
-import { bgraToRgba, describeSizeMismatch } from './bitmap'
-import { seekScript, variablesScript } from './scripts'
+import { bgraToRgba, describeSizeMismatch, lumaDelta } from './bitmap'
+import { filmDeclaredScript, filmTrackScript, seekScript, variablesScript } from './scripts'
 import { decideCompositionRequest } from './sandbox'
 import { compositionFontCss } from './font-css'
+import { ensureMotionFile } from './motion-file'
+import type { MotionFileResult } from '@shared/motion-file'
 import { fontsDir } from '../paths'
 
 /**
@@ -257,7 +269,7 @@ export async function importCompositions(paths: string[]): Promise<ImportedAsset
   return imported
 }
 
-async function open(request: CompositionFrameRequest): Promise<Entry | null> {
+async function open(request: Pick<CompositionFrameRequest, 'assetId' | 'path'>): Promise<Entry | null> {
   const inProgress = opening.get(request.assetId)
   if (inProgress) {
     const entry = await inProgress
@@ -277,7 +289,7 @@ async function open(request: CompositionFrameRequest): Promise<Entry | null> {
   }
 }
 
-async function openUncontended(request: CompositionFrameRequest): Promise<Entry | null> {
+async function openUncontended(request: Pick<CompositionFrameRequest, 'assetId' | 'path'>): Promise<Entry | null> {
   const existing = entries.get(request.assetId)
   if (existing && existing.path === request.path) {
     existing.usedAt = Date.now()
@@ -520,6 +532,139 @@ export function release(assetId: string): void {
   }
 }
 
+/** How long one script in a film's sampling may take: a chunk of track calls, or one seek. */
+const FILM_STEP_TIMEOUT_MS = 20_000
+/** Track calls per script: enough that a film is a handful of round trips, few enough to time out usefully. */
+const FILM_TRACK_CHUNK = 600
+/** This many captures failing in a row ends the picture pass: the page is not going to recover. */
+const FILM_CAPTURE_FAILURES = 5
+
+/**
+ * Sample one composition for the film oracle: what it declares, where its tracked things are at
+ * every frame, and how much the picture changes twelve times a second.
+ *
+ * **In a window of its own**, opened under a key no asset has and destroyed at the end. The
+ * preview's pool seeks the asset's shared window whenever the composition is on the timeline;
+ * two callers seeking one page capture each other's moments, and this pass seeks it thousands
+ * of times. It is the same `open`, the same sandbox and the same capture as a frame — not a
+ * second renderer — and it changes nothing a frame request can see.
+ *
+ * Everything that judges is in `@shared/film-oracle` and everything the page runs is in
+ * `./scripts`, both under test; what is left here is the order of the calls, and typecheck is
+ * the only gate it has.
+ */
+export async function sampleFilm(request: FilmSampleRequest): Promise<FilmSampleResult> {
+  const started = Date.now()
+  const failed = (problem: string): FilmSampleResult => ({ ok: false, reason: 'failed', problems: [problem] })
+  const key = `film:${request.assetId}:${randomUUID()}`
+  const entry = await open({ assetId: key, path: request.path })
+  if (!entry) {
+    return failed(`${request.path} could not be opened as a composition. read_composition says what is wrong with it.`)
+  }
+
+  entry.busy += 1
+  const contents = entry.window.webContents
+  const run = <T>(script: string, what: string): Promise<T> =>
+    withTimeout(
+      contents.executeJavaScript(script) as Promise<T>,
+      FILM_STEP_TIMEOUT_MS,
+      `${what} did not answer within ${FILM_STEP_TIMEOUT_MS / 1000} s — a loop that does not end in time(t) or track(t)?`
+    )
+  try {
+    await withTimeout(entry.ready, LOAD_TIMEOUT_MS, `${request.path} did not finish loading`)
+    if (request.fonts && request.fonts.length > 0) await injectFonts(entry.window, request.fonts)
+    if (request.variables || request.cssVariables) {
+      await run(variablesScript(request.variables ?? {}, request.cssVariables ?? {}), 'Applying the clip\'s variables')
+    }
+
+    const { compositionId, durationSeconds, width, height } = entry.info
+    const read = readFilmMeta(await run<DeclaredFilm>(filmDeclaredScript(), 'Reading window.__film'), durationSeconds)
+    if (!read.ok) return { ok: false, reason: 'contract', problems: read.problems }
+
+    const plan = planFilm(durationSeconds, request.fps, request.pictures)
+    type Tracked =
+      | { ok: true; samples: RawTrackSample[]; purity: { t: number; via: number; first: RawTrackSample; again: RawTrackSample }[] }
+      | { ok: false; why: string }
+    const track: RawTrackSample[] = []
+    for (let from = 0; from < plan.trackTimes.length; from += FILM_TRACK_CHUNK) {
+      const answer = await run<Tracked>(
+        filmTrackScript(compositionId, plan.trackTimes.slice(from, from + FILM_TRACK_CHUNK), []),
+        'Sampling track(t)'
+      )
+      if (!answer.ok) return failed(`The composition could not be seeked: ${answer.why}.`)
+      track.push(...answer.samples)
+    }
+    const probed = await run<Tracked>(filmTrackScript(compositionId, [], plan.purity), 'Sampling track(t) twice')
+    if (!probed.ok) return failed(`The composition could not be seeked: ${probed.why}.`)
+
+    let energy: FilmSamples['energy'] = null
+    let energyMissing: string | undefined
+    const pictureDeltas: (number | null)[] = plan.purity.map(() => null)
+    if (!request.pictures) {
+      energyMissing = 'check_film was called with pictures: false'
+    } else {
+      const small = { width: ENERGY_WIDTH, height: Math.max(1, Math.round((ENERGY_WIDTH * height) / width)) }
+      let failures = 0
+      const capture = async (seconds: number): Promise<Buffer | null> => {
+        try {
+          const seek = await run<{ ok: boolean }>(seekScript(compositionId, seconds), `Seeking ${seconds} s`)
+          if (!seek?.ok) throw new Error('no timeline')
+          const bitmap = (await contents.capturePage()).resize({ ...small, quality: 'good' }).toBitmap()
+          failures = 0
+          return bitmap
+        } catch {
+          // time(t) threw here (the track pass reports it by name), or the capture failed.
+          failures += 1
+          return null
+        }
+      }
+      // A step is null where either of its captures failed. After a run of failures the rest are
+      // left null rather than tried: a film that throws from 11 s on keeps the 11 s it has.
+      const values: (number | null)[] = []
+      let previous = await capture(plan.pictureTimes[0] ?? 0)
+      for (const seconds of plan.pictureTimes.slice(1)) {
+        const next = failures >= FILM_CAPTURE_FAILURES ? null : await capture(seconds)
+        values.push(previous && next ? lumaDelta(previous, next) : null)
+        previous = next
+      }
+      if (values.every((value) => value === null)) {
+        energyMissing = 'no picture of the composition could be captured'
+      } else {
+        energy = { step: plan.pictureStep, values }
+        for (const [index, [seconds, via]] of plan.purity.entries()) {
+          failures = 0
+          const first = await capture(seconds)
+          await capture(via)
+          const again = await capture(seconds)
+          pictureDeltas[index] = first && again ? lumaDelta(first, again) : null
+        }
+      }
+    }
+
+    return {
+      ok: true,
+      meta: read.meta,
+      samples: {
+        width,
+        height,
+        fps: request.fps,
+        durationSeconds,
+        trackRate: plan.trackRate,
+        track,
+        energy,
+        ...(energyMissing === undefined ? {} : { energyMissing }),
+        purity: probed.purity.map((probe, index) => ({ ...probe, pictureDelta: pictureDeltas[index] ?? null }))
+      },
+      elapsedMs: Date.now() - started
+    }
+  } catch (error) {
+    return failed((error as Error).message)
+  } finally {
+    entry.busy -= 1
+    release(key)
+  }
+}
+
 /**
  * Release every window rendering `path`, whatever asset id it was opened under.
  *
@@ -558,11 +703,15 @@ function withTimeout<T>(work: Promise<T>, ms: number, message: string): Promise<
  * Existing files are overwritten, because editing a composition is the normal case and a
  * refusal would force every edit through a delete. Directories are created, because a
  * composition usually wants a folder of its own for its vendored fonts and libraries.
+ *
+ * One more file may land beside it: `bay-motion.js`, bay's move library, when the document loads
+ * it by that name (`./motion-file.ts`). A composition window can load nothing outside its own
+ * folder, so that is the only way the library can reach one. `motion` says what happened to it.
  */
 export async function writeComposition(
   path: string,
   html: string
-): Promise<{ ok: true } | { ok: false; error: string }> {
+): Promise<{ ok: true; motion?: MotionFileResult } | { ok: false; error: string }> {
   if (!isCompositionPath(path)) {
     return {
       ok: false,
@@ -582,7 +731,8 @@ export async function writeComposition(
     // reachable too — otherwise the file renders without the things it references and looks
     // merely wrong.
     allowPath(dirname(path))
-    return { ok: true }
+    const motion = await ensureMotionFile(dirname(path), html)
+    return motion ? { ok: true, motion } : { ok: true }
   } catch (error) {
     return { ok: false, error: `${path} could not be written: ${(error as Error).message}` }
   }

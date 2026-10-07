@@ -2,6 +2,7 @@
 // A tool is a file here exporting `order` and `tool`; add one, then run `pnpm gen:tools`.
 
 import type { ToolSpec } from './spec'
+import { tool as addAdjustmentLayer } from './add-adjustment-layer'
 import { tool as addCaptions } from './add-captions'
 import { tool as addComment } from './add-comment'
 import { tool as addMarker } from './add-marker'
@@ -11,13 +12,17 @@ import { tool as addTrack } from './add-track'
 import { tool as addTransition } from './add-transition'
 import { tool as applyDub } from './apply-dub'
 import { tool as applyScript } from './apply-script'
+import { tool as applyTextLook } from './apply-text-look'
+import { tool as audioEffects } from './audio-effects'
 import { tool as browseAssets } from './browse-assets'
+import { tool as checkFilm } from './check-film'
 import { tool as deleteItems } from './delete-items'
 import { tool as detachAudio } from './detach-audio'
 import { tool as detectBeats } from './detect-beats'
 import { tool as detectCuts } from './detect-cuts'
 import { tool as detectFootageMode } from './detect-footage-mode'
 import { tool as editAsset } from './edit-asset'
+import { tool as editEffects } from './edit-effects'
 import { tool as editItem } from './edit-item'
 import { tool as estimateSpeech } from './estimate-speech'
 import { tool as exportTimeline } from './export-timeline'
@@ -31,10 +36,13 @@ import { tool as importMedia } from './import-media'
 import { tool as importUrl } from './import-url'
 import { tool as indexFootage } from './index-footage'
 import { tool as inspectItem } from './inspect-item'
+import { tool as joinItems } from './join-items'
 import { tool as levelVoices } from './level-voices'
 import { tool as listProjects } from './list-projects'
 import { tool as markHighlights } from './mark-highlights'
+import { tool as moveTrack } from './move-track'
 import { tool as openProject } from './open-project'
+import { tool as organizeAssets } from './organize-assets'
 import { tool as placeAsset } from './place-asset'
 import { tool as planDub } from './plan-dub'
 import { tool as previewFrame } from './preview-frame'
@@ -43,6 +51,7 @@ import { tool as putBehindSubject } from './put-behind-subject'
 import { tool as readBrf } from './read-brf'
 import { tool as readComposition } from './read-composition'
 import { tool as readFeedback } from './read-feedback'
+import { tool as readHistory } from './read-history'
 import { tool as readProject } from './read-project'
 import { tool as readScript } from './read-script'
 import { tool as readStyle } from './read-style'
@@ -50,7 +59,9 @@ import { tool as removeMarker } from './remove-marker'
 import { tool as removeRange } from './remove-range'
 import { tool as removeSilences } from './remove-silences'
 import { tool as removeTransition } from './remove-transition'
+import { tool as renderBrf } from './render-brf'
 import { tool as resolveFeedback } from './resolve-feedback'
+import { tool as scoreSfx } from './score-sfx'
 import { tool as searchFootage } from './search-footage'
 import { tool as searchStyles } from './search-styles'
 import { tool as setCanvas } from './set-canvas'
@@ -89,22 +100,31 @@ export const TOOLS: ToolSpec[] = [
   proposeEdit,
   writeBrf,
   readBrf,
+  renderBrf,
   searchStyles,
   readStyle,
   writeStyle,
   writeComposition,
+  scoreSfx,
   addTemplate,
   readComposition,
+  checkFilm,
   importMedia,
   importUrl,
   placeAsset,
   editAsset,
+  organizeAssets,
   editItem,
+  editEffects,
+  applyTextLook,
   detachAudio,
+  audioEffects,
   putBehindSubject,
+  addAdjustmentLayer,
   trimItem,
   applyScript,
   splitAt,
+  joinItems,
   deleteItems,
   removeRange,
   removeSilences,
@@ -113,6 +133,7 @@ export const TOOLS: ToolSpec[] = [
   syncAngles,
   levelVoices,
   addTrack,
+  moveTrack,
   addTransition,
   removeTransition,
   addSubtitles,
@@ -125,6 +146,7 @@ export const TOOLS: ToolSpec[] = [
   resolveFeedback,
   addComment,
   setPlayhead,
+  readHistory,
   undo,
   exportTimeline,
   trackExport,

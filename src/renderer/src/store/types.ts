@@ -28,16 +28,23 @@ import type { RippleDeleteResult } from '@shared/ripple'
 import type { SwitchSegment } from '@shared/speaker-switch'
 import type { OpenSpanResult } from '@shared/insert-edit'
 import type { TrackMove } from '@shared/track-move'
+import type { TrackMoved } from '@shared/track-order'
+import type { JoinResult } from '@shared/heal'
+import type { Bin } from '@shared/project'
 import type { TrimPlan, TrimRefusal, TrimSpec } from '@shared/trim'
 import type { DetachResult, ReattachResult } from '@shared/links'
 import type { BehindSubjectResult, BehindSubjectSpec } from '@shared/behind-subject'
-import type { SpeedPlan } from '@shared/speed'
+import type { RetimeChange, SpeedPlan } from '@shared/speed'
+import type { ShapeMask } from '@shared/shape-mask'
+import type { AdjustmentLayerResult, AdjustmentLayerSpec } from '@shared/adjustment-layer'
 import type { CaptionCue } from '@shared/captions'
 import type { ScriptOp } from '@shared/script'
 import type { WhisperDownload } from '@shared/whisper'
 import type { ClipboardPayload, PasteAttribute } from '@shared/clipboard'
 import type { FreezeResult } from '@shared/freeze-frame'
 import type { LoudnessTarget } from '@shared/loudness'
+import type { AudioEffect } from '@shared/audio-effects'
+import type { Effect, EffectParamValue } from '@shared/effects/spec'
 import type { AgentCheckpoint, AgentRevert } from './agent-turns'
 
 /** What `placeDub` lays down: lines on one audio track, and what happens to the original sound. */
@@ -259,6 +266,17 @@ export interface EditorState {
 export interface EditorActions {
   // project ------------------------------------------------------------------
   setProject(project: Project, options?: { resetHistory?: boolean }): void
+  /**
+   * Step through the undo history to `position` — how many steps are applied, 0 being before the
+   * first (`@shared/history`). A run of undos or redos, so everything a single one does still
+   * happens. A position outside the history is refused, not clamped.
+   */
+  jumpToHistory(position: number): { position: number } | { error: string }
+  /**
+   * Put recovered work (an autosave sidecar, read by main) in the window. Over the project it
+   * belongs to it is one undoable step; a project never saved opens as itself. Unsaved either way.
+   */
+  restoreRecovered(project: Project): void
   renameProject(name: string): void
   /** A named canvas size, refitting clips the way `resizeCanvas` (and `set_canvas`) does. */
   setCanvasPreset(presetId: string, fit?: CanvasFit): { refitted: number } | { error: string }
@@ -322,6 +340,15 @@ export interface EditorActions {
   // assets -------------------------------------------------------------------
   addAssets(assets: Asset[]): void
   removeAsset(assetId: string): void
+  /**
+   * Media Pool bins (`@shared/bins`): make one, rename it, remove it (what was in it goes back
+   * to the top of the pool; no media is removed), and file assets in one or — `binId` null — out
+   * of any. Each is one undo step and refuses, changing nothing, with a reason.
+   */
+  createBin(name: string): { bin: Bin } | { error: string }
+  renameBin(binId: string, name: string): { bin: Bin; was: string } | { error: string }
+  removeBin(binId: string): { removed: Bin; released: string[] } | { error: string }
+  moveAssetsToBin(assetIds: readonly string[], binId: string | null): { moved: string[]; alreadyThere: string[]; bin: Bin | null } | { error: string }
   /**
    * Change what an asset *is*, for every item that places it: its name, and for a text asset
    * the words it draws. An undoable edit, unlike `patchAsset`, which exists for poster and
@@ -403,6 +430,12 @@ export interface EditorActions {
    * `edit_item({ speed })` runs the same plan. Returns what it did, or null for no such clip.
    */
   setClipSpeed(itemId: string, speed: number, options?: { ripple?: boolean }): SpeedPlan | null
+  /**
+   * Speed, speed ramp and direction in one plan (`planRetime`): the clip keeps its footage, so a
+   * ramp changes its length by the same rule as a constant speed; `reverse` plays the same footage
+   * backwards. Linked clips follow. Returns what it did, or null for no such clip or a locked track.
+   */
+  retimeClip(itemId: string, change: RetimeChange, options?: { ripple?: boolean }): SpeedPlan | null
   /** "Detach audio": each clip's sound onto a linked audio item (`@shared/links`). */
   detachAudio(itemIds: string[], trackId?: string): DetachResult
   /** The reverse: the picture sounds again and its linked audio item is removed. */
@@ -432,6 +465,21 @@ export interface EditorActions {
    * `value` null, remove the key at that frame. The inspector's diamond and auto-key both land here.
    */
   setKeyframe(itemId: string, property: KeyframeProperty, frame: Frames, value: number | null): void
+  /**
+   * Replace a clip's shape masks (`@shared/shape-mask`: rect, ellipse, path), in list order; an
+   * empty list removes them. A subject mask the clip already has stays first. Aimed at a subject
+   * cut-out, it lands on the cut-out's clip, whose picture the cut-out draws. A list that fails
+   * `checkMasks` changes nothing.
+   */
+  setShapeMasks(itemId: string, masks: ShapeMask[]): void
+  /**
+   * "Add adjustment layer" (`@shared/adjustment-layer`): a clip with no picture of its own whose
+   * grade, adjustments and masks apply to everything drawn under it. The asset (one per project)
+   * and the item are one undo step, and the new layer is selected. With no span given it covers
+   * the selected clips, or starts at the playhead; with no track, it goes above everything.
+   * Returns what it made, or why not.
+   */
+  addAdjustmentLayer(spec?: Partial<AdjustmentLayerSpec>): AdjustmentLayerResult
 
   // editing verbs (slices/editing.ts) ---------------------------------------------
   /** Copy the selected clips (with linked partners when linked selection is on). Returns how many. */
@@ -496,7 +544,27 @@ export interface EditorActions {
    */
   addTrack(kind: TrackKind, index?: number): string
   removeTrack(trackId: string): void
+  /**
+   * Move a track to `position` among tracks of its kind — 1 is V1 (drawn lowest) or A1. Its clips
+   * go with it; a track still named by its number takes the new one (`@shared/track-order`). One
+   * undo step. Refused, changing nothing, for an unknown track, a place that does not exist, or
+   * the place it is already in.
+   */
+  moveTrack(trackId: string, position: number): TrackMoved | { error: string }
+  /**
+   * Heal through-edits: join each cut where two of `ids` meet on one track, when the two are one
+   * take with a cut in it (`@shared/heal`). One id joins that clip to the one after it; no ids
+   * uses the selection. Linked clips join with them unless `linked: false`. One undo step. Real
+   * cuts are left alone and reported with why.
+   */
+  joinItems(ids?: readonly string[], options?: { linked?: boolean }): JoinResult | { error: string; hint?: string }
   patchTrack(trackId: string, patch: Partial<Pick<Track, 'locked' | 'muted' | 'hidden' | 'name' | 'solo' | 'volume' | 'pan'>>): void
+  /**
+   * Replaces a clip's or a track's audio effect chain (`@shared/audio-effects`) — one undo step.
+   * The list is what `applyEffectOp` returned, so it is already checked; an empty one removes the
+   * field. A clip on a locked track is left alone.
+   */
+  setAudioEffects(target: { itemId: string } | { trackId: string }, effects: readonly AudioEffect[]): void
 
   // transitions ---------------------------------------------------------------
   /**
@@ -673,6 +741,22 @@ export interface EditorActions {
    */
   beginGesture(): void
   endGesture(): void
+  /**
+   * A clip's video effect stack (`@shared/effects`, `slices/effects.ts`). Each is one undo step;
+   * a clip on a locked track is left alone; a value outside a parameter's range is refused with a
+   * toast and changes nothing. `addEffect` puts the effect last (drawn last) unless `index` says
+   * where, stores every parameter at its default under `params`, and returns the new effect's id.
+   */
+  addEffect(itemId: string, kind: string, options?: { params?: Record<string, EffectParamValue>; index?: number }): string | null
+  /** Merges `params` over the effect's own and, when `enabled` is given, switches it on or off. */
+  patchEffect(itemId: string, effectId: string, patch: { params?: Record<string, EffectParamValue>; enabled?: boolean }): void
+  /** Moves an effect to `toIndex` in the stack; 0 is drawn first. */
+  moveEffect(itemId: string, effectId: string, toIndex: number): void
+  removeEffect(itemId: string, effectId: string): void
+  /** Switches one effect off, or back on. Off, it stays in the stack and runs no pass. */
+  toggleEffect(itemId: string, effectId: string): void
+  /** Replaces the whole stack with one already checked (`applyEffectOps`); empty removes it. */
+  setEffects(itemId: string, effects: Effect[]): void
 }
 
 export type EditorStore = EditorState & EditorActions

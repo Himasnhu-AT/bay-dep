@@ -139,7 +139,7 @@ export async function awaitSources(
 
   for (const item of items) {
     const asset = findAsset(project, item.assetId)
-    if (!asset || asset.error || asset.kind === 'text') continue
+    if (!asset || asset.error || asset.kind === 'text' || asset.kind === 'adjustment') continue
     const element = pool.acquire(asset, slots.get(item.id) ?? 0).element
     if (!element) continue
 

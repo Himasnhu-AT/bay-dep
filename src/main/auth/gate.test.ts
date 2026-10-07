@@ -13,7 +13,7 @@ import { createConnection } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { IPC } from '@shared/ipc'
-import type { AccessStatus } from '@shared/access'
+import { lockedMessage, type AccessStatus } from '@shared/access'
 import { OPEN_WHILE_LOCKED, gateToolRunner, refuseChannel } from './gate'
 import { startSocketServer } from '../mcp/socket-server'
 import { LineBuffer, encode } from '../mcp/jsonrpc'
@@ -23,7 +23,7 @@ const LOCKED: AccessStatus[] = [
   { state: 'signed-out' },
   { state: 'waiting', url: 'https://bay.himanshuat.com/desktop/sign-in?port=1&state=x', expiresAt: 0 },
   { state: 'checking', email: null },
-  { state: 'no-access', email: 'a@example.com', reason: 'no-grant' },
+  { state: 'no-access', email: 'a@example.com', reason: 'unverified-email' },
   { state: 'locked-offline', email: 'a@example.com', lastVerifiedAt: 0 },
   { state: 'revoked', email: 'a@example.com', code: 'USER_DISABLED' },
   { state: 'error', message: 'The browser sign-in was not finished within 5 minutes.' }
@@ -35,13 +35,12 @@ const ENTITLED: AccessStatus = {
   lockAt: 1,
   offline: false,
   persisted: true,
-  referralsLeft: 5,
   bypass: false
 }
 
 test('every locked state refuses the editor channels, with how to unlock', () => {
   for (const status of LOCKED) {
-    for (const channel of ['projectOpen', 'projectCreate', 'agentStart', 'agentSend', 'exportStart', 'mediaImportPaths', 'accessRefer']) {
+    for (const channel of ['projectOpen', 'projectCreate', 'agentStart', 'agentSend', 'exportStart', 'mediaImportPaths']) {
       const refusal = refuseChannel(channel, status)
       assert.ok(refusal, `${status.state} must refuse ${channel}`)
       assert.match(refusal, /bay is locked/)
@@ -60,6 +59,19 @@ test('positive controls: entitled opens everything; locked still opens the acces
   }
 })
 
+test('locked, the telemetry notice can still read and turn the switches — bay sends from launch, before sign-in', () => {
+  for (const status of LOCKED) {
+    for (const channel of ['telemetryStatus', 'telemetrySet', 'telemetryDismissNotice']) {
+      assert.equal(refuseChannel(channel, status), null, `${status.state} ${channel}`)
+    }
+    // Negative control beside it: the neighbouring editor channels stay refused, with how to unlock.
+    for (const channel of ['projectSave', 'exportStart', 'agentStart']) {
+      const refusal = refuseChannel(channel, status)
+      assert.ok(refusal && refusal === lockedMessage(status), `${status.state} ${channel}: ${refusal}`)
+    }
+  }
+})
+
 test('the open-while-locked list names real channels and nothing that edits or reads projects', () => {
   for (const channel of OPEN_WHILE_LOCKED) assert.ok(channel in IPC, `${channel} is not an IPC channel`)
   const open = [...OPEN_WHILE_LOCKED]
@@ -67,7 +79,7 @@ test('the open-while-locked list names real channels and nothing that edits or r
   // unsaved work. It writes crash recovery only — never a project file, never a dialog — and the
   // test below pairs it with projectSave/projectSaveAs staying refused.
   assert.deepEqual(
-    open.filter((c) => (/^(project|media|composition|export|agent|whisper|mcp)/.test(c) || c === 'accessRefer') && c !== 'projectAutosave'),
+    open.filter((c) => /^(project|media|composition|export|agent|whisper|mcp)/.test(c) && c !== 'projectAutosave'),
     []
   )
 })

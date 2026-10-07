@@ -16,9 +16,10 @@
  */
 
 import type { Frames, Item, Timeline, Transition } from './project'
-import { framesToUs, itemEnd } from './project'
+import { itemEnd, sourceEdgeAt } from './project'
 import { rippleDelete } from './ripple'
 import { sliceKeyframes } from './keyframes'
+import { splitAnimation } from './animation'
 
 export interface OpenSpanResult {
   /** Items the frame fell strictly inside, now two pieces; the ids of the new later pieces. */
@@ -104,7 +105,7 @@ export function insertTime(timeline: Timeline, at: Frames, span: Frames, makeId:
         id: makeId(),
         from: start + length,
         durationInFrames: tailFrames,
-        sourceStartUs: item.sourceStartUs + Math.round(framesToUs(headFrames, timeline.fps) * item.speed),
+        sourceStartUs: sourceEdgeAt(item, headFrames, timeline.fps),
         layout: { ...item.layout },
         fadeInFrames: 0,
         keyframes: sliceKeyframes(item.keyframes, headFrames, item.durationInFrames)
@@ -115,6 +116,14 @@ export function insertTime(timeline: Timeline, at: Frames, span: Frames, makeId:
       delete tail.audioLeadFrames
       delete item.audioTrailFrames
       if (item.keyframes) item.keyframes = sliceKeyframes(item.keyframes, 0, headFrames)
+      // The In stays with the head and the Out with the tail (`splitAnimation`).
+      if (item.animation) {
+        const [headAnimation, tailAnimation] = splitAnimation(item.animation)
+        if (headAnimation) item.animation = headAnimation
+        else delete item.animation
+        if (tailAnimation) tail.animation = tailAnimation
+        else delete tail.animation
+      }
       item.durationInFrames = headFrames
       item.fadeOutFrames = Math.min(item.fadeOutFrames, headFrames)
       tail.fadeOutFrames = Math.min(tail.fadeOutFrames, tailFrames)

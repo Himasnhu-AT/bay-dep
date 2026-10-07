@@ -89,7 +89,8 @@ const KIND_PHRASE: Record<AssetKind, string> = {
   html: 'an HTML composition',
   brf: 'a motion graphic',
   lut: 'a LUT',
-  font: 'a font'
+  font: 'a font',
+  adjustment: 'an adjustment layer'
 }
 
 /**

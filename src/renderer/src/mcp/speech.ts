@@ -15,7 +15,7 @@
  */
 
 import type { AudioResult, AudioSpan } from '@shared/ipc'
-import { activeTimeline, allItems, findAsset, framesToUs, itemEnd, type Asset, type Item, type Track } from '@shared/project'
+import { activeTimeline, allItems, findAsset, framesToUs, itemEnd, plainTime, type Asset, type Item, type Track } from '@shared/project'
 import { resolveId, VALIDATE_ONLY } from '@shared/mcp'
 import { detachAudio, linkedPartners, withLinked } from '@shared/links'
 import { commonSilence, framesRemoved, removalRanges, silenceFrames, SILENCE_DEFAULTS, type AnalysedClip } from '@shared/silences'
@@ -69,6 +69,15 @@ function audioAsset(item: Item, why: string): Asset & { path: string } {
 
 /** The source a clip plays over timeline frames [fromFrame, toFrame) of it. */
 function sourceSpan(item: Item, fps: number, fromFrame = item.from, toFrame = itemEnd(item)): AudioSpan {
+  // These tools measure a file and lay what they find along the clip in a straight line — a
+  // silence at 2 s is 2 s into the clip. That is not true of a reversed or ramped clip, so they
+  // say so rather than cut in the wrong places.
+  if (!plainTime(item)) {
+    fail(
+      `Clip ${item.id} is ${item.reverse ? 'reversed' : 'on a speed ramp'}, so what is measured in its file does not sit where the clip plays it. ` +
+        `Run this on the clip first and ${item.reverse ? 'reverse' : 'ramp'} it afterwards (edit_item ${item.reverse ? 'reverse: false' : 'speedRamp: null'} puts it back), or leave ${item.id} out of itemIds.`
+    )
+  }
   const speed = Number.isFinite(item.speed) && item.speed > 0 ? item.speed : 1
   return {
     startUs: item.sourceStartUs + Math.round(framesToUs(fromFrame - item.from, fps) * speed),

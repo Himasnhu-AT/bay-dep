@@ -20,6 +20,7 @@
  */
 
 import { defaultTextStyle, type Item, type TextStyle } from '@shared/project'
+import type { Extents } from '@shared/text-style'
 
 /** Below this, type is not small — it is a smudge. Shrinking further is worse than saying no. */
 export const MIN_FONT_SIZE = 8
@@ -60,6 +61,14 @@ export interface TextFit {
    * reported from here rather than validated against a list of families we *expect* to exist.
    */
   fontAvailable: boolean
+  /**
+   * How far the paint around the letters — outline, shadows, glow, plate — reaches outside the
+   * item's box, per side, in canvas pixels. Present only when it does. Layout fits the *letters*
+   * to the box and does not shrink them for their paint, so a thick outline on a title that
+   * fills its box crosses it; where the box meets the frame edge that paint is cut off, which
+   * looks like a design choice until it is compared with the other side.
+   */
+  paintOverflow?: Extents
 }
 
 export interface TextBox {

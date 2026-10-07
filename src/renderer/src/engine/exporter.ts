@@ -234,13 +234,14 @@ export class FrameExporter {
         return { framesWritten, cancelled: true, incomplete: this.incomplete }
       }
 
-      await bay.export.finish(jobId)
+      await bay.export.finish(jobId, { incomplete: this.incomplete !== null })
       return { framesWritten, cancelled: false, incomplete: this.incomplete }
     } catch (error) {
       // The encoder rejects a frame of the wrong size, the wrong dimensions or out of
       // sequence. Letting that propagate without cancelling would leave ffmpeg running on
-      // a half-written file that nothing will ever close.
-      await bay.export.cancel(jobId).catch(() => {})
+      // a half-written file that nothing will ever close. Main is told this cancel is a
+      // failure, so it counts one: to the encoder it is otherwise the same as the user's.
+      await bay.export.cancel(jobId, { failed: true, stage: 'rendering' }).catch(() => {})
       throw error
     } finally {
       release()
@@ -349,8 +350,9 @@ export function describeIncomplete(wrong: readonly WrittenFrameIssues[]): Incomp
   const parts: string[] = [`${frames} frame${frames === 1 ? '' : 's'} of this export ${frames === 1 ? 'is' : 'are'} not the picture the timeline describes (${spellRanges(ranges)}).`]
   if (gradeIssues.length > 0) {
     parts.push(
-      `A grade was not applied: ${gradeIssues.map((g) => `${g.issue} (${spellRanges(g.ranges)})`).join('; ')}. ` +
-        `preview_frame at one of those frames reports the same under gradeWarnings; fix the grade, then export again.`
+      // Effects report here too (`#drawSource`): the same kind of fault — a pass that did not run.
+      `A grade or effect was not applied: ${gradeIssues.map((g) => `${g.issue} (${spellRanges(g.ranges)})`).join('; ')}. ` +
+        `preview_frame at one of those frames reports the same under gradeWarnings; fix the grade or effect it names, then export again.`
     )
   }
   if (items.length > 0) {

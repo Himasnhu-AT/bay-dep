@@ -31,13 +31,14 @@ import { formatShortcut, runCommand, shortcutOf } from '@/lib/commands'
 import { cn } from '@/lib/cn'
 import { useEditor } from '@/store/editor'
 import { STORAGE_REPAIRED_EVENT, StorageRepairButton, useStorageStatus } from '@/editor/StorageRepair'
+import { UnsavedWork } from './UnsavedWork'
 
 /**
  * The projects screen: what bay shows at launch, and what the Home button goes back to.
  *
  * Every project the user has opened or created, newest first, with a search, a grid or list
- * view, and a "Create new project" tile that never asks a question — the project is written into
- * the projects folder under a free name and opened. A `.bay` from anywhere else is one "Open…"
+ * view, and a "Create new project" tile that asks one question — which editor (`NewProjectDialog`,
+ * in `App`) — and then writes the project into the projects folder under a free name and opens it. A `.bay` from anywhere else is one "Open…"
  * away. Choosing a project hands it to the editor; nothing here edits a project.
  */
 
@@ -266,6 +267,7 @@ export function ProjectsHome(): ReactNode {
               <StorageRepairButton />
             </InlineAlert>
           )}
+          <UnsavedWork />
 
           <div className="min-h-0 flex-1 overflow-y-auto p-4">
             {recents !== null && recents.length === 0 ? (

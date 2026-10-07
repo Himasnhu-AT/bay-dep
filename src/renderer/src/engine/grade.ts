@@ -52,10 +52,15 @@ export interface GradeRequest {
   seed: number
   /** The table behind `grade.lut`, when there is one. */
   lut?: LutData
+  /**
+   * Draw into the render target of this name instead of the canvas, and hand it back as `target`:
+   * how the effect passes (`effects.ts`) take a graded picture as their input without a readback.
+   */
+  into?: string
 }
 
 export type GradeResult =
-  | { ok: true; canvas: OffscreenCanvas; width: number; height: number; warning: string | null }
+  | { ok: true; canvas: OffscreenCanvas; width: number; height: number; warning: string | null; target?: Target }
   | { ok: false; error: string }
 
 const resolvedCache = new WeakMap<Grade, ResolvedGrade | null>()
@@ -74,6 +79,12 @@ export function resolvedGradeOf(grade: Grade | undefined): ResolvedGrade | null 
 
 /** Largest edge the pass will render. Past this the result is drawn scaled up, not refused. */
 const MAX_EDGE = 4096
+
+/** The size a pass renders a picture asked for at `width` x `height`: that, or scaled to fit `MAX_EDGE`. */
+export function passSize(width: number, height: number): { width: number; height: number } {
+  const scale = Math.min(1, MAX_EDGE / Math.max(width, height))
+  return { width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)) }
+}
 
 const VERTEX = `#version 300 es
 in vec2 a_pos;
@@ -247,7 +258,7 @@ void main() {
   o = vec4(c * px.a, px.a);
 }`
 
-interface Target {
+export interface Target {
   texture: WebGLTexture
   framebuffer: WebGLFramebuffer
   width: number
@@ -408,6 +419,22 @@ function context(): GradeContext | { error: string } {
 }
 
 /**
+ * The shared context, for the effect passes: they run in it for the reasons at the top of this
+ * file, with programs of their own. What they must leave as they found it is written at
+ * `drawEffects` — the grade binds everything it reads on every call except the curve and LUT
+ * units (3 and 4), which nothing else may touch.
+ */
+export interface SharedGl {
+  readonly gl: WebGL2RenderingContext
+  readonly canvas: OffscreenCanvas
+  target(key: string, width: number, height: number, filter: number): Target
+}
+
+export function sharedGl(): SharedGl | { error: string } {
+  return context()
+}
+
+/**
  * Grades one source. Never throws: a clip whose grade cannot run is drawn ungraded by the caller,
  * which reports it, rather than taking the frame down.
  */
@@ -415,9 +442,7 @@ export function gradeSource(resolved: ResolvedGrade, request: GradeRequest): Gra
   const ctx = context()
   if ('error' in ctx) return { ok: false, error: ctx.error }
   const gl = ctx.gl
-  const scale = Math.min(1, MAX_EDGE / Math.max(request.width, request.height))
-  const width = Math.max(1, Math.round(request.width * scale))
-  const height = Math.max(1, Math.round(request.height * scale))
+  const { width, height } = passSize(request.width, request.height)
   const sourceWidth = intrinsic(request.source, 'width')
   const sourceHeight = intrinsic(request.source, 'height')
   if (sourceWidth <= 0 || sourceHeight <= 0) return { ok: false, error: 'the source has no pixels yet' }
@@ -431,9 +456,12 @@ export function gradeSource(resolved: ResolvedGrade, request: GradeRequest): Gra
   const canvasHeight = ctx.canvas.height
 
   let warning: string | null = null
+  let into: Target | null = null
   try {
     gl.useProgram(ctx.program)
     gl.activeTexture(gl.TEXTURE0)
+    // Made before anything is bound: `target` binds on the active unit and unbinds it again.
+    if (request.into) into = ctx.target(request.into, width, height, gl.LINEAR)
     gl.bindTexture(gl.TEXTURE_2D, ctx.source)
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false)
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false)
@@ -490,6 +518,13 @@ export function gradeSource(resolved: ResolvedGrade, request: GradeRequest): Gra
     gl.uniform2f(ctx.u('u_boxSize'), request.boxWidth, request.boxHeight)
 
     const toOutput = (): void => {
+      if (into) {
+        gl.bindFramebuffer(gl.FRAMEBUFFER, into.framebuffer)
+        gl.viewport(0, 0, width, height)
+        gl.uniform2f(ctx.u('u_viewOrigin'), 0, 0)
+        gl.uniform2f(ctx.u('u_viewSize'), width, height)
+        return
+      }
       gl.bindFramebuffer(gl.FRAMEBUFFER, null)
       // The top-left `width x height` of the drawing buffer, which is what drawImage reads.
       gl.viewport(0, canvasHeight - height, width, height)
@@ -567,10 +602,12 @@ export function gradeSource(resolved: ResolvedGrade, request: GradeRequest): Gra
     // mid-draw. Either way the caller draws the clip ungraded and says so.
     return { ok: false, error: error instanceof Error ? error.message : String(error) }
   }
-  return { ok: true, canvas: ctx.canvas, width, height, warning }
+  return into
+    ? { ok: true, canvas: ctx.canvas, width, height, warning, target: into }
+    : { ok: true, canvas: ctx.canvas, width, height, warning }
 }
 
-function intrinsic(source: GradeSource, axis: 'width' | 'height'): number {
+export function intrinsic(source: GradeSource, axis: 'width' | 'height'): number {
   if (source instanceof HTMLVideoElement) return axis === 'width' ? source.videoWidth : source.videoHeight
   if (source instanceof HTMLImageElement) return axis === 'width' ? source.naturalWidth : source.naturalHeight
   return source[axis]

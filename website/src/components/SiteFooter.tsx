@@ -30,9 +30,11 @@ export function SiteFooter() {
           <Link href="/compare" className={LINK}>
             Compare
           </Link>
-          <Link href="/waitlist" className={LINK}>
-            Request access
-          </Link>
+          {product.download ? (
+            <a href={product.download} className={LINK}>
+              Download
+            </a>
+          ) : null}
           <a href={`mailto:${product.email}`} className={LINK}>
             {product.email}
           </a>

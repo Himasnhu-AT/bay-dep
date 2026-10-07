@@ -20,8 +20,9 @@
  */
 
 import type { Frames, Item, Timeline, Transition } from './project'
-import { framesToUs, itemEnd } from './project'
+import { itemEnd, sourceEdgeAt } from './project'
 import { shiftKeyframes, sliceKeyframes } from './keyframes'
+import { splitAnimation } from './animation'
 
 export interface RippleDeleteResult {
   /** How much timeline was removed. Zero means nothing overlapped and nothing moved. */
@@ -49,11 +50,6 @@ const EMPTY: RippleDeleteResult = {
   createdItemIds: [],
   removedTransitionIds: [],
   desyncedTrackIds: []
-}
-
-/** How far into a source `frames` of timeline reaches, at this item's speed. */
-function sourceAdvanceUs(frames: Frames, fps: number, speed: number): number {
-  return Math.round(framesToUs(frames, fps) * speed)
 }
 
 /**
@@ -132,8 +128,7 @@ export function rippleDelete(
           from: start,
           durationInFrames: tailFrames,
           // The tail reads from where the *removed* part ended, not where the head stopped.
-          sourceStartUs:
-            item.sourceStartUs + sourceAdvanceUs(end - itemFrom, timeline.fps, item.speed),
+          sourceStartUs: sourceEdgeAt(item, end - itemFrom, timeline.fps),
           layout: { ...item.layout },
           // A fade-in belongs to the clip's original start, which the tail is not.
           fadeInFrames: 0,
@@ -142,6 +137,14 @@ export function rippleDelete(
         }
         if (!tail.keyframes) delete tail.keyframes
         if (item.keyframes) item.keyframes = sliceKeyframes(item.keyframes, 0, headFrames)
+        // The In stays with the head and the Out with the tail (`splitAnimation`).
+        if (item.animation) {
+          const [headAnimation, tailAnimation] = splitAnimation(item.animation)
+          if (headAnimation) item.animation = headAnimation
+          else delete item.animation
+          if (tailAnimation) tail.animation = tailAnimation
+          else delete tail.animation
+        }
         item.durationInFrames = headFrames
         item.fadeOutFrames = Math.min(item.fadeOutFrames, headFrames)
         tail.fadeOutFrames = Math.min(tail.fadeOutFrames, tailFrames)
@@ -167,7 +170,7 @@ export function rippleDelete(
       const tailFrames = itemTo - end
       item.from = start
       item.durationInFrames = tailFrames
-      item.sourceStartUs += sourceAdvanceUs(lost, timeline.fps, item.speed)
+      item.sourceStartUs = sourceEdgeAt(item, lost, timeline.fps)
       // The head went and the tail landed on the cut: keys stay on the footage they were on.
       if (item.keyframes) item.keyframes = shiftKeyframes(item.keyframes, -lost)
       item.fadeInFrames = Math.min(item.fadeInFrames, tailFrames)

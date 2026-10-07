@@ -18,6 +18,7 @@ import {
   clearRecentMenu,
   closeStore,
   mcpClientsEnabled,
+  telemetrySwitches,
   onRecentsChanged,
   readWindowBounds,
   recentForMenu,
@@ -30,6 +31,8 @@ import { cacheDir, downloadsDir } from './paths'
 import { sweepStaleCaches } from './media/cache-key'
 import { VISION_CACHE_FAMILY } from './vision/cache'
 import { MATTE_CACHE_FAMILY, stopSubjectMattes, sweepInterruptedMattes } from './matte/host'
+import { stopAudioBakes, sweepAudioBakes } from './audio-fx/host'
+import { AUDIO_FX_CACHE_FAMILY } from './audio-fx/bake'
 import { cancelCacheUpkeep, runCacheUpkeep } from './media/cache-upkeep'
 import { startMcpServer, stopMcpServer } from './mcp/server'
 import { isOpenableExternally } from './external'
@@ -44,6 +47,8 @@ import { disposeAgent, sweepAgentAttachments } from './agent/host'
 import { cancelUrlImports, sweepIncompleteDownloads } from './media/url-import'
 import { isEntitled } from '@shared/access'
 import { appNameFor } from './app-name'
+import { setRendererClassifier, startCrashDumps, startTelemetry, track } from './telemetry/service'
+import { isCompositionWindow } from './html/compositions'
 
 // The main bundle is ESM, where `__dirname` does not exist. Everything loaded by path — the
 // preload script and the production renderer — is resolved from here.
@@ -61,6 +66,10 @@ app.setName(appNameFor(app.getName(), app.isPackaged))
 // Before `whenReady`, without exception: Electron reads the privileged-scheme table during
 // startup and a later registration is accepted and then ignored.
 registerBayScheme()
+
+// Electron's minidumps, kept on this Mac and never uploaded — as early as possible, so a crash
+// during startup leaves one too. Sending a crash *report* is telemetry's, behind its switch.
+startCrashDumps()
 
 /**
  * macOS delivers a double-clicked document through `open-file`, and it fires **before**
@@ -82,6 +91,9 @@ function sendCommand(window: BrowserWindow, command: MenuCommand): void {
   if (window.isDestroyed()) return
   window.webContents.send(IPC.appMenuCommand, command)
 }
+
+/** `app_open` is the first editor window shown after launch; `activate` reopening one is not a launch. */
+let launchReported = false
 
 /** The windows that load the editor — the only ones a menu command may go to. */
 const editorWindows = new Set<BrowserWindow>()
@@ -119,6 +131,10 @@ function createWindow(): BrowserWindow {
 
   window.on('ready-to-show', () => {
     window.show()
+    if (!launchReported) {
+      launchReported = true
+      track('app_open', { launchMs: Math.round(process.uptime() * 1000) })
+    }
   })
 
   // Saved on move/resize rather than on close, because a crash or a force-quit is exactly
@@ -236,7 +252,17 @@ void app.whenReady().then(() => {
   })
 
   registerBayProtocolHandler()
-  registerIpcHandlers()
+  registerIpcHandlers({
+    isEditor: (contents) => [...editorWindows].some((window) => !window.isDestroyed() && window.webContents === contents)
+  })
+
+  // Usage telemetry and crash reports, each behind its switch in Preferences › Privacy (on unless
+  // turned off). Before the window, so a crash in its first second is reported.
+  setRendererClassifier((contents) => {
+    const window = BrowserWindow.fromWebContents(contents)
+    return window && isCompositionWindow(window) ? 'composition' : 'renderer'
+  })
+  startTelemetry(telemetrySwitches())
 
   // Access before anything can be asked of bay: until `startAccess` has read the stored state
   // the status is `signed-out`, so the gate (IPC and both sockets) refuses rather than guessing.
@@ -261,6 +287,8 @@ void app.whenReady().then(() => {
 
   // A subject matte a crash or a kill interrupted leaves its `.part`; nothing is computing yet.
   void sweepInterruptedMattes()
+  // Baked audio effects: a `.part` a crash left, and whatever is past the family's own cap.
+  void sweepAudioBakes().catch(() => {})
 
   // What the user attached to a conversation that ended without `dispose` — a crash, a force
   // quit. No conversation exists yet, so nothing is reading them.
@@ -270,7 +298,7 @@ void app.whenReady().then(() => {
   // in bay evicts, so without this a scheme change leaks its entire previous cache for the
   // life of the install. Startup is the only moment nothing is reading them.
   // `vision` is visual search's frame index (`vision/cache.ts`), versioned the same way.
-  void sweepStaleCaches(cacheDir(), ['thumbs', 'peaks', VISION_CACHE_FAMILY, MATTE_CACHE_FAMILY]).then((removed) => {
+  void sweepStaleCaches(cacheDir(), ['thumbs', 'peaks', VISION_CACHE_FAMILY, MATTE_CACHE_FAMILY, AUDIO_FX_CACHE_FAMILY]).then((removed) => {
     if (removed.length > 0) {
       console.log(
         `[bay] Reclaimed ${removed.length} stale cache director${removed.length === 1 ? 'y' : 'ies'}: ${removed.join(', ')}`
@@ -328,6 +356,8 @@ app.on('will-quit', () => {
   cancelUrlImports()
   // The Apple Vision process (osascript) and any subject matte it is computing.
   stopSubjectMattes()
+  // An ffmpeg still rendering a clip's processed sound.
+  stopAudioBakes()
   stopUpdates()
   cancelCacheUpkeep()
   void stopMcpServer()

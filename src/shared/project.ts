@@ -15,18 +15,26 @@
 
 import { formatTimecode as formatTimecodeShared } from './timecode'
 import { easeProgress } from './ease'
+import { consumedFrames, frameAtConsumed, hasSpeedCurve, speedKeysOf } from './speed-curve'
 import type { CompositionVariable } from './composition'
 import type { BrfDocument } from './brf'
 import type { BeatGrid } from './beats'
 import type { Grade, LutData } from './grade'
 import type { Mask, SubjectMatte } from './matte'
 import type { DeliverySettings } from './loudness'
+import type { TextFill, TextGlow, TextPlateOptions, TextShadowLayer, TextStrokeLayer } from './text-style'
+import type { ItemAnimation } from './animation'
+import type { AudioEffect } from './audio-effects'
+import type { Effect } from './effects/spec'
 
 /**
  * `lut` is a colour look-up table (`.cube`): it has no picture of its own and is never placed on a
  * timeline — a clip's `grade.lut` refers to it by id.
+ *
+ * `adjustment` is an adjustment layer (`./adjustment-layer`): no file and no picture of its own; a
+ * clip of it on a video track applies its grade, adjustments and masks to what is drawn under it.
  */
-export type AssetKind = 'video' | 'audio' | 'image' | 'gif' | 'text' | 'html' | 'brf' | 'lut' | 'font'
+export type AssetKind = 'video' | 'audio' | 'image' | 'gif' | 'text' | 'html' | 'brf' | 'lut' | 'font' | 'adjustment'
 export type TrackKind = 'video' | 'audio'
 
 /** Microseconds. Used for durations and offsets that belong to source media. */
@@ -137,6 +145,11 @@ export interface Asset {
    */
   subjectMattes?: SubjectMatte[]
   createdAt: number
+  /**
+   * The Media Pool bin this asset is listed in (`Project.bins`, `@shared/bins`). Absent is the
+   * top of the pool. Only where it is listed: nothing about a clip or the picture reads it.
+   */
+  binId?: string
   /** Set when probing failed; the asset still lists, but cannot be placed. */
   error?: string
 }
@@ -289,7 +302,28 @@ export const KEYFRAME_PROPERTIES = [
   'height',
   'rotation',
   'scale',
-  'volume'
+  'volume',
+  // Added after the first eight, and appended so nothing above moves: the four crop edges, the
+  // eight adjustments and a title's size and tracking. Their limits, names and how each reads
+  // and writes an item are one table, `@shared/keyframe-registry`.
+  'cropLeft',
+  'cropTop',
+  'cropRight',
+  'cropBottom',
+  'brightness',
+  'contrast',
+  'saturate',
+  'hueRotate',
+  'blur',
+  'grayscale',
+  'sepia',
+  'invert',
+  'fontSize',
+  'letterSpacing',
+  // A clip's speed over its length — a ramp (`@shared/speed-curve`). Unlike the others it changes
+  // which source is read, not how it is drawn: `sourceEdgeAt` integrates it, and its registry row
+  // is marked `planned`, so no general keyframe control or tool writes it as a bare key.
+  'speed'
 ] as const
 
 export type KeyframeProperty = (typeof KEYFRAME_PROPERTIES)[number]
@@ -348,6 +382,22 @@ export interface TextStyle {
   stroke: { color: string; width: number } | null
   shadow: { color: string; blur: number; offsetX: number; offsetY: number } | null
   background: { color: string; padding: number; radius: number } | null
+  /**
+   * The richer paint stack (`@shared/text-style`), every field optional and absent on a title that
+   * uses only the single colour, outline, shadow and plate above — which therefore saves exactly
+   * as it always did. Each one **adds to** its single counterpart rather than replacing it, except
+   * `fills`, which when present is the whole fill and `color` then draws nowhere.
+   */
+  /** Fills painted bottom to top over the outlines: solid or a linear/radial gradient. */
+  fills?: TextFill[]
+  /** Further outlines outside `stroke`, each wrapping the one before it. */
+  strokes?: TextStrokeLayer[]
+  /** Further drop shadows, drawn behind everything, after `shadow`. */
+  shadows?: TextShadowLayer[]
+  /** A soft halo of one colour around the letters. */
+  glow?: TextGlow
+  /** How the plate (`background`) is shaped: one block or a bar per line, and uneven padding. */
+  plate?: TextPlateOptions
 }
 
 /**
@@ -552,12 +602,41 @@ export interface Item {
    */
   disabled?: boolean
   /**
-   * Masks on this clip's picture (`@shared/matte`): today one `{ kind: 'subject' }`, which keeps only
-   * the person — the cut-out copy `put_behind_subject` puts over a title. Applied by the compositor
-   * inside `#drawSource`, after the grade, from the same media element as any other drawing of this
-   * clip at the same source time. Absent is the fast path. Optional and additive.
+   * Masks on this clip's picture (`@shared/matte`): a `{ kind: 'subject' }`, which keeps only the
+   * person — the cut-out copy `put_behind_subject` puts over a title — and/or shape masks
+   * (`@shared/shape-mask`: `rect`, `ellipse`, `path`), which keep the part of the clip's own frame
+   * they cover, combined in list order. Applied by the compositor inside `#drawSource`, after the
+   * grade, from the same media element as any other drawing of this clip at the same source time.
+   * Absent is the fast path. Optional and additive.
    */
   masks?: Mask[]
+  /**
+   * Effects on this clip's sound, in order (`@shared/audio-effects`): equaliser bands, which run
+   * live in the preview and as ffmpeg filters in export from one table, and dynamics and noise
+   * removal, which are rendered once into a processed file both paths play. Before the clip's
+   * volume and fades. Absent, empty or all switched off costs nothing. Optional and additive.
+   */
+  audioEffects?: AudioEffect[]
+  /**
+   * Video effects (`@shared/effects`): an ordered stack of shader passes — blurs, glow, glitch,
+   * chroma key and the rest of the catalog — drawn by the compositor inside `#drawSource`, after
+   * the grade and before the masks, first entry first. Absent, empty, all switched off or all at
+   * their identity runs no pass. Optional and additive.
+   */
+  effects?: Effect[]
+  /**
+   * Plays its footage backwards. `sourceStartUs` is still "where this item starts reading" — for a
+   * reversed clip that is the *late* edge of its footage, and it reads down from there
+   * (`sourceEdgeAt`, the one mapping). Absent or false is forwards, which is every project written
+   * before this. Its sound is reversed in the export; `@shared/retime-sound` says what the preview does.
+   */
+  reverse?: boolean
+  /**
+   * In / Out / Loop animation presets (`@shared/animation`): declarative, glued to the clip's head
+   * and tail so a trim keeps them there, and evaluated by the one keyframe sampler
+   * (`animatedItemAt`) over whatever the keys or static fields give. Absent is the fast path.
+   */
+  animation?: ItemAnimation
 }
 
 /**
@@ -639,6 +718,12 @@ export interface Track {
    */
   pan?: number
   items: Item[]
+  /**
+   * Effects on everything this track plays (`@shared/audio-effects`), after each clip's own.
+   * Equaliser bands run on the track's bus; a dynamics or noise-removal stage is applied to each
+   * clip of the track (`itemEffectPlan` says why). Absent is none. Optional and additive.
+   */
+  audioEffects?: AudioEffect[]
 }
 
 /**
@@ -808,6 +893,22 @@ export interface Project {
   updatedAt: number
   /** Absolute path this project was last saved to, or null if never saved. */
   filePath?: string | null
+  /**
+   * Where this project is edited (`@shared/host`). Absent is bay's own editor; `'resolve'` means
+   * the timeline lives in DaVinci Resolve and the agent drives it there.
+   */
+  host?: 'bay' | 'resolve'
+  /**
+   * Folders in the Media Pool, in the order they were made (`@shared/bins`). Absent is none, and
+   * a project with none has no key: additive, so an older build carries it through untouched.
+   */
+  bins?: Bin[]
+}
+
+/** A folder in the Media Pool. One level: a bin holds assets (`Asset.binId`), not other bins. */
+export interface Bin {
+  id: string
+  name: string
 }
 
 /**
@@ -830,6 +931,12 @@ export interface Project {
  * do not change what the format is, only fix values in it.
  */
 export const PROJECT_VERSION = 1
+
+/**
+ * A timeline background that paints nothing, so a frame keeps its alpha. Never stored in a
+ * `.bay`: only the throwaway timeline `render_brf` builds to render one graphic has it.
+ */
+export const TRANSPARENT_BACKGROUND = 'transparent'
 
 // ---------------------------------------------------------------------------
 // Time helpers — the only places frames and real time are allowed to meet
@@ -1075,12 +1182,117 @@ export function itemsAtFrame(timeline: Timeline, frame: Frames, kind?: TrackKind
 }
 
 /**
+ * Whether the clip reads its source at one constant rate, forwards — every clip before reverse and
+ * speed ramps existed. The arithmetic such a clip gets is unchanged, to the microsecond.
+ */
+export function plainTime(item: Pick<Item, 'reverse' | 'keyframes'>): boolean {
+  return !item.reverse && !hasSpeedCurve(item)
+}
+
+/** Microseconds of source read over `rel` frames of the clip from its first: speed and ramp included. */
+function sourceReachUs(item: Pick<Item, 'speed' | 'keyframes'>, rel: number, fps: number): Micros {
+  if (!hasSpeedCurve(item)) return Math.round(framesToUs(rel, fps) * effectiveSpeed(item.speed))
+  return Math.round((consumedFrames(item, rel) / fps) * US_PER_SECOND)
+}
+
+/**
+ * **The one mapping from timeline time to source time.** The source time at the *boundary* `rel`
+ * frames into the item (0 is the start of its first frame, `durationInFrames` the end of its
+ * last; outside that range it is the handle a transition or a J/L cut reads).
+ *
+ * Direction and speed ramp live here and nowhere else: forwards the clip reads up from
+ * `sourceStartUs`, reversed it reads down from it. Every edit that moves a clip's head by `d`
+ * frames writes `sourceStartUs = sourceEdgeAt(item, d, fps)` and is right in both directions.
+ */
+export function sourceEdgeAt(
+  item: Pick<Item, 'sourceStartUs' | 'speed' | 'keyframes' | 'reverse'>,
+  rel: number,
+  fps: number
+): Micros {
+  const reach = sourceReachUs(item, rel, fps)
+  return item.reverse ? item.sourceStartUs - reach : item.sourceStartUs + reach
+}
+
+/**
  * Where in the source, in microseconds, item `item` is reading at timeline frame `frame`.
- * Honours `speed`. Callers must have checked the frame is inside the item.
+ * Honours `speed`, a speed ramp and `reverse`. Callers must have checked the frame is inside the
+ * item (or mean its handle).
+ *
+ * A frame covers the stretch of source between its two boundaries and shows the *earliest* moment
+ * of it. Forwards that is the boundary it starts on. Reversed it is the boundary it ends on — so a
+ * reversed clip's last frame is exactly the first frame of its footage, its first frame is the
+ * last, and it shows the very frames the forward clip does, in the opposite order.
  */
 export function sourceTimeAt(item: Item, frame: Frames, fps: number): Micros {
-  const elapsed = framesToUs(frame - item.from, fps)
-  return item.sourceStartUs + Math.round(elapsed * effectiveSpeed(item.speed))
+  const rel = frame - item.from
+  return sourceEdgeAt(item, item.reverse ? rel + 1 : rel, fps)
+}
+
+/**
+ * The stretch of source the clip covers over item-relative frames `fromRel..toRel` (its own
+ * length by default), earliest first whichever way it plays.
+ */
+export function sourceSpanOf(
+  item: Pick<Item, 'sourceStartUs' | 'speed' | 'keyframes' | 'reverse' | 'durationInFrames'>,
+  fps: number,
+  fromRel: number = 0,
+  toRel: number = item.durationInFrames
+): { startUs: Micros; endUs: Micros } {
+  const a = sourceEdgeAt(item, fromRel, fps)
+  const b = sourceEdgeAt(item, toRel, fps)
+  return a <= b ? { startUs: a, endUs: b } : { startUs: b, endUs: a }
+}
+
+/**
+ * The inverse of `sourceEdgeAt`: the item-relative frame boundary (fractional) at which the clip
+ * reads source time `us`. Not clamped to the clip — the caller decides what outside means. Inside
+ * a held frame it is where the hold starts; `±Infinity` when the clip never reads `us` because it
+ * ends, or began, on a hold.
+ */
+export function itemFrameAtSource(
+  item: Pick<Item, 'sourceStartUs' | 'speed' | 'keyframes' | 'reverse'>,
+  us: Micros,
+  fps: number
+): number {
+  const reach = ((item.reverse ? item.sourceStartUs - us : us - item.sourceStartUs) / US_PER_SECOND) * fps
+  return frameAtConsumed(item, reach)
+}
+
+/**
+ * Footage, in timeline frames (fractional), before the clip's first frame and after its last —
+ * how far its head can be pulled earlier and its tail later. Through the one mapping, so a
+ * reversed clip's head room is the footage *after* its late edge. Unbounded for a still, and at
+ * an end the clip holds on.
+ */
+export function footageBeyond(
+  asset: Pick<Asset, 'durationUs'> | undefined,
+  item: Pick<Item, 'sourceStartUs' | 'speed' | 'keyframes' | 'reverse' | 'durationInFrames'>,
+  fps: number
+): { before: number; after: number } {
+  if (!asset || asset.durationUs <= 0) {
+    return { before: Number.POSITIVE_INFINITY, after: Number.POSITIVE_INFINITY }
+  }
+  // The edge the head runs into going earlier, and the one the tail runs into going later.
+  const headLimit = item.reverse ? asset.durationUs : 0
+  const tailLimit = item.reverse ? 0 : asset.durationUs
+  const before = -itemFrameAtSource(item, headLimit, fps)
+  const after = itemFrameAtSource(item, tailLimit, fps) - item.durationInFrames
+  return { before: Math.max(0, before), after: Math.max(0, after) }
+}
+
+/** Whether two clips read the same file at the same moments: same in-point, speed, ramp and direction. */
+export function sameSourceTiming(
+  a: Pick<Item, 'sourceStartUs' | 'speed' | 'keyframes' | 'reverse'>,
+  b: Pick<Item, 'sourceStartUs' | 'speed' | 'keyframes' | 'reverse'>
+): boolean {
+  if (a.sourceStartUs !== b.sourceStartUs || a.speed !== b.speed || Boolean(a.reverse) !== Boolean(b.reverse)) return false
+  const ka = speedKeysOf(a)
+  const kb = speedKeysOf(b)
+  if (!ka || !kb) return ka === kb
+  return (
+    ka.length === kb.length &&
+    ka.every((key, i) => key.frame === kb[i]!.frame && key.value === kb[i]!.value && String(key.ease ?? '') === String(kb[i]!.ease ?? ''))
+  )
 }
 
 /**
@@ -1110,6 +1322,12 @@ export function handlesFor(asset: Asset | undefined, item: Item, fps: number): {
 } {
   if (!asset || asset.durationUs <= 0) {
     return { before: Number.POSITIVE_INFINITY, after: Number.POSITIVE_INFINITY }
+  }
+  if (!plainTime(item)) {
+    // A reversed or ramped clip: the same question through the one mapping. Floored — a part
+    // frame of handle is not a frame a transition can read.
+    const room = footageBeyond(asset, item, fps)
+    return { before: Math.floor(room.before + 1e-3), after: Math.floor(room.after + 1e-3) }
   }
   const speed = effectiveSpeed(item.speed)
   const consumedUs = framesToUs(item.durationInFrames, fps) * speed

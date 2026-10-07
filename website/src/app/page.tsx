@@ -26,7 +26,7 @@ import { product } from "@/lib/product";
  *
  * STORY: the result first (a frame of the finished edit), then the request,
  * then the edit being made one call at a time, then what went in beside what
- * came out, then what the edit does not show, then how to get in.
+ * came out, then what the edit does not show, then the download.
  *
  * FIRST VIEWPORT: status line, headline, one sentence, the action, and the
  * finished frame already rising into view beneath them.
@@ -56,7 +56,7 @@ const features = [
   {
     mark: "On disk",
     title: "Your work stays on the Mac",
-    body: "Projects, media and renders stay on your disk. The editor loads no remote fonts, images or scripts and sends no telemetry or analytics. It does go online for a few things you can name: the agent you chose to start talks to its model, a speech model downloads when you ask for one, and the app checks with Google’s sign-in service that your access still stands. Offline it keeps working, and asks you to sign in again only after 14 days without a successful check.",
+    body: "Projects, media, renders, file paths, prompts and your email address stay on your Mac. The editor loads no remote fonts, images or scripts. It does go online for things you can name: the agent you chose to start talks to its model, a speech model downloads when you ask for one, the app checks with Google’s sign-in service that your account is still signed in, and it sends this site anonymous usage events and crash reports, on by default, each with its own switch in Preferences › Privacy. Offline it keeps working, and asks you to sign in again only after 14 days without a successful check.",
   },
 ];
 
@@ -76,7 +76,7 @@ export default function Home() {
             <div data-depth="peel" style={peel(0.14, 0.2)}>
               <Reveal delay={0.05}>
                 <Eyebrow tone="night">
-                  For Macs with Apple silicon. By invitation.
+                  For Macs with Apple silicon.
                 </Eyebrow>
               </Reveal>
             </div>
@@ -101,13 +101,16 @@ export default function Home() {
                 <div className="mt-8 flex flex-wrap items-center gap-x-7 gap-y-4">
                   {product.download ? (
                     <ActionLink href={product.download}>Download for Mac</ActionLink>
-                  ) : (
-                    <ActionLink href="/waitlist">Request access</ActionLink>
-                  )}
+                  ) : null}
                   <TextLink href="/status" tone="night" arrow>
                     What runs today
                   </TextLink>
                 </div>
+                {product.download ? (
+                  <p className="mt-4 text-sm text-on-night-muted">
+                    macOS on Apple silicon. Sign in with Google on first launch.
+                  </p>
+                ) : null}
               </Reveal>
             </div>
           </Wrap>
@@ -184,11 +187,15 @@ export default function Home() {
 
           <Columns ruled className="mt-20">
             <Block title="What it will not do">
-              There is no server that holds your project. Access is by
-              invitation, and you sign in once with Google; that tells the
-              app who you are and nothing about what you edit. There is no upload
-              step, no render farm, no library of your footage sitting on
-              someone else&rsquo;s disk waiting to be trained on. The agent
+              There is no server that holds your project. You sign in once
+              with Google; that tells the app who you are and nothing about
+              what you edit. There is no upload step, no render farm, no
+              library of your footage sitting on someone else&rsquo;s disk
+              waiting to be trained on. What the app does send this site is
+              anonymous usage events and crash reports, tagged with a random
+              install ID rather than your name or address, and never carrying a
+              project, a file path or a prompt. Both are on by default, and
+              each has its own switch in Preferences › Privacy. The agent
               endpoint listens on your own machine and nowhere else, and when an
               agent renders a file it writes it to your disk the same way you
               would. This is not a tier we are keeping back. There is no code in{" "}
@@ -224,35 +231,33 @@ export default function Home() {
         <Wrap>
           {product.download ? (
             <Reveal>
-              <Headline tone="night" quiet="You need access to sign in.">
+              <Headline tone="night" quiet="Sign in with Google on first launch.">
                 Download for Mac.
               </Headline>
               <p className="mt-6 max-w-[52ch] text-lead text-on-night-soft">
-                A notarized disk image for Macs with Apple silicon. {product.name}{" "}
-                is by invitation: it opens to a sign-in, and works once your
-                Google account has access. Request access, or ask someone who
-                already uses it to refer you from inside the app.
+                A notarized disk image for macOS on Apple silicon. The first
+                time {product.name} opens it asks you to sign in with Google;
+                any Google account with a verified address gets in.
               </p>
               <div className="mt-10 flex flex-wrap items-center gap-x-7 gap-y-4">
                 <ActionLink href={product.download}>Download for Mac</ActionLink>
-                <TextLink href="/waitlist" tone="night" arrow>
-                  Request access
+                <TextLink href="/status" tone="night" arrow>
+                  What runs today
                 </TextLink>
               </div>
             </Reveal>
           ) : (
             <Reveal>
-              <Headline tone="night" quiet="There is no download yet.">
-                Releasing soon.
+              <Headline tone="night" quiet="There is no build to download right now.">
+                Not downloadable today.
               </Headline>
               <p className="mt-6 max-w-[52ch] text-lead text-on-night-soft">
-                Request access and we&rsquo;ll let you in. If someone you know
-                already uses {product.name}, they can refer you from inside the
-                app.
+                When there is one, it goes here. Until then, write to{" "}
+                <a href={`mailto:${product.email}`} className="text-accent underline decoration-accent/40 underline-offset-4 hover:text-on-night">
+                  {product.email}
+                </a>
+                .
               </p>
-              <ActionLink href="/waitlist" className="mt-10">
-                Request access
-              </ActionLink>
             </Reveal>
           )}
         </Wrap>

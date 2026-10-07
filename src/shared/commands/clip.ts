@@ -5,6 +5,8 @@ export const clipCommands = [
   // ⌘B is the shared NLE binding (FCP, Resolve, CapCut); S stays for existing hands.
   { id: 'clip.split', label: 'Split at Playhead', group: 'Clip', shortcut: ['Mod+B', 'S'] },
   { id: 'clip.splitAll', label: 'Split All Tracks', group: 'Clip', shortcut: 'Mod+Shift+B' },
+  // The reverse of a split: heal a through-edit (`@shared/heal`). ⌘J, as Premiere's Join Through Edits.
+  { id: 'clip.join', label: 'Join Clips', group: 'Clip', shortcut: 'Mod+J' },
   { id: 'clip.duplicate', label: 'Duplicate', group: 'Clip', shortcut: 'Mod+D' },
   // ⌥F, as in Final Cut: hold the frame under the playhead, inserted (`@shared/freeze-frame`).
   { id: 'clip.freezeFrame', label: 'Add Freeze Frame', group: 'Clip', shortcut: 'Alt+F' },

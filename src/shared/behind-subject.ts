@@ -16,8 +16,8 @@
  * Refusals say what the caller can do instead: which ids, which frames, which track is locked.
  */
 
-import { itemEnd, type Item, type Timeline, type Track } from './project'
-import { subjectMaskOf, type SubjectMask } from './matte'
+import { itemEnd, sameSourceTiming, type Item, type Timeline, type Track } from './project'
+import { subjectMaskOf, type Mask, type SubjectMask } from './matte'
 
 export interface BehindSubjectSpec {
   /** The clip with the person in it. */
@@ -111,7 +111,7 @@ export function planBehindSubject(timeline: Timeline, spec: BehindSubjectSpec, o
   const existing = timeline.tracks
     .flatMap((track, index) => track.items.map((item) => ({ item, track, index })))
     .find(({ item, index }) => item.id !== video.item.id && index > video.index && subjectMaskOf(item) && !subjectMaskOf(item)?.assetId &&
-      item.assetId === video.item.assetId && item.from === video.item.from && item.sourceStartUs === video.item.sourceStartUs && item.speed === video.item.speed)
+      item.assetId === video.item.assetId && item.from === video.item.from && sameSourceTiming(item, video.item))
   if (existing && existing.index > overlay.index) {
     if (existing.track.locked) {
       return {
@@ -205,7 +205,7 @@ export function planBehindSubject(timeline: Timeline, spec: BehindSubjectSpec, o
  * edit_item, the inspector, keyframe edits, paste attributes, templates, `apply_script` and the next
  * one — to remember a partner; reading them from the clip needs none to.
  */
-export const CUTOUT_PICTURE_FIELDS = ['layout', 'crop', 'keyframes', 'grade', 'adjustments', 'fadeInFrames', 'fadeOutFrames'] as const
+export const CUTOUT_PICTURE_FIELDS = ['layout', 'crop', 'keyframes', 'grade', 'adjustments', 'fadeInFrames', 'fadeOutFrames', 'animation'] as const
 
 /**
  * The clip a subject cut-out draws its picture from: the item sharing its link that plays the same
@@ -220,7 +220,7 @@ export function cutoutPartner(timeline: Timeline, item: Item): Item | null {
     if (track.kind !== 'video') continue
     for (const other of track.items) {
       if (other.id === item.id || other.linkId !== item.linkId || subjectMaskOf(other)) continue
-      if (other.assetId === item.assetId && other.from === item.from && other.sourceStartUs === item.sourceStartUs && other.speed === item.speed) return other
+      if (other.assetId === item.assetId && other.from === item.from && sameSourceTiming(other, item)) return other
     }
   }
   return null
@@ -230,9 +230,24 @@ export function cutoutPartner(timeline: Timeline, item: Item): Item | null {
 export function cutoutAsDrawn(item: Item, partner: Item | null): Item {
   if (!partner) return item
   const out: Item = { ...item, layout: partner.layout, fadeInFrames: partner.fadeInFrames, fadeOutFrames: partner.fadeOutFrames }
-  for (const field of ['crop', 'keyframes', 'grade', 'adjustments'] as const) {
+  for (const field of ['crop', 'keyframes', 'grade', 'adjustments', 'animation'] as const) {
     if (partner[field] === undefined) delete out[field]
     else (out as unknown as Record<string, unknown>)[field] = partner[field]
   }
+  // The clip's shape masks are part of its picture too: a clip shown through an ellipse must not
+  // have its person standing outside the ellipse. The cut-out keeps its own subject mask, first.
+  const shapes = partner.masks?.some((mask) => mask.kind !== 'subject') ? partner.masks : undefined
+  if (shapes && item.masks) out.masks = cutoutMasks(item.masks, shapes)
   return out
+}
+
+const CUTOUT_MASKS = new WeakMap<Mask[], { own: Mask[]; masks: Mask[] }>()
+
+/** The cut-out's subject mask followed by its clip's shapes — the same list object for the same two lists, so per-list caches hold. */
+function cutoutMasks(own: Mask[], clip: Mask[]): Mask[] {
+  const known = CUTOUT_MASKS.get(clip)
+  if (known && known.own === own) return known.masks
+  const masks = [...own.filter((mask) => mask.kind === 'subject'), ...clip.filter((mask) => mask.kind !== 'subject')]
+  CUTOUT_MASKS.set(clip, { own, masks })
+  return masks
 }

@@ -8,12 +8,13 @@
  */
 
 import { BrowserWindow, ipcMain, shell, app } from 'electron'
-import type { IpcMainInvokeEvent } from 'electron'
-import type { AudioResult, AudioSpan, BayApi } from '@shared/ipc'
+import type { IpcMainInvokeEvent, WebContents } from 'electron'
+import type { AudioResult, AudioSpan, BayApi, ImportedAsset } from '@shared/ipc'
 import type { McpToolResult } from '@shared/mcp'
 import { IPC } from '@shared/ipc'
 import {
   compositionFrameAt,
+  sampleFilm,
   importCompositions,
   inspectComposition,
   release as releaseComposition,
@@ -43,20 +44,27 @@ import { sizesOf } from './media/caption-file'
 import { locate, openCaptions, readCaptions, saveCaptions } from './media/files'
 import { forgetPath, importDialog, importPaths } from './media/import'
 import { freezeFrame } from './media/freeze-frame'
+import { writeSfx } from './sfx/write'
 import { ensureSubjectMatte, subjectMattes } from './matte/host'
+import { ensureAudioBake } from './audio-fx/host'
 import { importFromUrl } from './media/url-import'
 import { isAllowed } from './protocol'
 import { vision } from './vision/host'
 import { checkSearchRequest, checkVisionAssets } from './vision/requests'
-import { downloadsDir, stylesDir } from './paths'
+import { downloadsDir, generatedDir, stylesDir } from './paths'
 import { listUserStyles, writeUserStyle } from './styles/store'
 import * as store from './project/store'
+import { openResolve, resolveStatus } from './resolve'
+import { parseHost } from '@shared/host'
 import * as encode from './export/encode'
 import { mcpStatus, setExecutorReady, setMcpClients, settleToolCall } from './mcp/server'
 import { writeGenerated, writeTemplate } from './html/templates'
 import * as access from './auth/access'
 import * as update from './update/updater'
 import { refuseChannel } from './auth/gate'
+import * as telemetry from './telemetry/service'
+import { TELEMETRY_SWITCHES, type TelemetryStatus } from '@shared/telemetry'
+import type { AssetKind, Project } from '@shared/project'
 import {
   clearGenerationKey,
   generationDubs,
@@ -74,7 +82,7 @@ import {
 
 /** Channels pushed *to* the renderer. They carry no handler, so the table excludes them. */
 type PushChannel = 'exportProgress' | 'appMenuCommand' | 'mcpToolCall' | 'mcpToolCancel' | 'agentEvent' | 'whisperProgress' | 'visionChanged' | 'accessChanged' | 'updateChanged'
-type InvokeChannel = Exclude<keyof typeof IPC, PushChannel | 'mcpToolResult' | 'mcpExecutorReady'>
+type InvokeChannel = Exclude<keyof typeof IPC, PushChannel | 'mcpToolResult' | 'mcpExecutorReady' | 'telemetryTrack' | 'telemetryReportError'>
 
 interface ChannelApi {
   appVersion: BayApi['app']['version']
@@ -120,8 +128,10 @@ interface ChannelApi {
   mediaReadCaptions: BayApi['media']['readCaptions']
   mediaSaveCaptions: BayApi['media']['saveCaptions']
   mediaFreezeFrame: BayApi['media']['freezeFrame']
+  mediaScoreSfx: BayApi['media']['scoreSfx']
   mediaSubjectMatte: BayApi['media']['subjectMatte']
   mediaSubjectMatteIndex: BayApi['media']['subjectMatteIndex']
+  mediaAudioEffectBake: BayApi['media']['audioEffectBake']
 
   projectInitial: BayApi['project']['initial']
   projectSave: BayApi['project']['save']
@@ -130,8 +140,16 @@ interface ChannelApi {
   projectOpenPath: BayApi['project']['openPath']
   projectRecent: BayApi['project']['recent']
   projectAutosave: BayApi['project']['autosave']
+  projectRecovery: BayApi['project']['recovery']
+  projectUnsaved: BayApi['project']['unsaved']
+  projectRecover: BayApi['project']['recover']
+  projectDiscardRecovery: BayApi['project']['discardRecovery']
+  projectRevealRecovery: BayApi['project']['revealRecovery']
+  projectSetAsideRecovery: BayApi['project']['setAsideRecovery']
   projectLaunchRequest: BayApi['project']['launchRequest']
   projectCreate: BayApi['project']['create']
+  resolveStatus: BayApi['resolve']['status']
+  resolveOpen: BayApi['resolve']['open']
   projectForget: BayApi['project']['forget']
   projectReveal: BayApi['project']['reveal']
   projectRename: BayApi['project']['rename']
@@ -160,6 +178,7 @@ interface ChannelApi {
   compositionWriteGenerated: BayApi['composition']['writeGenerated']
   compositionImport: BayApi['composition']['import']
   compositionFrameAt: BayApi['composition']['frameAt']
+  compositionFilm: BayApi['composition']['film']
   compositionRelease: BayApi['composition']['release']
 
   agentStart: BayApi['agent']['start']
@@ -183,8 +202,6 @@ interface ChannelApi {
   accessCancelSignIn: BayApi['access']['cancelSignIn']
   accessSignOut: BayApi['access']['signOut']
   accessRecheck: BayApi['access']['recheck']
-  accessRequestAccess: BayApi['access']['requestAccess']
-  accessRefer: BayApi['access']['refer']
 
   updateStatus: BayApi['update']['status']
   updateCheck: BayApi['update']['check']
@@ -194,6 +211,10 @@ interface ChannelApi {
   windowMinimise: BayApi['window']['minimise']
   windowToggleMaximise: BayApi['window']['toggleMaximise']
   windowClose: BayApi['window']['close']
+
+  telemetryStatus: BayApi['telemetry']['status']
+  telemetrySet: BayApi['telemetry']['set']
+  telemetryDismissNotice: BayApi['telemetry']['dismissNotice']
 }
 
 /**
@@ -281,6 +302,7 @@ const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
     writeTemplate(templateId, width, height),
   compositionImport: async (_event, paths) => importCompositions(paths),
   compositionFrameAt: async (_event, request) => compositionFrameAt(request),
+  compositionFilm: async (_event, request) => sampleFilm(request),
   compositionRelease: async (_event, assetId) => releaseComposition(assetId),
 
   appVersion: async () => app.getVersion(),
@@ -304,8 +326,8 @@ const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
     return { ready, error }
   },
 
-  mediaImportDialog: (event) => importDialog(windowOf(event)),
-  mediaImportPaths: (_event, paths) => importPaths(paths),
+  mediaImportDialog: async (event) => [...trackImports(await importDialog(windowOf(event)))],
+  mediaImportPaths: async (_event, paths) => [...trackImports(await importPaths(paths))],
   mediaImportUrl: (_event, url, options) =>
     importFromUrl(url, { downloadsDir: downloadsDir(), ffmpeg: mediaToolsReady().ffmpeg }, { dryRun: options?.dryRun === true }),
   mediaProbe: (_event, path) => probe(path),
@@ -400,18 +422,33 @@ const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
   mediaReadCaptions: (_event, path) => readCaptions(String(path)),
   mediaSaveCaptions: (event, defaultName, text) => saveCaptions(windowOf(event), String(defaultName), String(text)),
   mediaFreezeFrame: (_event, request) => freezeFrame(request),
+  mediaScoreSfx: (_event, name, score) => writeSfx(generatedDir(), name, score),
   mediaSubjectMatte: (_event, request) => ensureSubjectMatte(request),
   mediaSubjectMatteIndex: (_event, key) => subjectMattes().index(key),
+  mediaAudioEffectBake: (_event, request) => ensureAudioBake(request),
 
-  projectInitial: () => store.initial(),
+  // The project restored at launch (or double-clicked in Finder) is an open too — but only one
+  // read from a file; the empty project a first launch starts with is not.
+  projectInitial: async () => {
+    const project = await store.initial()
+    return project.filePath ? trackProjectOpen(project) : project
+  },
   projectSave: (event, project) => store.save(project, windowOf(event)),
   projectSaveAs: (event, project) => store.saveAs(project, windowOf(event)),
-  projectOpen: (event) => store.open(windowOf(event)),
-  projectOpenPath: (_event, filePath) => store.openPath(filePath),
+  projectOpen: async (event) => trackProjectOpen(await store.open(windowOf(event))),
+  projectOpenPath: async (_event, filePath) => trackProjectOpen(await store.openPath(filePath)),
   projectRecent: () => store.recent(),
   projectAutosave: (_event, project) => store.autosave(project),
+  projectRecovery: (_event, opened) => store.recovery(opened),
+  projectUnsaved: () => store.unsaved(),
+  projectRecover: (_event, target) => store.recover(target),
+  projectDiscardRecovery: (_event, target) => store.discardRecovery(target),
+  projectRevealRecovery: async (_event, target) => store.revealRecovery(target),
+  projectSetAsideRecovery: (_event, target) => store.setAsideRecovery(target),
   projectLaunchRequest: () => store.launchRequest(),
-  projectCreate: () => store.create(),
+  projectCreate: (_event, options) => store.create(parseHost(options?.host)),
+  resolveStatus: () => resolveStatus(),
+  resolveOpen: () => openResolve(),
   projectForget: async (_event, filePath) => store.forget(filePath),
   projectReveal: async (_event, filePath) => store.reveal(filePath),
   projectRename: (_event, filePath, name) => store.rename(filePath, name),
@@ -420,8 +457,8 @@ const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
 
   exportStart: (event, request) => encode.start(request, event.sender),
   exportPushFrame: (_event, frame) => encode.pushFrame(frame),
-  exportFinish: (_event, jobId) => encode.finish(jobId),
-  exportCancel: (_event, jobId) => encode.cancel(jobId),
+  exportFinish: (_event, jobId, summary) => encode.finish(jobId, { incomplete: summary?.incomplete === true }),
+  exportCancel: (_event, jobId, reason) => encode.cancel(jobId, reason),
   exportChoosePath: (event, defaultName, format) =>
     encode.chooseOutputPath(defaultName, format, windowOf(event)),
   exportReveal: async (_event, outputPath) => {
@@ -440,8 +477,6 @@ const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
   accessCancelSignIn: async () => access.cancelSignIn(),
   accessSignOut: () => access.signOut(),
   accessRecheck: () => access.recheck(),
-  accessRequestAccess: async () => access.requestAccess(),
-  accessRefer: (_event, email) => access.refer(email),
 
   updateStatus: async () => update.updateStatus(),
   updateCheck: () => update.checkForUpdates(),
@@ -459,10 +494,60 @@ const handlers: { [K in keyof ChannelApi]: Handler<ChannelApi[K]> } = {
   },
   windowClose: async (event) => {
     windowOf(event)?.close()
+  },
+
+  telemetryStatus: async () => telemetryStatus(),
+  telemetrySet: async (_event, which, on) => {
+    if (!(TELEMETRY_SWITCHES as readonly unknown[]).includes(which)) throw new Error(`There is no telemetry switch called "${String(which)}".`)
+    const enabled = on === true
+    store.setTelemetrySwitchStored(which, enabled)
+    telemetry.setTelemetrySwitch(which, enabled)
+    return telemetryStatus()
+  },
+  telemetryDismissNotice: async () => {
+    store.dismissTelemetryNotice()
+    return telemetryStatus()
   }
 }
 
-export function registerIpcHandlers(): void {
+/** Preferences › Privacy's status: the client's, beside the switches and notice main's database keeps. */
+function telemetryStatus(): TelemetryStatus {
+  const state = telemetry.telemetryState()
+  return {
+    ...(state.switches ?? store.telemetrySwitches()),
+    destination: state.destination,
+    queued: state.queued,
+    lastProblem: state.lastProblem,
+    minidumpDir: telemetry.minidumpDir(),
+    noticePending: store.telemetryNoticePending()
+  }
+}
+
+/** One `import_media` event per kind of asset newly imported — counts only, never names. */
+function trackImports(imported: readonly ImportedAsset[]): readonly ImportedAsset[] {
+  const counts = new Map<string, number>()
+  for (const { asset, reused } of imported) {
+    if (!reused && !asset.error) counts.set(asset.kind, (counts.get(asset.kind) ?? 0) + 1)
+  }
+  for (const [kind, count] of counts) telemetry.track('import_media', { kind: kind as Exclude<AssetKind, 'adjustment'>, count })
+  return imported
+}
+
+/** `project_open`: how big the project is, in tracks and items across its timelines. */
+function trackProjectOpen<P extends Project | null>(project: P): P {
+  if (project) {
+    const tracks = project.timelines.flatMap((timeline) => timeline.tracks)
+    telemetry.track('project_open', { tracks: tracks.length, items: tracks.reduce((sum, track) => sum + track.items.length, 0) })
+  }
+  return project
+}
+
+export interface IpcOptions {
+  /** Whether `contents` is one of the editor's own windows — not a composition or render window. */
+  isEditor: (contents: WebContents) => boolean
+}
+
+export function registerIpcHandlers({ isEditor }: IpcOptions): void {
   // The renderer's answer to a tool call. A `send`, not an `invoke`, because the renderer is
   // replying rather than asking — the correlation is by the id main put on the call.
   ipcMain.on(IPC.mcpToolResult, (_event, result: McpToolResult) => {
@@ -470,6 +555,18 @@ export function registerIpcHandlers(): void {
   })
   ipcMain.on(IPC.mcpExecutorReady, (event, ready: boolean) => {
     setExecutorReady(event.sender, ready === true)
+  })
+  // Sends, outside the access gate: a page view carries one allow-listed word, and a locked
+  // bay's own crash is still a crash. Main checks both before anything is queued — and only from
+  // the editor's own windows: a composition or render window runs a document someone else may
+  // have written, and must not be able to put text into a crash report or an event.
+  ipcMain.on(IPC.telemetryTrack, (event, name: unknown, props: unknown) => {
+    if (!isEditor(event.sender)) return
+    telemetry.trackFromRenderer(name, props)
+  })
+  ipcMain.on(IPC.telemetryReportError, (event, report: unknown) => {
+    if (!isEditor(event.sender)) return
+    telemetry.reportRendererError(report, 'renderer')
   })
 
   // Download progress goes to every window: Settings may be open in one while a transcription in

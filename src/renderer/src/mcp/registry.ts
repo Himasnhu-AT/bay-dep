@@ -2,15 +2,20 @@
 // A module takes part by exporting `handlers: Handlers`; then run `pnpm gen:tools`.
 
 import type { Handlers } from './helpers'
+import { handlers as adjustmentLayerHandlers } from './adjustmentLayer'
 import { handlers as assetsHandlers } from './assets'
+import { handlers as audioEffectsHandlers } from './audioEffects'
 import { handlers as beatsHandlers } from './beats'
+import { handlers as binsHandlers } from './bins'
 import { handlers as brfHandlers } from './brf'
 import { handlers as captionsHandlers } from './captions'
 import { handlers as compositionsHandlers } from './compositions'
 import { handlers as cutsHandlers } from './cuts'
 import { handlers as dubHandlers } from './dub'
+import { handlers as effectsHandlers } from './effects'
 import { handlers as exportsHandlers } from './exports'
 import { handlers as feedbackHandlers } from './feedback'
+import { handlers as filmHandlers } from './film'
 import { handlers as footageHandlers } from './footage'
 import { handlers as footageModeHandlers } from './footageMode'
 import { handlers as frameGridHandlers } from './frameGrid'
@@ -25,10 +30,13 @@ import { handlers as promptKitsHandlers } from './promptKits'
 import { handlers as proposalsHandlers } from './proposals'
 import { handlers as readHandlers } from './read'
 import { handlers as scriptHandlers } from './script'
+import { handlers as sfxHandlers } from './sfx'
 import { handlers as speechHandlers } from './speech'
+import { handlers as structureHandlers } from './structure'
 import { handlers as stylesHandlers } from './styles'
 import { handlers as subtitlesHandlers } from './subtitles'
 import { handlers as templatesHandlers } from './templates'
+import { handlers as textLooksHandlers } from './textLooks'
 import { handlers as transcribeHandlers } from './transcribe'
 import { handlers as transitionsHandlers } from './transitions'
 import { handlers as trimHandlers } from './trim'
@@ -37,15 +45,20 @@ import { handlers as writeHandlers } from './write'
 
 /** Each module’s handlers, separately, so a tool claimed twice can be found. */
 export const HANDLER_GROUPS: Record<string, Handlers> = {
+  'adjustmentLayer': adjustmentLayerHandlers,
   'assets': assetsHandlers,
+  'audioEffects': audioEffectsHandlers,
   'beats': beatsHandlers,
+  'bins': binsHandlers,
   'brf': brfHandlers,
   'captions': captionsHandlers,
   'compositions': compositionsHandlers,
   'cuts': cutsHandlers,
   'dub': dubHandlers,
+  'effects': effectsHandlers,
   'exports': exportsHandlers,
   'feedback': feedbackHandlers,
+  'film': filmHandlers,
   'footage': footageHandlers,
   'footageMode': footageModeHandlers,
   'frameGrid': frameGridHandlers,
@@ -60,10 +73,13 @@ export const HANDLER_GROUPS: Record<string, Handlers> = {
   'proposals': proposalsHandlers,
   'read': readHandlers,
   'script': scriptHandlers,
+  'sfx': sfxHandlers,
   'speech': speechHandlers,
+  'structure': structureHandlers,
   'styles': stylesHandlers,
   'subtitles': subtitlesHandlers,
   'templates': templatesHandlers,
+  'textLooks': textLooksHandlers,
   'transcribe': transcribeHandlers,
   'transitions': transitionsHandlers,
   'trim': trimHandlers,
@@ -73,15 +89,20 @@ export const HANDLER_GROUPS: Record<string, Handlers> = {
 
 /** Tool name → handler, for the dispatcher. */
 export const HANDLERS: Handlers = {
+  ...adjustmentLayerHandlers,
   ...assetsHandlers,
+  ...audioEffectsHandlers,
   ...beatsHandlers,
+  ...binsHandlers,
   ...brfHandlers,
   ...captionsHandlers,
   ...compositionsHandlers,
   ...cutsHandlers,
   ...dubHandlers,
+  ...effectsHandlers,
   ...exportsHandlers,
   ...feedbackHandlers,
+  ...filmHandlers,
   ...footageHandlers,
   ...footageModeHandlers,
   ...frameGridHandlers,
@@ -96,10 +117,13 @@ export const HANDLERS: Handlers = {
   ...proposalsHandlers,
   ...readHandlers,
   ...scriptHandlers,
+  ...sfxHandlers,
   ...speechHandlers,
+  ...structureHandlers,
   ...stylesHandlers,
   ...subtitlesHandlers,
   ...templatesHandlers,
+  ...textLooksHandlers,
   ...transcribeHandlers,
   ...transitionsHandlers,
   ...trimHandlers,

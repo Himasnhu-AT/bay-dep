@@ -34,7 +34,6 @@ const record: AccessRecord = {
   lastVerifiedAt: 1_790_000_000_000,
   highWaterAt: 1_790_000_000_000,
   lastAttemptFailed: false,
-  referralsUsed: 0,
   lock: null
 }
 
@@ -94,7 +93,6 @@ test('a version-1 access.json, spelled out, still loads (a later build reads wha
     "lastVerifiedAt": 1790000000000,
     "highWaterAt": 1790000000000,
     "lastAttemptFailed": false,
-    "referralsUsed": 0,
     "lock": null
   },
   "sealedToken": "${sealed}"
@@ -104,4 +102,26 @@ test('a version-1 access.json, spelled out, still loads (a later build reads wha
   const written = JSON.parse(encodeAccessFile(record, TOKEN, sealing).bytes.toString()) as Record<string, unknown>
   assert.deepEqual(Object.keys(written).sort(), ['record', 'sealedToken', 'version'])
   assert.deepEqual(Object.keys(written['record'] as object).sort(), Object.keys(JSON.parse(v1).record).sort())
+})
+
+test('an access.json from the referral days, with referralsUsed, still decodes — the key is ignored', () => {
+  const sealed = sealing.encrypt(TOKEN).toString('base64')
+  // Spelled out exactly as builds with referrals wrote it; those files are on users' disks.
+  const old = `{
+  "version": 1,
+  "record": {
+    "email": "a@example.com",
+    "uid": "u1",
+    "lastVerifiedAt": 1790000000000,
+    "highWaterAt": 1790000000000,
+    "lastAttemptFailed": false,
+    "referralsUsed": 3,
+    "lock": null
+  },
+  "sealedToken": "${sealed}"
+}`
+  assert.ok(old.includes('"referralsUsed": 3'), 'the specimen carries the retired key')
+  assert.deepEqual(decodeAccessFile(Buffer.from(old), sealing), { record, refreshToken: TOKEN })
+  // An unused referral count (null) decoded the same way.
+  assert.deepEqual(decodeAccessFile(Buffer.from(old.replace('"referralsUsed": 3', '"referralsUsed": null')), sealing).record, record)
 })

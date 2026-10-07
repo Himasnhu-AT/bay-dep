@@ -1,159 +1,61 @@
 rules_version = '2';
 
-// bay access: invite-only. There are no Cloud Functions (Spark plan), so every
-// integrity property of the access model lives here. See README.md for the model
-// and the access contract it implements.
+// bay: open access, and the app's usage and crash reports.
 //
-// Nothing matches outside the three collections below, so everything else is denied.
+// Anyone may download bay, and any Google account with a verified address is let
+// in, so there is nothing for a browser to write any more: no waitlist, no grant,
+// no referral counter. The website's /api/telemetry and /api/crash write the
+// report collections with a service account, which these rules do not govern.
+// The owner reads them on the website's /admin. See README.md.
+//
+// Nothing matches outside the collections below, so everything else is denied.
 
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // ---- identity ---------------------------------------------------------
-
-    function signedIn() {
-      return request.auth != null;
-    }
-
-    // A verified email is the only identity the access model trusts.
+    // A verified email is the only identity these rules trust.
     function verified() {
-      return signedIn()
+      return request.auth != null
         && request.auth.token.email is string
         && request.auth.token.email_verified == true;
     }
 
-    // Doc ids are the email, lowercased and trimmed. Firebase Auth already stores
-    // emails lowercased; .lower() makes that an assumption this file does not need.
-    function myEmail() {
-      return request.auth.token.email.lower();
-    }
-
-    function isAdmin() {
+    function isOwner() {
       return verified() && request.auth.token.email == 'hyattherate2005@gmail.com';
     }
 
-    // A doc id that is an email as bay writes it: lowercase, no whitespace, one @.
-    function isEmailId(id) {
-      return id == id.lower() && id.matches('^[^@\\s/]+@[^@\\s/]+\\.[^@\\s/]+$');
+    // ---- reports ------------------------------------------------------------
+    // Written only by the website's server credential. The owner reads; no
+    // browser writes, the owner's included, so a report on /admin is always one
+    // the app sent through the site's checks.
+
+    // One doc per /api/telemetry request, holding its events as an array.
+    match /telemetry_batches/{id} {
+      allow read: if isOwner();
     }
 
-    function userPath(uid) {
-      return /databases/$(database)/documents/users/$(uid);
+    // `{day}_{n}`: a day's counters in shards (and `{day}` from before sharding).
+    match /telemetry_daily/{id} {
+      allow read: if isOwner();
     }
 
-    function accessPath(email) {
-      return /databases/$(database)/documents/access/$(email);
+    match /telemetry_installs/{id} {
+      allow read: if isOwner();
     }
 
-    // ---- waitlist/{email} -------------------------------------------------
-    // Someone asking for access. Joining needs no account: the website writes
-    // the entry on submit, signed out. So the shape is the whole defence, and it
-    // is exact: the id is the address, a strict lowercase email of at most 254
-    // characters; the keys are exactly email, createdAt, status and an optional
-    // note of at most 500; status is pending and createdAt is the server's time.
-    //
-    // A duplicate is refused by what `create` means: over an existing entry the
-    // write is an update, and only the admin may update. Nobody but the admin
-    // reads an entry, so the list of addresses stays private, and a visitor
-    // cannot tell a new join from a repeat (the website treats both as joined).
-
-    function isJoinableEmail(id) {
-      return id.size() <= 254
-        && id.matches('^[a-z0-9._%+-]+@[a-z0-9-]+(\\.[a-z0-9-]+)*\\.[a-z]{2,}$');
+    match /crashes/{id} {
+      allow read: if isOwner();
     }
 
-    match /waitlist/{email} {
-      // No hasAll: email, status and createdAt are each compared below, and a
-      // comparison with a missing key is an error, which denies. A hasAll here
-      // could not be told apart from its absence by any write.
-      allow create: if isJoinableEmail(email)
-        && request.resource.data.keys().hasOnly(['email', 'createdAt', 'status', 'note'])
-        && request.resource.data.email == email
-        && request.resource.data.status == 'pending'
-        && request.resource.data.createdAt == request.time
-        && (!('note' in request.resource.data)
-            || (request.resource.data.note is string
-                && request.resource.data.note.size() <= 500));
-
-      allow get, list, update, delete: if isAdmin();
-    }
-
-    // ---- access/{email} ---------------------------------------------------
-    // A grant. Entitlement = access/{token.email} exists AND email_verified.
-    // Created by the admin, or by an approved user as a referral; never updated
-    // or deleted except by the admin (revoke = delete).
+    // ---- access/{email}: builds released before open access ---------------
+    // Those builds read their own grant to decide whether to let the person in.
+    // Nothing creates a grant any more; the existing ones stay readable by their
+    // owner so an older build keeps working until it updates. Delete this block
+    // (and the collection) once no such build is in use.
 
     match /access/{email} {
-      function adminGrant() {
-        return isAdmin()
-          && isEmailId(email)
-          && request.resource.data.keys().hasOnly(['email', 'via', 'grantedBy', 'grantedAt'])
-          && request.resource.data.keys().hasAll(['email', 'via', 'grantedBy', 'grantedAt'])
-          && request.resource.data.email == email
-          && request.resource.data.via == 'admin'
-          && request.resource.data.grantedBy == request.auth.uid
-          && request.resource.data.grantedAt == request.time;
-      }
-
-      // A referral is one grant paid for by exactly one unit of the referrer's
-      // counter, in the same batch. `lastReferral` ties the unit to THIS grant:
-      // without it, one +1 could pay for any number of grants in one batch.
-      // The counter's whole invariant (+1, cap 5) lives here and only here: the
-      // users rule admits an update only alongside a new grant, and every
-      // non-admin grant passes through this function.
-      //
-      // No `email != myEmail()`: the referrer must already hold access/{myEmail},
-      // so a create at that id is an update and is refused regardless.
-      function referralGrant() {
-        let me = userPath(request.auth.uid);
-        let before = get(me).data;
-        let after = getAfter(me).data;
-        return verified()
-          && exists(accessPath(myEmail()))  // approved BEFORE this batch, not by it
-          && isEmailId(email)
-          && request.resource.data.keys().hasOnly(['email', 'via', 'grantedBy', 'grantedAt', 'referrerEmail'])
-          && request.resource.data.keys().hasAll(['email', 'via', 'grantedBy', 'grantedAt', 'referrerEmail'])
-          && request.resource.data.email == email
-          && request.resource.data.via == 'referral'
-          && request.resource.data.grantedBy == request.auth.uid
-          && request.resource.data.grantedAt == request.time
-          && request.resource.data.referrerEmail == myEmail()
-          && after.referralsUsed == before.referralsUsed + 1
-          && after.referralsUsed <= 5
-          && after.lastReferral == email;
-      }
-
-      allow create: if adminGrant() || referralGrant();
-
-      allow get: if isAdmin()
-        || (verified() && email == myEmail())
-        || (signedIn() && resource != null && resource.data.grantedBy == request.auth.uid);
-
-      allow list, update, delete: if isAdmin();
-    }
-
-    // ---- users/{uid} ------------------------------------------------------
-    // Per-account counters. A self-update may touch only referralsUsed and
-    // lastReferral, and only in the batch that creates the grant lastReferral
-    // names; that grant's own rule (referralGrant) then demands exactly +1, <= 5.
-
-    match /users/{uid} {
-      allow create: if verified()
-        && uid == request.auth.uid
-        && request.resource.data.keys().hasOnly(['email', 'referralsUsed', 'createdAt'])
-        && request.resource.data.keys().hasAll(['email', 'referralsUsed', 'createdAt'])
-        && request.resource.data.email == myEmail()
-        && request.resource.data.referralsUsed == 0
-        && request.resource.data.createdAt == request.time;
-
-      allow update: if isAdmin() || (verified()
-        && uid == request.auth.uid
-        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['referralsUsed', 'lastReferral'])
-        && !exists(accessPath(request.resource.data.lastReferral))
-        && existsAfter(accessPath(request.resource.data.lastReferral)));
-
-      allow get: if isAdmin() || (signedIn() && uid == request.auth.uid);
-      allow list, delete: if isAdmin();
+      allow get: if isOwner()
+        || (verified() && email == request.auth.token.email.lower());
     }
   }
 }

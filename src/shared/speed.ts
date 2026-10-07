@@ -20,13 +20,18 @@ import {
   effectiveSpeed,
   findAsset,
   findItem,
+  footageBeyond,
   itemEnd,
+  plainTime,
+  sourceEdgeAt,
   usToFrames,
   type Frames,
   type Item,
+  type Keyframe,
   type Project,
   type Timeline
 } from './project'
+import { consumedFrames, frameAtConsumed, speedKeysOf } from './speed-curve'
 
 /**
  * The speeds a person can type into the Inspector and the clip menu's Speed… — one range for both,
@@ -41,9 +46,28 @@ import {
  */
 export const CLIP_SPEED_RANGE = { min: 0.1, max: 16 } as const
 
+/**
+ * What to change about how a clip plays its footage. Each is optional and they combine in one
+ * plan: `reverse` flips the direction over the same footage, then `speed` and `ramp` decide how
+ * fast that footage is read — and so how long the clip is.
+ *
+ * - `speed` alone on a ramped clip replaces the ramp: a clip is at one constant speed or on a
+ *   curve, never both.
+ * - `ramp` is the speed keys (item-relative frames, absolute rates), or null for none.
+ */
+export interface RetimeChange {
+  speed?: number
+  ramp?: Keyframe[] | null
+  reverse?: boolean
+}
+
 export interface SpeedPlan {
   itemId: string
   speed: number
+  /** The speed keys the clip gets: a list, null to remove them, undefined to leave them alone. */
+  ramp?: Keyframe[] | null
+  /** The direction the clip gets, when the plan changes it. */
+  reverse?: boolean
   /** The clip's length before. */
   fromLength: Frames
   /** The length that plays the same footage at the new speed (before any clamp). */
@@ -92,14 +116,98 @@ export function planSpeed(
   speed: number,
   options: { ripple?: boolean } = {}
 ): SpeedPlan | null {
+  return planRetime(project, timeline, itemId, { speed }, options)
+}
+
+/**
+ * The clip as a change would leave it, before its length is decided: direction flipped over the
+ * same footage, then the new speed and keys. Other keys are untouched — speed leaves them.
+ */
+export function retimedItem(item: Item, change: RetimeChange, fps: number): Item {
+  const next: Item = { ...item }
+  if (change.reverse !== undefined && change.reverse !== Boolean(item.reverse)) {
+    // The other edge of the same footage: where the clip stopped reading is where it now starts.
+    next.sourceStartUs = sourceEdgeAt(item, item.durationInFrames, fps)
+    if (change.reverse) next.reverse = true
+    else delete next.reverse
+  }
+  if (change.speed !== undefined) next.speed = effectiveSpeed(change.speed)
+  // A constant speed replaces a ramp unless the same change names one.
+  const ramp = change.ramp !== undefined ? change.ramp : change.speed !== undefined ? null : undefined
+  if (ramp !== undefined && (ramp !== null || speedKeysOf(item))) {
+    const rest = { ...(item.keyframes ?? {}) }
+    delete rest.speed
+    if (ramp && ramp.length > 0) rest.speed = ramp.map((key) => ({ ...key }))
+    if (Object.keys(rest).length > 0) next.keyframes = rest
+    else delete next.keyframes
+  }
+  return next
+}
+
+/**
+ * The longest a clip can be from its in-point before its footage runs out — forwards to the end
+ * of the file, reversed back to its start, through whatever ramp it is on. Infinite for a still.
+ */
+export function footageLength(
+  item: Pick<Item, 'durationInFrames' | 'speed' | 'sourceStartUs' | 'keyframes' | 'reverse'>,
+  sourceDurationUs: number,
+  fps: number
+): Frames {
+  if (!(sourceDurationUs > 0)) return Number.POSITIVE_INFINITY
+  if (plainTime(item)) return retimedLength(item, sourceDurationUs, item.speed, fps).available
+  const room = footageBeyond({ durationUs: sourceDurationUs }, { ...item, durationInFrames: 0 }, fps).after
+  return Math.max(1, Math.floor(room + 1e-3))
+}
+
+/**
+ * The retime for `itemId` — speed, ramp and direction — planned against the timeline as it is.
+ * Null when there is no such item. The caller applies it with `applySpeedPlan` inside one edit.
+ *
+ * **The rule, for a ramp as for a constant speed: the clip keeps its footage, so its length
+ * changes.** The new length is the frame by which the new curve has read what the clip read
+ * before. Later clips are not moved unless `ripple` is asked for; without it a clip that would
+ * grow into its neighbour stops there, and the plan says how far short it fell.
+ */
+export function planRetime(
+  project: Project,
+  timeline: Timeline,
+  itemId: string,
+  change: RetimeChange,
+  options: { ripple?: boolean } = {}
+): SpeedPlan | null {
   const found = findItem(timeline, itemId)
   if (!found) return null
   const { item } = found
   const asset = findAsset(project, item.assetId)
-  const { wanted, available } = retimedLength(item, asset?.durationUs ?? 0, speed, timeline.fps)
+  const sourceDurationUs = asset?.durationUs ?? 0
+  // A still or a title has no footage to play backwards or to ramp through: only its constant
+  // speed is kept, as it always was, so a pasted ramp cannot leave one marked reversed.
+  if (!(sourceDurationUs > 0)) change = change.speed !== undefined ? { speed: change.speed } : {}
+  const next = retimedItem(item, change, timeline.fps)
+  let wanted: Frames
+  let available: Frames
+  if (plainTime(item) && plainTime(next)) {
+    // One constant speed to another, forwards: the arithmetic this had before ramps existed.
+    ;({ wanted, available } = retimedLength(item, sourceDurationUs, next.speed, timeline.fps))
+  } else if (!(sourceDurationUs > 0)) {
+    wanted = item.durationInFrames
+    available = Number.POSITIVE_INFINITY
+  } else {
+    const exact = frameAtConsumed(next, consumedFrames(item, item.durationInFrames))
+    available = footageLength(next, sourceDurationUs, timeline.fps)
+    wanted = Number.isFinite(exact) ? Math.max(1, Math.round(exact)) : item.durationInFrames
+    // A clip that already reads to the end of its file needs a part frame more than there is
+    // when its new length rounds up. That is rounding, not running out: no clamp is reported.
+    if (wanted > available && exact <= available + 1) wanted = available
+  }
+  const nextKeys = speedKeysOf(next)
   const plan: SpeedPlan = {
     itemId,
-    speed: effectiveSpeed(speed),
+    speed: next.speed,
+    ...(change.ramp !== undefined || (change.speed !== undefined && speedKeysOf(item))
+      ? { ramp: nextKeys ? nextKeys.map((key) => ({ ...key })) : null }
+      : {}),
+    ...(change.reverse !== undefined && change.reverse !== Boolean(item.reverse) ? { reverse: change.reverse } : {}),
     fromLength: item.durationInFrames,
     wanted,
     length: Math.min(wanted, available),
@@ -175,6 +283,16 @@ export function applySpeedPlan(timeline: Timeline, plan: SpeedPlan): void {
     (p) => !timeline.tracks.find((t) => t.id === p.trackId)?.locked
   )
   for (const member of [found.item, ...partners]) {
+    // A linked clip that starts elsewhere gets the same curve at the same timeline frames.
+    const offset = found.item.from - member.from
+    const ramp =
+      plan.ramp && offset !== 0 ? plan.ramp.map((key) => ({ ...key, frame: key.frame + offset })) : plan.ramp
+    const next = retimedItem(member, { ramp, reverse: plan.reverse }, timeline.fps)
+    member.sourceStartUs = next.sourceStartUs
+    if (next.reverse) member.reverse = true
+    else delete member.reverse
+    if (next.keyframes) member.keyframes = next.keyframes
+    else delete member.keyframes
     member.speed = plan.speed
     member.durationInFrames = Math.max(1, member.durationInFrames + delta)
     if (member.fadeInFrames + member.fadeOutFrames > member.durationInFrames) {
@@ -203,7 +321,8 @@ export function speedNote(
   const trackName = (id: string): string => timeline.tracks.find((t) => t.id === id)?.name ?? id
   const clamp = plan.clampedBy
   if (clamp?.kind === 'footage') {
-    return `The footage runs out after ${plan.length} frames at ${plan.speed}×, so the clip is ${plan.length} frames, not ${plan.wanted}.`
+    const pace = plan.ramp ? 'on this ramp' : `at ${plan.speed}×`
+    return `The footage runs out after ${plan.length} frames ${pace}, so the clip is ${plan.length} frames, not ${plan.wanted}.`
   }
   if (clamp?.kind === 'next-clip') {
     return (
@@ -227,11 +346,15 @@ export function speedNote(
  * its footage and then snapped back on release without a word.
  */
 export function trimBounds(
-  item: Pick<Item, 'from' | 'durationInFrames' | 'speed' | 'sourceStartUs'>,
+  item: Pick<Item, 'from' | 'durationInFrames' | 'speed' | 'sourceStartUs' | 'keyframes' | 'reverse'>,
   sourceDurationUs: number,
   fps: number
 ): { earliestFrom: Frames; latestEnd: Frames } {
   if (!(sourceDurationUs > 0)) return { earliestFrom: 0, latestEnd: Number.POSITIVE_INFINITY }
+  if (!plainTime(item)) {
+    const before = Math.floor(footageBeyond({ durationUs: sourceDurationUs }, item, fps).before + 1e-3)
+    return { earliestFrom: Math.max(0, item.from - before), latestEnd: item.from + footageLength(item, sourceDurationUs, fps) }
+  }
   const speed = effectiveSpeed(item.speed)
   const before = Math.floor(usToFrames(Math.max(0, item.sourceStartUs), fps) / speed)
   const { available } = retimedLength(item, sourceDurationUs, item.speed, fps)
